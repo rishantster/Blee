@@ -1,3 +1,5 @@
+import type { Chain } from 'viem';
+
 // Type-only shim for the human-readable override tree.
 //
 // The build copies overrides/src/lib/payments.ts into src/lib/payments.ts, where
@@ -9,7 +11,7 @@ export const ARC_USDC: `0x${string}`;
 export const ARC_USDC_DECIMALS: number;
 export const USDC_EIP712_NAME: string;
 export const USDC_EIP712_VERSION: string;
-export const arcTestnet: any;
+export const arcTestnet: Chain;
 export const transferAuthorizationTypes: any;
 
 export const usdcAbi: readonly [
