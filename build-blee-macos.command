@@ -7,10 +7,9 @@ cd "$ROOT"
 APP_NAME="Blee-1.0-sqlite-offline-debug.apk"
 SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 TOOLS_ROOT="$ROOT/.blee-tools"
-CACHE_ROOT="$TOOLS_ROOT/cache"
 CLI_VERSION="15859902"
 
-mkdir -p "$TOOLS_ROOT" "$CACHE_ROOT"
+mkdir -p "$TOOLS_ROOT"
 
 case "$(uname -m)" in
   arm64)
@@ -40,7 +39,9 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
   exit 1
 fi
 
-# macOS includes /usr/bin/java even with no JDK. Verify a working Java 21+ runtime.
+# macOS ships a /usr/bin/java launcher even when no JDK exists, so `command -v java`
+# is not sufficient. Verify a working Java 21+ runtime and, if absent, install a
+# private Temurin JDK into this repo. No Homebrew, sudo or Android Studio required.
 JAVA_OK=0
 if java -version >/tmp/blee-java-version.txt 2>&1; then
   JAVA_MAJOR="$(java -version 2>&1 | awk -F'[\".]' '/version/ {print $2; exit}')"
@@ -50,41 +51,35 @@ if java -version >/tmp/blee-java-version.txt 2>&1; then
 fi
 
 if [ "$JAVA_OK" -ne 1 ]; then
-  # Store JAVA_HOME itself, rather than assuming the downloaded archive has a *.jdk bundle name.
-  JDK_HOME="$TOOLS_ROOT/jdk-21-home"
-  if [ ! -x "$JDK_HOME/bin/java" ]; then
+  JDK_DIR="$TOOLS_ROOT/jdk-21"
+  if [ ! -x "$JDK_DIR/bin/java" ] && [ ! -x "$JDK_DIR/Contents/Home/bin/java" ]; then
     echo "Java 21 not found. Installing a private Temurin JDK 21 (no sudo)..."
-    JDK_ARCHIVE="$CACHE_ROOT/temurin21-${ADOPTIUM_ARCH}.tar.gz"
+    TMP_JDK="$(mktemp -d)"
+    trap 'rm -rf "${TMP_JDK:-}" "${TMP_SDK:-}"' EXIT
+    CACHE_DIR="$TOOLS_ROOT/cache"
+    mkdir -p "$CACHE_DIR"
+    JDK_ARCHIVE="$CACHE_DIR/temurin21-${ADOPTIUM_ARCH}.tar.gz"
     if [ ! -s "$JDK_ARCHIVE" ]; then
       curl --fail --location --retry 4 --retry-delay 2 \
         "https://api.adoptium.net/v3/binary/latest/21/ga/mac/${ADOPTIUM_ARCH}/jdk/hotspot/normal/eclipse" \
         --output "$JDK_ARCHIVE"
-    else
-      echo "Using cached JDK archive: $JDK_ARCHIVE"
     fi
-
-    TMP_JDK="$(mktemp -d)"
-    trap 'rm -rf "${TMP_JDK:-}" "${TMP_SDK:-}"' EXIT
     tar -xzf "$JDK_ARCHIVE" -C "$TMP_JDK"
-
-    # Adoptium macOS archives have changed top-level naming over time. Locate JAVA_HOME by the executable.
-    JAVA_BIN="$(find "$TMP_JDK" -type f -path '*/Contents/Home/bin/java' -print -quit)"
+    JAVA_BIN="$(find "$TMP_JDK" -type f -path '*/bin/java' -perm -111 | head -n 1 || true)"
     if [ -z "$JAVA_BIN" ]; then
-      JAVA_BIN="$(find "$TMP_JDK" -type f -path '*/bin/java' -print -quit)"
-    fi
-    if [ -z "$JAVA_BIN" ]; then
-      echo "Could not locate Java inside the downloaded JDK archive. Archive contents:"
-      find "$TMP_JDK" -maxdepth 4 -type d | head -n 40
+      echo "Could not locate Java in the downloaded JDK archive."
       exit 1
     fi
-
-    SRC_JAVA_HOME="$(cd "$(dirname "$JAVA_BIN")/.." && pwd)"
-    rm -rf "$JDK_HOME"
-    mkdir -p "$JDK_HOME"
-    cp -R "$SRC_JAVA_HOME/." "$JDK_HOME/"
+    JAVA_HOME_FOUND="$(cd "$(dirname "$JAVA_BIN")/.." && pwd)"
+    rm -rf "$JDK_DIR"
+    mkdir -p "$JDK_DIR"
+    cp -R "$JAVA_HOME_FOUND/." "$JDK_DIR/"
   fi
-
-  export JAVA_HOME="$JDK_HOME"
+  if [ -x "$JDK_DIR/bin/java" ]; then
+    export JAVA_HOME="$JDK_DIR"
+  else
+    export JAVA_HOME="$JDK_DIR/Contents/Home"
+  fi
   export PATH="$JAVA_HOME/bin:$PATH"
 fi
 
@@ -99,13 +94,13 @@ if [ ! -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
   TMP_SDK="$(mktemp -d)"
   trap 'rm -rf "${TMP_JDK:-}" "${TMP_SDK:-}"' EXIT
   echo "Installing Android command-line tools (no Android Studio required)..."
-  SDK_ARCHIVE="$CACHE_ROOT/$CLI_ARCHIVE"
+  CACHE_DIR="$TOOLS_ROOT/cache"
+  mkdir -p "$CACHE_DIR"
+  SDK_ARCHIVE="$CACHE_DIR/$CLI_ARCHIVE"
   if [ ! -s "$SDK_ARCHIVE" ]; then
     curl --fail --location --retry 4 --retry-delay 2 \
       "https://dl.google.com/android/repository/$CLI_ARCHIVE" \
       --output "$SDK_ARCHIVE"
-  else
-    echo "Using cached Android tools archive: $SDK_ARCHIVE"
   fi
 
   echo "$CLI_SHA256  $SDK_ARCHIVE" | shasum -a 256 -c -
@@ -119,6 +114,7 @@ export ANDROID_HOME="$SDK_ROOT"
 export ANDROID_SDK_ROOT="$SDK_ROOT"
 export PATH="$SDK_ROOT/cmdline-tools/latest/bin:$SDK_ROOT/platform-tools:$PATH"
 
+# Install both current SDK levels so Capacitor/AGP can choose what it needs.
 yes | sdkmanager --licenses >/dev/null || true
 sdkmanager \
   "platform-tools" \
@@ -151,9 +147,45 @@ PY
   tar -xzf /tmp/blee-source.tar.gz -C .
 fi
 
-test -f package.json
-test -f src/hooks/useBlee.ts
-test -f plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java
+# Some tar writers add a single wrapper directory. Normalize that automatically.
+if [ ! -f "$ROOT/package.json" ]; then
+  CANDIDATE_PACKAGE="$(find "$ROOT" -maxdepth 5 -type f -name package.json -not -path '*/node_modules/*' | head -n 1 || true)"
+  if [ -n "$CANDIDATE_PACKAGE" ]; then
+    SOURCE_ROOT="$(dirname "$CANDIDATE_PACKAGE")"
+    if [ "$SOURCE_ROOT" != "$ROOT" ]; then
+      echo "Detected wrapped source directory: $SOURCE_ROOT"
+      echo "Normalizing source into repository root..."
+      rsync -a --exclude '.git' --exclude '.blee-tools' "$SOURCE_ROOT/" "$ROOT/"
+    fi
+  fi
+fi
+
+REQUIRED_FILES=(
+  "package.json"
+  "src/hooks/useBlee.ts"
+  "plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java"
+)
+MISSING=0
+for REQUIRED in "${REQUIRED_FILES[@]}"; do
+  if [ ! -f "$ROOT/$REQUIRED" ]; then
+    echo "ERROR: reconstructed source is missing: $REQUIRED"
+    MISSING=1
+  fi
+done
+if [ "$MISSING" -ne 0 ]; then
+  echo
+  echo "Top of reconstructed source tree:"
+  find "$ROOT" -maxdepth 4 -type f \
+    -not -path '*/.git/*' \
+    -not -path '*/.blee-tools/*' \
+    | sed "s#^$ROOT/##" | sort | head -n 120
+  echo
+  echo "Archive contents:"
+  tar -tzf /tmp/blee-source.tar.gz | head -n 120
+  exit 1
+fi
+
+echo "Blee source layout verified."
 
 echo "Installing app dependencies..."
 npm install --no-audit --no-fund
