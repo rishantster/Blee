@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   bootstrap-build:
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Checkout without marketplace actions
@@ -44,16 +44,10 @@ jobs:
           grep -q 'durablyReceivedAt' src/hooks/useBlee.ts
           grep -q 'replacePayments' src/lib/persistence.ts
 
-      - name: Select Node 22
+      - name: Toolchain info
         shell: bash
         run: |
           set -euo pipefail
-          if [ -s "$HOME/.nvm/nvm.sh" ]; then
-            . "$HOME/.nvm/nvm.sh"
-            nvm install 22
-            nvm use 22
-            echo "$HOME/.nvm/versions/node/$(node -v)/bin" >> "$GITHUB_PATH"
-          fi
           node --version
           npm --version
           java -version
