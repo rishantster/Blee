@@ -137,6 +137,118 @@ def replace_last_numeric_arg(text: str, function_name: str, old_value: str, repl
     return "".join(pieces), changed
 
 
+def scan_call_end(text: str, open_paren: int) -> int:
+    depth = 0
+    quote: str | None = None
+    escape = False
+    line_comment = False
+    block_comment = False
+    i = open_paren
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+
+        if line_comment:
+            if ch == "\n":
+                line_comment = False
+            i += 1
+            continue
+        if block_comment:
+            if ch == "*" and nxt == "/":
+                block_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
+        if quote:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == quote:
+                quote = None
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "/":
+            line_comment = True
+            i += 2
+            continue
+        if ch == "/" and nxt == "*":
+            block_comment = True
+            i += 2
+            continue
+        if ch in ('"', "'", '`'):
+            quote = ch
+            i += 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                while end < len(text) and text[end].isspace():
+                    end += 1
+                if end < len(text) and text[end] == ";":
+                    end += 1
+                return end
+        i += 1
+    raise SystemExit("Unbalanced defineChain call in src/lib/arc.ts")
+
+
+def replace_arc_chain_definition(text: str) -> tuple[str, str]:
+    # This exact structural form was confirmed by the earlier migration: the
+    # reconstructed Arc runtime has a const assigned to defineChain(...). We
+    # replace that whole declaration instead of guessing how its chain ID is written.
+    pattern = re.compile(
+        r"(?P<prefix>(?:export\s+)?)const\s+(?P<name>[A-Za-z_$][\w$]*)"
+        r"(?:\s*:\s*[^=;\n]+)?\s*=\s*defineChain(?:\s*<[^;\n]+?>)?\s*\("
+    )
+    candidates: list[tuple[re.Match[str], int, str]] = []
+    for match in pattern.finditer(text):
+        open_paren = text.find("(", match.start(), match.end())
+        end = scan_call_end(text, open_paren)
+        snippet = text[match.start():end]
+        candidates.append((match, end, snippet))
+
+    if not candidates:
+        raise SystemExit("Could not locate Arc defineChain declaration")
+
+    selected = None
+    for candidate in candidates:
+        snippet = candidate[2]
+        if any(marker in snippet for marker in ("Arc Testnet", "rpc.testnet.arc.network", "ARC_RPC", "ARC_TESTNET")):
+            selected = candidate
+            break
+    if selected is None and len(candidates) == 1:
+        selected = candidates[0]
+    if selected is None:
+        names = [item[0].group("name") for item in candidates]
+        raise SystemExit(f"Could not uniquely identify Arc defineChain declaration. candidates={names}")
+
+    match, end, _ = selected
+    prefix = match.group("prefix") or ""
+    name = match.group("name")
+    replacement = f'''{prefix}const {name} = defineChain({{
+  id: BLEE_ACTIVE_NETWORK.chainId,
+  name: BLEE_ACTIVE_NETWORK.name,
+  nativeCurrency: {{
+    name: BLEE_ACTIVE_NETWORK.nativeSymbol,
+    symbol: BLEE_ACTIVE_NETWORK.nativeSymbol,
+    decimals: 18,
+  }},
+  rpcUrls: {{
+    default: {{ http: [BLEE_ACTIVE_NETWORK.rpcUrl] }},
+  }},
+  blockExplorers: BLEE_ACTIVE_NETWORK.explorerUrl
+    ? {{ default: {{ name: `${{BLEE_ACTIVE_NETWORK.name}} Explorer`, url: BLEE_ACTIVE_NETWORK.explorerUrl }} }}
+    : undefined,
+  testnet: BLEE_ACTIVE_NETWORK.testnet,
+}});'''
+    return text[:match.start()] + replacement + text[end:], name
+
+
 def patch_eip712_domain(text: str) -> tuple[str, bool]:
     name_count = 0
     for literal in ("USDC", "USD Coin"):
@@ -165,7 +277,7 @@ def patch_eip712_domain(text: str) -> tuple[str, bool]:
     if dynamic:
         print(f"EIP-712 domain made configurable (name patches={name_count}, version patches={version_count}).")
     else:
-        print("NOTE: EIP-712 domain was not safely identifiable; retaining the tested Arc USDC domain for this build.")
+        raise SystemExit("Could not safely identify the EIP-712 domain in src/lib/arc.ts")
     return text, dynamic
 
 
@@ -179,6 +291,13 @@ def patch_arc_runtime() -> None:
     text = add_import(text, 'import { getActiveNetwork, type BleeNetwork } from "./networkConfig";')
     text = insert_active_network(text)
 
+    # First replace the full chain declaration. This guarantees dynamic chain ID,
+    # name, native currency, RPC and explorer regardless of how the original
+    # chain ID was formatted (plain decimal, numeric separators, constant, etc.).
+    text, chain_name = replace_arc_chain_definition(text)
+
+    # Keep existing exported identifiers intact while sourcing their values from
+    # the selected profile so every existing viem client/call site keeps working.
     text, rpc_count = replace_string_literal(text, "https://rpc.testnet.arc.network", "BLEE_ACTIVE_NETWORK.rpcUrl")
     text, explorer_count = replace_string_literal(text, "https://testnet.arcscan.app", "BLEE_ACTIVE_NETWORK.explorerUrl")
     text, token_count = replace_string_literal(
@@ -187,19 +306,10 @@ def patch_arc_runtime() -> None:
         "BLEE_ACTIVE_NETWORK.tokenAddress",
     )
 
-    chain_count = len(re.findall(r"(?<![\w.])5042002(?![\w.])", text))
-    text = re.sub(r"(?<![\w.])5042002(?![\w.])", "BLEE_ACTIVE_NETWORK.chainId", text)
-
-    # A const assertion is valid on literals but not on a runtime property.
+    # Runtime properties cannot be followed by `as const`.
     text = re.sub(
         r"(BLEE_ACTIVE_NETWORK\.(?:rpcUrl|explorerUrl|tokenAddress|chainId))\s+as\s+const",
         r"\1",
-        text,
-    )
-
-    text = re.sub(
-        r"(\bname\s*:\s*)(?:\"Arc Testnet\"|'Arc Testnet')",
-        r"\1BLEE_ACTIVE_NETWORK.name",
         text,
     )
 
@@ -218,27 +328,28 @@ def patch_arc_runtime() -> None:
     text += """
 
 // BLEE_NETWORK_STARTUP_PROFILE
-// Network changes in Settings reload Blee. viem clients are therefore created
-// from this profile on each fresh app load.
+// Network changes in Settings reload Blee. Existing viem clients are created
+// from the selected profile on each fresh app load.
 export function getBleeActiveNetwork() {
   return BLEE_ACTIVE_NETWORK;
 }
 """
 
-    failures = []
-    if rpc_count == 0 and "BLEE_ACTIVE_NETWORK.rpcUrl" not in text:
-        failures.append("RPC")
-    if token_count == 0 and "BLEE_ACTIVE_NETWORK.tokenAddress" not in text:
-        failures.append("payment token")
-    if chain_count == 0 and "BLEE_ACTIVE_NETWORK.chainId" not in text:
-        failures.append("chain ID")
-    if failures:
-        raise SystemExit("Could not make settlement runtime configurable: " + ", ".join(failures))
+    required = (
+        "BLEE_ACTIVE_NETWORK.chainId",
+        "BLEE_ACTIVE_NETWORK.rpcUrl",
+        "BLEE_ACTIVE_NETWORK.tokenAddress",
+        "BLEE_ACTIVE_NETWORK.eip712Name",
+        "BLEE_ACTIVE_NETWORK.eip712Version",
+    )
+    missing = [item for item in required if item not in text]
+    if missing:
+        raise SystemExit(f"Dynamic settlement profile incomplete: {missing}")
 
     path.write_text(text)
     print(
         "Settlement runtime configured from active network:",
-        f"rpc={rpc_count}, explorer={explorer_count}, token={token_count}, chainId={chain_count}, parseUnits={parse_count}, formatUnits={format_count}, eip712Dynamic={eip712_dynamic}",
+        f"chain={chain_name}, rpc_literals={rpc_count}, explorer_literals={explorer_count}, token_literals={token_count}, parseUnits={parse_count}, formatUnits={format_count}, eip712Dynamic={eip712_dynamic}",
     )
 
 
