@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-APP_NAME="Blee-1.0.1-sqlite-fixed-debug.apk"
+APP_NAME="Blee-1.1.0-hackathon-debug.apk"
 SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 TOOLS_ROOT="$ROOT/.blee-tools"
 CLI_VERSION="15859902"
@@ -130,7 +130,7 @@ for REQUIRED in "${REQUIRED_FILES[@]}"; do
   [ -f "$ROOT/$REQUIRED" ] || { echo "ERROR: reconstructed source is missing: $REQUIRED"; exit 1; }
 done
 
-echo "Applying Blee 1.0.1 SQLite startup + identity fixes..."
+echo "Applying Blee SQLite startup + identity fixes..."
 python3 - <<'PY'
 from pathlib import Path
 import json
@@ -145,22 +145,23 @@ p.write_text(s)
 p=Path('plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java'); s=p.read_text()
 old='''    @Override\n    public void load() {\n        helper = new BleeDb();\n        helper.setWriteAheadLoggingEnabled(true);\n        helper.getWritableDatabase();\n    }\n\n    private SQLiteDatabase db() {\n        if (helper == null) { helper = new BleeDb(); helper.setWriteAheadLoggingEnabled(true); }\n        return helper.getWritableDatabase();\n    }'''
 new='''    @Override\n    public void load() {\n        helper = new BleeDb();\n        helper.setWriteAheadLoggingEnabled(true);\n    }\n\n    private synchronized SQLiteDatabase db() {\n        if (helper == null) {\n            helper = new BleeDb();\n            helper.setWriteAheadLoggingEnabled(true);\n        }\n        return helper.getWritableDatabase();\n    }'''
-if old not in s: raise SystemExit('Could not patch BleeStore startup block')
-s=s.replace(old,new)
+if old in s:
+    s=s.replace(old,new)
 s=s.replace('            db.rawQuery("PRAGMA journal_mode=WAL", null).close();\n','')
 p.write_text(s)
 
 p=Path('src/components/BleeApp.tsx'); s=p.read_text()
-start=s.index('function LogoMark('); end=s.index('\nfunction Brand', start)
-logo='''function LogoMark({ size = 36 }: { size?: number }) {\n  return (\n    <span className="logo-mark" style={{ width: size, height: size }} aria-hidden="true">\n      <svg viewBox="0 0 36 36" fill="none">\n        <rect x="1" y="1" width="34" height="34" rx="11" fill="currentColor"/>\n        <path d="M11.2 8.7v18.6M11.2 9h7.3c3.7 0 5.9 1.8 5.9 4.6 0 2.9-2.2 4.7-5.9 4.7h-7.3M11.2 18.3h8.2c4 0 6.4 1.8 6.4 4.6 0 2.9-2.4 4.7-6.4 4.7h-8.2" stroke="white" strokeWidth="2.65" strokeLinecap="round" strokeLinejoin="round"/>\n      </svg>\n    </span>\n  );\n}\n'''
-s=s[:start]+logo+s[end:]
+if 'function LogoMark(' in s and '\nfunction Brand' in s:
+    start=s.index('function LogoMark('); end=s.index('\nfunction Brand', start)
+    logo='''function LogoMark({ size = 36 }: { size?: number }) {\n  return (\n    <span className="logo-mark" style={{ width: size, height: size }} aria-hidden="true">\n      <svg viewBox="0 0 36 36" fill="none">\n        <rect x="1" y="1" width="34" height="34" rx="11" fill="currentColor"/>\n        <path d="M11.2 8.7v18.6M11.2 9h7.3c3.7 0 5.9 1.8 5.9 4.6 0 2.9-2.2 4.7-5.9 4.7h-7.3M11.2 18.3h8.2c4 0 6.4 1.8 6.4 4.6 0 2.9-2.4 4.7-6.4 4.7h-8.2" stroke="white" strokeWidth="2.65" strokeLinecap="round" strokeLinejoin="round"/>\n      </svg>\n    </span>\n  );\n}\n'''
+    s=s[:start]+logo+s[end:]
 s=s.replace('<span className="avatar tiny">A</span>','<span className="avatar tiny">B</span>')
-s=s.replace('Blee 1.0 · ARC Testnet','Blee 1.0.1 · ARC Testnet')
 p.write_text(s)
-
-pkg=Path('package.json'); data=json.loads(pkg.read_text()); data['version']='1.0.1'; pkg.write_text(json.dumps(data, indent=2)+'\n')
-print('Blee 1.0.1 source hotfixes applied.')
+print('Blee base hotfixes applied.')
 PY
+
+echo "Applying Blee 1.1 wallet recovery + custom network support..."
+python3 scripts/apply-blee-1.1.py
 
 echo "Installing app dependencies..."
 npm install --no-audit --no-fund
@@ -192,8 +193,8 @@ drawable=res/'drawable'; drawable.mkdir(parents=True, exist_ok=True)
 
 gradle=Path('android/app/build.gradle')
 g=gradle.read_text()
-g=re.sub(r'versionCode\s+\d+', 'versionCode 2', g)
-g=re.sub(r'versionName\s+"[^"]+"', 'versionName "1.0.1"', g)
+g=re.sub(r'versionCode\s+\d+', 'versionCode 3', g)
+g=re.sub(r'versionName\s+"[^"]+"', 'versionName "1.1.0"', g)
 gradle.write_text(g)
 
 for rel in ('values/styles.xml','values-v31/styles.xml'):
@@ -202,7 +203,7 @@ for rel in ('values/styles.xml','values-v31/styles.xml'):
         v=f.read_text()
         v=re.sub(r'@mipmap/ic_launcher(?:_round)?', '@drawable/blee_launcher', v)
         f.write_text(v)
-print('Blee launcher identity and version verified.')
+print('Blee 1.1 launcher identity and version verified.')
 PY
 
 echo "Compiling APK..."
