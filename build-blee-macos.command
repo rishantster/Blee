@@ -7,9 +7,10 @@ cd "$ROOT"
 APP_NAME="Blee-1.0-sqlite-offline-debug.apk"
 SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 TOOLS_ROOT="$ROOT/.blee-tools"
+CACHE_ROOT="$TOOLS_ROOT/cache"
 CLI_VERSION="15859902"
 
-mkdir -p "$TOOLS_ROOT"
+mkdir -p "$TOOLS_ROOT" "$CACHE_ROOT"
 
 case "$(uname -m)" in
   arm64)
@@ -39,9 +40,7 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
   exit 1
 fi
 
-# macOS ships a /usr/bin/java launcher even when no JDK exists, so `command -v java`
-# is not sufficient. Verify a working Java 21+ runtime and, if absent, install a
-# private Temurin JDK into this repo. No Homebrew, sudo or Android Studio required.
+# macOS includes /usr/bin/java even with no JDK. Verify a working Java 21+ runtime.
 JAVA_OK=0
 if java -version >/tmp/blee-java-version.txt 2>&1; then
   JAVA_MAJOR="$(java -version 2>&1 | awk -F'[\".]' '/version/ {print $2; exit}')"
@@ -51,25 +50,41 @@ if java -version >/tmp/blee-java-version.txt 2>&1; then
 fi
 
 if [ "$JAVA_OK" -ne 1 ]; then
-  JDK_DIR="$TOOLS_ROOT/jdk-21"
-  if [ ! -x "$JDK_DIR/Contents/Home/bin/java" ]; then
+  # Store JAVA_HOME itself, rather than assuming the downloaded archive has a *.jdk bundle name.
+  JDK_HOME="$TOOLS_ROOT/jdk-21-home"
+  if [ ! -x "$JDK_HOME/bin/java" ]; then
     echo "Java 21 not found. Installing a private Temurin JDK 21 (no sudo)..."
+    JDK_ARCHIVE="$CACHE_ROOT/temurin21-${ADOPTIUM_ARCH}.tar.gz"
+    if [ ! -s "$JDK_ARCHIVE" ]; then
+      curl --fail --location --retry 4 --retry-delay 2 \
+        "https://api.adoptium.net/v3/binary/latest/21/ga/mac/${ADOPTIUM_ARCH}/jdk/hotspot/normal/eclipse" \
+        --output "$JDK_ARCHIVE"
+    else
+      echo "Using cached JDK archive: $JDK_ARCHIVE"
+    fi
+
     TMP_JDK="$(mktemp -d)"
     trap 'rm -rf "${TMP_JDK:-}" "${TMP_SDK:-}"' EXIT
-    curl --fail --location --retry 4 --retry-delay 2 \
-      "https://api.adoptium.net/v3/binary/latest/21/ga/mac/${ADOPTIUM_ARCH}/jdk/hotspot/normal/eclipse" \
-      --output "$TMP_JDK/temurin21.tar.gz"
-    tar -xzf "$TMP_JDK/temurin21.tar.gz" -C "$TMP_JDK"
-    BUNDLE="$(find "$TMP_JDK" -maxdepth 3 -type d -name '*.jdk' | head -n 1)"
-    if [ -z "$BUNDLE" ] || [ ! -d "$BUNDLE/Contents/Home" ]; then
-      echo "Could not locate the downloaded JDK bundle."
+    tar -xzf "$JDK_ARCHIVE" -C "$TMP_JDK"
+
+    # Adoptium macOS archives have changed top-level naming over time. Locate JAVA_HOME by the executable.
+    JAVA_BIN="$(find "$TMP_JDK" -type f -path '*/Contents/Home/bin/java' -print -quit)"
+    if [ -z "$JAVA_BIN" ]; then
+      JAVA_BIN="$(find "$TMP_JDK" -type f -path '*/bin/java' -print -quit)"
+    fi
+    if [ -z "$JAVA_BIN" ]; then
+      echo "Could not locate Java inside the downloaded JDK archive. Archive contents:"
+      find "$TMP_JDK" -maxdepth 4 -type d | head -n 40
       exit 1
     fi
-    rm -rf "$JDK_DIR"
-    mkdir -p "$JDK_DIR"
-    cp -R "$BUNDLE/." "$JDK_DIR/"
+
+    SRC_JAVA_HOME="$(cd "$(dirname "$JAVA_BIN")/.." && pwd)"
+    rm -rf "$JDK_HOME"
+    mkdir -p "$JDK_HOME"
+    cp -R "$SRC_JAVA_HOME/." "$JDK_HOME/"
   fi
-  export JAVA_HOME="$JDK_DIR/Contents/Home"
+
+  export JAVA_HOME="$JDK_HOME"
   export PATH="$JAVA_HOME/bin:$PATH"
 fi
 
@@ -84,12 +99,17 @@ if [ ! -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
   TMP_SDK="$(mktemp -d)"
   trap 'rm -rf "${TMP_JDK:-}" "${TMP_SDK:-}"' EXIT
   echo "Installing Android command-line tools (no Android Studio required)..."
-  curl --fail --location --retry 4 --retry-delay 2 \
-    "https://dl.google.com/android/repository/$CLI_ARCHIVE" \
-    --output "$TMP_SDK/$CLI_ARCHIVE"
+  SDK_ARCHIVE="$CACHE_ROOT/$CLI_ARCHIVE"
+  if [ ! -s "$SDK_ARCHIVE" ]; then
+    curl --fail --location --retry 4 --retry-delay 2 \
+      "https://dl.google.com/android/repository/$CLI_ARCHIVE" \
+      --output "$SDK_ARCHIVE"
+  else
+    echo "Using cached Android tools archive: $SDK_ARCHIVE"
+  fi
 
-  echo "$CLI_SHA256  $TMP_SDK/$CLI_ARCHIVE" | shasum -a 256 -c -
-  unzip -q "$TMP_SDK/$CLI_ARCHIVE" -d "$TMP_SDK/unpacked"
+  echo "$CLI_SHA256  $SDK_ARCHIVE" | shasum -a 256 -c -
+  unzip -q "$SDK_ARCHIVE" -d "$TMP_SDK/unpacked"
   rm -rf "$SDK_ROOT/cmdline-tools/latest"
   mkdir -p "$SDK_ROOT/cmdline-tools/latest"
   cp -R "$TMP_SDK/unpacked/cmdline-tools/." "$SDK_ROOT/cmdline-tools/latest/"
@@ -99,7 +119,6 @@ export ANDROID_HOME="$SDK_ROOT"
 export ANDROID_SDK_ROOT="$SDK_ROOT"
 export PATH="$SDK_ROOT/cmdline-tools/latest/bin:$SDK_ROOT/platform-tools:$PATH"
 
-# Install both current SDK levels so Capacitor/AGP can choose what it needs.
 yes | sdkmanager --licenses >/dev/null || true
 sdkmanager \
   "platform-tools" \
