@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OVERRIDES = ROOT / "overrides" / "src"
+NATIVE_STORE_OVERRIDE = ROOT / "overrides" / "native" / "BleeStorePlugin.java"
 
 
 def copy_overrides() -> None:
@@ -21,6 +22,25 @@ def copy_overrides() -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
         print(f"overlay: src/{rel}")
+
+
+def copy_native_store_override() -> None:
+    if not NATIVE_STORE_OVERRIDE.exists():
+        raise SystemExit("Missing hardened BleeStorePlugin.java override")
+    target = ROOT / "plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(NATIVE_STORE_OVERRIDE, target)
+    print("overlay: native BleeStorePlugin.java [BLEE_STORE_SAFE_V2]")
+
+
+def patch_persistence_diagnostics() -> None:
+    path = ROOT / "src/lib/persistence.ts"
+    text = path.read_text()
+    old = 'throw new Error(`Blee SQLite initialization failed: ${detail}`);'
+    new = 'throw new Error(detail.startsWith("Blee SQLite") ? detail : `Blee SQLite initialization failed: ${detail}`);'
+    if old in text:
+        text = text.replace(old, new)
+    path.write_text(text)
 
 
 def add_import(text: str, line: str) -> str:
@@ -198,9 +218,6 @@ def scan_call_end(text: str, open_paren: int) -> int:
 
 
 def replace_arc_chain_definition(text: str) -> tuple[str, str]:
-    # This exact structural form was confirmed by the earlier migration: the
-    # reconstructed Arc runtime has a const assigned to defineChain(...). We
-    # replace that whole declaration instead of guessing how its chain ID is written.
     pattern = re.compile(
         r"(?P<prefix>(?:export\s+)?)const\s+(?P<name>[A-Za-z_$][\w$]*)"
         r"(?:\s*:\s*[^=;\n]+)?\s*=\s*defineChain(?:\s*<[^;\n]+?>)?\s*\("
@@ -290,14 +307,8 @@ def patch_arc_runtime() -> None:
 
     text = add_import(text, 'import { getActiveNetwork, type BleeNetwork } from "./networkConfig";')
     text = insert_active_network(text)
-
-    # First replace the full chain declaration. This guarantees dynamic chain ID,
-    # name, native currency, RPC and explorer regardless of how the original
-    # chain ID was formatted (plain decimal, numeric separators, constant, etc.).
     text, chain_name = replace_arc_chain_definition(text)
 
-    # Keep existing exported identifiers intact while sourcing their values from
-    # the selected profile so every existing viem client/call site keeps working.
     text, rpc_count = replace_string_literal(text, "https://rpc.testnet.arc.network", "BLEE_ACTIVE_NETWORK.rpcUrl")
     text, explorer_count = replace_string_literal(text, "https://testnet.arcscan.app", "BLEE_ACTIVE_NETWORK.explorerUrl")
     text, token_count = replace_string_literal(
@@ -306,7 +317,6 @@ def patch_arc_runtime() -> None:
         "BLEE_ACTIVE_NETWORK.tokenAddress",
     )
 
-    # Runtime properties cannot be followed by `as const`.
     text = re.sub(
         r"(BLEE_ACTIVE_NETWORK\.(?:rpcUrl|explorerUrl|tokenAddress|chainId))\s+as\s+const",
         r"\1",
@@ -369,6 +379,8 @@ def bump_version() -> None:
 
 def main() -> None:
     copy_overrides()
+    copy_native_store_override()
+    patch_persistence_diagnostics()
     patch_component()
     patch_arc_runtime()
     bump_version()
