@@ -36,7 +36,6 @@ test -f overrides/src/lib/networkConfig.ts || { echo "ERROR: Missing configurabl
 test -f overrides/src/lib/walletRecovery.ts || { echo "ERROR: Missing wallet recovery support."; exit 1; }
 test -f overrides/src/components/BleeAdvancedSettings.tsx || { echo "ERROR: Missing Blee 1.1 Settings UI."; exit 1; }
 
-# Remove stale build outputs so Finder cannot show an older APK as the result.
 echo "Removing stale APK/build outputs..."
 rm -rf dist android .next out
 mkdir -p dist
@@ -55,7 +54,6 @@ if [ "$SHA" = "$OLD_APK_SHA256" ]; then
   exit 1
 fi
 
-# Confirm the generated Android project was version-bumped before packaging.
 grep -Eq 'versionCode[[:space:]]+3' android/app/build.gradle || {
   echo "ERROR: Android versionCode 3 was not applied."
   exit 1
@@ -64,10 +62,39 @@ grep -Eq 'versionName[[:space:]]+"1\.1\.0"' android/app/build.gradle || {
   echo "ERROR: Android versionName 1.1.0 was not applied."
   exit 1
 }
-
-# Confirm the 1.1 source features were actually overlaid into the compiled source tree.
+grep -q '@drawable/blee_launcher' android/app/src/main/AndroidManifest.xml || {
+  echo "ERROR: Blee launcher icon is not wired into AndroidManifest.xml."
+  exit 1
+}
 grep -q 'BleeAdvancedSettings' src/components/BleeApp.tsx || { echo "ERROR: Settings UI was not wired into BleeApp."; exit 1; }
-grep -q 'getActiveNetwork' src/lib/arc.ts || { echo "ERROR: Runtime network configuration was not wired into settlement."; exit 1; }
+grep -q 'BLEE_ACTIVE_NETWORK' src/lib/arc.ts || { echo "ERROR: Runtime network configuration was not wired into settlement."; exit 1; }
+grep -q 'getActiveNetwork' src/lib/arc.ts || { echo "ERROR: Active network lookup is missing from settlement runtime."; exit 1; }
+
+# Verify the actual packaged binary, not just the source tree.
+echo "Verifying Blee 1.1 features inside compiled APK..."
+VERIFY_DIR="$(mktemp -d)"
+trap 'rm -rf "$VERIFY_DIR"' EXIT
+unzip -q "$APK" -d "$VERIFY_DIR"
+WEB_ROOT="$VERIFY_DIR/assets/public"
+
+grep -R -q 'Wallet recovery' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing Wallet recovery UI."; exit 1; }
+grep -R -q 'Add network' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing Add network UI."; exit 1; }
+grep -R -q 'blee.networks.v1' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing persistent network profiles."; exit 1; }
+grep -R -q 'Mainnet status' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing mainnet/testnet disclosure."; exit 1; }
+grep -R -q 'Blee 1.1' "$WEB_ROOT" || { echo "ERROR: Compiled APK does not identify itself as Blee 1.1."; exit 1; }
+if grep -R -q 'ARC DROP' "$WEB_ROOT"; then
+  echo "ERROR: Old ARC DROP branding still exists in packaged web assets."
+  exit 1
+fi
+
+DEX_STRINGS="$VERIFY_DIR/blee-dex-strings.txt"
+find "$VERIFY_DIR" -maxdepth 1 -name 'classes*.dex' -print0 | xargs -0 strings > "$DEX_STRINGS"
+grep -q 'BleeStorePlugin' "$DEX_STRINGS" || { echo "ERROR: Native BleeStorePlugin missing from APK."; exit 1; }
+grep -q 'BleeNearbyPlugin' "$DEX_STRINGS" || { echo "ERROR: Native BleeNearbyPlugin missing from APK."; exit 1; }
+grep -q 'SQLiteOpenHelper' "$DEX_STRINGS" || { echo "ERROR: SQLite implementation missing from APK."; exit 1; }
+
+rm -rf "$VERIFY_DIR"
+trap - EXIT
 
 echo
 echo "============================================================"
@@ -75,6 +102,7 @@ echo "✅ VERIFIED NEW BLEE 1.1 APK"
 echo "File: $APK"
 echo "SHA-256: $SHA"
 echo "Version: 1.1.0 (Android versionCode 3)"
+echo "Verified: SQLite + BLE/LAN + wallet recovery + custom networks + Blee launcher"
 echo "This SHA differs from the previous uploaded APK."
 echo "============================================================"
 echo
