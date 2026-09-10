@@ -26,7 +26,7 @@ import type { TransferAuthorization } from '../types/domain';
 export const AUTH_TTL_SECONDS = 24 * 60 * 60;
 const CLOCK_SKEW_SECONDS = 60;
 const EVM_NATIVE_DECIMALS = 18;
-const GAS_BUFFER_BPS = 15_000n; // 50% headroom over current estimate.
+const GAS_BUFFER_BPS = 15_000n; // 50% headroom over the current estimate.
 const BPS = 10_000n;
 
 export const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) });
@@ -65,7 +65,7 @@ function friendlySettlementError(error: unknown): Error {
   const raw = error instanceof Error ? error.message : String(error);
   const lower = raw.toLowerCase();
   if (lower.includes('transfer amount exceeds balance')) {
-    return new Error('Payment amount plus the network fee exceeds the spendable balance. Blee prevented another unsafe retry.');
+    return new Error('Payment could not settle because the authorizer no longer has enough spendable balance.');
   }
   if (lower.includes('insufficient funds') || lower.includes('insufficient balance')) {
     return new Error('Not enough balance to cover the payment and network fee.');
@@ -133,13 +133,14 @@ async function signProbeAuthorization(
 }
 
 /**
- * BLEE_GAS_ACCOUNTING_V1
- * Estimate the amount of the configured payment token that should remain in
- * the sender wallet when that same wallet is also the onchain relayer.
+ * BLEE_GAS_ACCOUNTING_V2
  *
- * On Arc the native gas asset and payment token are both USDC. Arc exposes
- * native gas accounting at 18 decimals while the ERC-20-facing USDC contract
- * uses 6 decimals, so the estimate is converted and rounded up before use.
+ * Arc uses USDC as the native gas asset while Blee transfers the ERC-20-facing
+ * USDC balance. When the sender also submits the EIP-3009 authorization, gas
+ * therefore comes out of the same economic balance as the payment.
+ *
+ * Blee estimates that cost BEFORE broadcasting a self-relayed transaction and
+ * keeps a 50% safety buffer. An estimate is read-only and does not spend gas.
  */
 export async function estimateSelfRelayGasReserve(
   account: PrivateKeyAccount,
@@ -155,9 +156,9 @@ export async function estimateSelfRelayGasReserve(
   });
   if (rawBalance <= 1n) return rawBalance;
 
-  // Gas usage is essentially independent of transfer amount. A one-micro-unit
-  // authorization gives eth_estimateGas a valid state transition without
-  // risking the full-balance failure we are trying to prevent.
+  // Gas usage is effectively independent of payment size. A one-base-unit
+  // authorization gives eth_estimateGas a valid transfer to simulate without
+  // creating the full-balance failure we are protecting against.
   const probe = await signProbeAuthorization(account, to, 1n);
   const estimatedGas = await publicClient.estimateContractGas({
     account: account.address,
@@ -209,39 +210,13 @@ export async function createAuthorization(
   const validAfter = now - BigInt(CLOCK_SKEW_SECONDS);
   const validBefore = now + BigInt(AUTH_TTL_SECONDS);
   const nonce = randomNonce();
-  let value = parseUnits(amount, ARC_USDC_DECIMALS);
+  const value = parseUnits(amount, ARC_USDC_DECIMALS);
   if (value <= 0n) throw new Error('Amount must be greater than zero');
 
-  // If the payment consumes essentially the whole Arc USDC balance, reserve
-  // gas before signing. This means a user who has exactly 5 USDC can still
-  // press Send 5: Blee signs the largest safe principal and leaves enough USDC
-  // for the transaction fee instead of broadcasting a transaction that will
-  // revert after gas has already been charged.
-  if (sameAssetPaysGas()) {
-    try {
-      const balanceRaw = await publicClient.readContract({
-        address: ARC_USDC,
-        abi: usdcAbi,
-        functionName: 'balanceOf',
-        args: [account.address],
-      });
-      const reserveRaw = await estimateSelfRelayGasReserve(account, to);
-      if (value + reserveRaw > balanceRaw) {
-        const adjusted = balanceRaw > reserveRaw ? balanceRaw - reserveRaw : 0n;
-        if (adjusted <= 0n) {
-          throw new Error('Balance is too low to cover the network fee.');
-        }
-        value = adjusted;
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('Balance is too low to cover the network fee')) throw error;
-      // Offline creation must remain possible. If fee estimation cannot reach
-      // the chain we keep the requested authorization amount; submitAuthorization
-      // performs a second preflight before any self-relayed transaction is sent.
-    }
-  }
-
+  // Preserve the amount the user asked the recipient to receive. Gas is a
+  // separate routing cost. If this wallet cannot self-relay payment + gas,
+  // submitAuthorization stops BEFORE broadcast so the existing Blee send flow
+  // can hand the unchanged authorization to a nearby relay instead.
   const signature = await account.signTypedData({
     domain: domain(),
     types: transferAuthorizationTypes,
@@ -290,10 +265,12 @@ export async function submitAuthorization(
 ): Promise<Hex> {
   if (!(await verifyAuthorization(auth))) throw new Error('Invalid or expired authorization');
 
-  // BLEE_GAS_SAFE_SUBMISSION
-  // When the authorizer is also the relayer on Arc, preflight the *combined*
-  // principal + gas requirement. This check happens before writeContract, so a
-  // full-balance payment can fall back to Nearby without burning gas first.
+  /** BLEE_GAS_SAFE_SUBMISSION_V2
+   * If the payer is also the transaction relayer, principal + buffered gas
+   * must fit before writeContract is called. This is the critical fix for the
+   * Kumar -> Rishant failure: the old build broadcast a doomed transaction,
+   * paid gas for the revert, and only then tried Nearby. This build never does.
+   */
   if (sameAssetPaysGas() && relayer.address.toLowerCase() === auth.from.toLowerCase()) {
     const balanceRaw = await publicClient.readContract({
       address: ARC_USDC,
@@ -307,7 +284,7 @@ export async function submitAuthorization(
       const network = getActiveNetwork();
       const spendableRaw = balanceRaw > reserveRaw ? balanceRaw - reserveRaw : 0n;
       throw new Error(
-        `Network fee reserve required. Blee can self-settle at most ${formatUnits(spendableRaw, network.tokenDecimals)} ${network.tokenSymbol} from this balance. No transaction was broadcast.`,
+        `BLEE_RELAY_REQUIRED: payment is ${formatUnits(principalRaw, network.tokenDecimals)} ${network.tokenSymbol}; self-settlement can spend ${formatUnits(spendableRaw, network.tokenDecimals)} after reserving the network fee. No transaction was broadcast.`,
       );
     }
   }
@@ -335,9 +312,7 @@ export async function submitAuthorization(
 
   await onBroadcast?.(hash);
   const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 90_000, confirmations: 1 });
-  if (receipt.status !== 'success') {
-    throw new Error('Network transaction reverted');
-  }
+  if (receipt.status !== 'success') throw new Error('Network transaction reverted');
   return hash;
 }
 
