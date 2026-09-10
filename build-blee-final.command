@@ -67,7 +67,7 @@ grep -q '@drawable/blee_launcher' android/app/src/main/AndroidManifest.xml || {
   exit 1
 }
 grep -q 'BleeAdvancedSettings' src/components/BleeApp.tsx || { echo "ERROR: Settings UI was not wired into BleeApp."; exit 1; }
-grep -q 'BLEE_ACTIVE_NETWORK' src/lib/arc.ts || { echo "ERROR: Runtime network configuration was not wired into settlement."; exit 1; }
+grep -q 'BLEE_NETWORK_STARTUP_PROFILE' src/lib/arc.ts || { echo "ERROR: Startup network profile was not wired into settlement."; exit 1; }
 grep -q 'getActiveNetwork' src/lib/arc.ts || { echo "ERROR: Active network lookup is missing from settlement runtime."; exit 1; }
 
 # Verify the actual packaged binary, not just the source tree.
@@ -80,8 +80,12 @@ WEB_ROOT="$VERIFY_DIR/assets/public"
 grep -R -q 'Wallet recovery' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing Wallet recovery UI."; exit 1; }
 grep -R -q 'Add network' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing Add network UI."; exit 1; }
 grep -R -q 'blee.networks.v1' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing persistent network profiles."; exit 1; }
+grep -R -q 'blee.active-network.v1' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing active-network persistence."; exit 1; }
+grep -R -q 'wallet.vault.v2' "$WEB_ROOT" || { echo "ERROR: Compiled APK wallet recovery is not using the existing encrypted Blee vault."; exit 1; }
 grep -R -q 'Mainnet status' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing mainnet/testnet disclosure."; exit 1; }
 grep -R -q 'Blee 1.1' "$WEB_ROOT" || { echo "ERROR: Compiled APK does not identify itself as Blee 1.1."; exit 1; }
+grep -R -q 'Network transaction reverted' "$WEB_ROOT" || { echo "ERROR: Configurable settlement runtime was not compiled into the APK."; exit 1; }
+grep -R -q 'Blee SQLite initialization failed' "$WEB_ROOT" || { echo "ERROR: SQLite startup hotfix was not compiled into the APK."; exit 1; }
 if grep -R -q 'ARC DROP' "$WEB_ROOT"; then
   echo "ERROR: Old ARC DROP branding still exists in packaged web assets."
   exit 1
@@ -102,7 +106,7 @@ echo "✅ VERIFIED NEW BLEE 1.1 APK"
 echo "File: $APK"
 echo "SHA-256: $SHA"
 echo "Version: 1.1.0 (Android versionCode 3)"
-echo "Verified: SQLite + BLE/LAN + wallet recovery + custom networks + Blee launcher"
+echo "Verified: SQLite startup + BLE/LAN + wallet recovery + active custom networks + Blee launcher"
 echo "This SHA differs from the previous uploaded APK."
 echo "============================================================"
 echo
