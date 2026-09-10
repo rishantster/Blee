@@ -100,7 +100,18 @@ if got != want: raise SystemExit(f'Blee source checksum mismatch: {got}')
 pathlib.Path('/tmp/blee-source.tar.gz').write_bytes(out)
 print('Blee source archive verified:', got)
 PY
-  tar -xzf /tmp/blee-source.tar.gz -C "$ROOT"
+  SOURCE_TMP="$(mktemp -d)"
+  tar -xzf /tmp/blee-source.tar.gz -C "$SOURCE_TMP"
+  # The bootstrap archive contains an old README/workflow snapshot. Only restore
+  # application source/configuration; never overwrite the judge-facing repo metadata.
+  rsync -a \
+    --exclude 'README.md' \
+    --exclude '.github/' \
+    --exclude 'build-blee-macos.command' \
+    --exclude 'build-blee-final.command' \
+    "$SOURCE_TMP/" "$ROOT/"
+  rm -rf "$SOURCE_TMP"
+  echo "Blee application source reconstructed without overwriting repository metadata."
 fi
 
 NATIVE_B64="$ROOT/bootstrap/blee-native-plugins.tar.gz.b64"
@@ -133,7 +144,6 @@ done
 echo "Applying Blee SQLite startup + identity fixes..."
 python3 - <<'PY'
 from pathlib import Path
-import json
 
 p=Path('src/lib/persistence.ts'); s=p.read_text()
 start=s.index('export function nativePersistenceAvailable()')
