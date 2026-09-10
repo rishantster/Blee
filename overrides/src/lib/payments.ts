@@ -106,6 +106,9 @@ export function isAuthorizationExpired(auth: TransferAuthorization, nowSeconds =
   }
 }
 
+// Compatibility name used by the existing Blee reconciliation hook.
+export const authorizationExpired = isAuthorizationExpired;
+
 async function signProbeAuthorization(
   account: PrivateKeyAccount,
   to: Address,
@@ -428,6 +431,7 @@ export async function scanIncomingTransfers(address: Address, fromBlock: bigint,
 }
 
 export const scanIncomingPayments = scanIncomingTransfers;
+export const scanIncomingSettlements = scanIncomingTransfers;
 export const scanSettledIncomingTransfers = scanIncomingTransfers;
 
 export function displayAuthAmount(auth: TransferAuthorization): string {
