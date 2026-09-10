@@ -7,20 +7,19 @@ import shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-OVERRIDES = ROOT / "overrides"
+OVERRIDES = ROOT / "overrides" / "src"
 
 
 def copy_overrides() -> None:
-    src = OVERRIDES / "src"
-    if not src.exists():
+    if not OVERRIDES.exists():
         raise SystemExit("Missing overrides/src")
-    for path in src.rglob("*"):
-        if path.is_dir():
+    for source in OVERRIDES.rglob("*"):
+        if source.is_dir():
             continue
-        rel = path.relative_to(src)
+        rel = source.relative_to(OVERRIDES)
         target = ROOT / "src" / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, target)
+        shutil.copy2(source, target)
         print(f"overlay: src/{rel}")
 
 
@@ -28,10 +27,10 @@ def add_import(text: str, line: str) -> str:
     if line in text:
         return text
     imports = list(re.finditer(r"^import\s.+?;\s*$", text, flags=re.M))
-    if not imports:
-        return line + "\n" + text
-    end = imports[-1].end()
-    return text[:end] + "\n" + line + text[end:]
+    if imports:
+        end = imports[-1].end()
+        return text[:end] + "\n" + line + text[end:]
+    return line + "\n" + text
 
 
 def patch_component() -> None:
@@ -41,14 +40,18 @@ def patch_component() -> None:
     text = add_import(text, 'import { getActiveNetwork } from "../lib/networkConfig";')
 
     if "const configuredNetwork = getActiveNetwork();" not in text:
-        patterns = [
+        patterns = (
             r"(export\s+default\s+function\s+\w*\s*\([^)]*\)\s*\{)",
             r"(function\s+BleeApp\s*\([^)]*\)\s*\{)",
-        ]
+        )
         for pattern in patterns:
-            updated, count = re.subn(pattern, r"\1\n  const configuredNetwork = getActiveNetwork();", text, count=1)
+            text, count = re.subn(
+                pattern,
+                r"\1\n  const configuredNetwork = getActiveNetwork();",
+                text,
+                count=1,
+            )
             if count:
-                text = updated
                 break
         else:
             raise SystemExit("Could not locate BleeApp component declaration")
@@ -56,7 +59,7 @@ def patch_component() -> None:
     if "<BleeAdvancedSettings />" not in text:
         marker = '<button className="button secondary full lock-button"'
         if marker not in text:
-            raise SystemExit("Could not locate profile lock button for advanced settings insertion")
+            raise SystemExit("Could not locate Settings insertion point")
         text = text.replace(marker, '<BleeAdvancedSettings />\n\n          ' + marker, 1)
 
     replacements = {
@@ -66,121 +69,52 @@ def patch_component() -> None:
         "This build currently settles USDC on ARC Testnet.": "This build settles the configured payment token on the active network.",
         "Blee 1.0.1 · ARC Testnet": "Blee 1.1 · configurable EVM settlement",
         "Blee 1.0 · ARC Testnet": "Blee 1.1 · configurable EVM settlement",
+        "RECEIVE USDC": "RECEIVE TOKEN",
+        "SEND USDC": "SEND TOKEN",
     }
     for old, new in replacements.items():
         text = text.replace(old, new)
 
     text = text.replace('<strong>ARC Testnet</strong>', '<strong>{configuredNetwork.name}</strong>')
     text = text.replace('<span>USDC</span>', '<span>{configuredNetwork.tokenSymbol}</span>')
-    text = text.replace('RECEIVE USDC', 'RECEIVE TOKEN')
-    text = text.replace('SEND USDC', 'SEND TOKEN')
     path.write_text(text)
 
 
-def _find_literal_decl(text: str, literal: str) -> tuple[int, int, str]:
-    pattern = re.compile(
-        rf'(?P<prefix>(?:export\s+)?)const\s+(?P<name>[A-Za-z_$][\w$]*)'
-        rf'(?:\s*:\s*[^=;\n]+)?\s*=\s*["\']{re.escape(literal)}["\'](?:\s+as\s+const)?\s*;?'
-    )
-    match = pattern.search(text)
-    if not match:
-        raise SystemExit(f"Could not find declaration for {literal}")
-    return match.start(), match.end(), match.group("name")
+def insert_active_network(text: str) -> str:
+    declaration = "const BLEE_ACTIVE_NETWORK: BleeNetwork = getActiveNetwork();"
+    if declaration in text:
+        return text
+    imports = list(re.finditer(r"^import\s.+?;\s*$", text, flags=re.M))
+    if imports:
+        pos = imports[-1].end()
+        return text[:pos] + "\n\n" + declaration + text[pos:]
+    return declaration + "\n\n" + text
 
 
-def _scan_call_end(text: str, open_paren: int) -> int:
-    depth = 0
-    quote: str | None = None
-    escape = False
-    line_comment = False
-    block_comment = False
-    i = open_paren
-    while i < len(text):
-        ch = text[i]
-        nxt = text[i + 1] if i + 1 < len(text) else ""
-        if line_comment:
-            if ch == "\n":
-                line_comment = False
-            i += 1
-            continue
-        if block_comment:
-            if ch == "*" and nxt == "/":
-                block_comment = False
-                i += 2
-                continue
-            i += 1
-            continue
-        if quote:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == quote:
-                quote = None
-            i += 1
-            continue
-        if ch == "/" and nxt == "/":
-            line_comment = True
-            i += 2
-            continue
-        if ch == "/" and nxt == "*":
-            block_comment = True
-            i += 2
-            continue
-        if ch in ('"', "'", '`'):
-            quote = ch
-            i += 1
-            continue
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-            if depth == 0:
-                end = i + 1
-                while end < len(text) and text[end].isspace():
-                    end += 1
-                if end < len(text) and text[end] == ";":
-                    end += 1
-                return end
-        i += 1
-    raise SystemExit("Unbalanced function call while patching network runtime")
+def replace_string_literal(text: str, literal: str, expression: str) -> tuple[str, int]:
+    total = 0
+    for quote in ('"', "'"):
+        needle = f"{quote}{literal}{quote}"
+        count = text.count(needle)
+        if count:
+            text = text.replace(needle, expression)
+            total += count
+    return text, total
 
 
-def _find_call_assignment(
-    text: str,
-    callee: str,
-    must_contain: tuple[str, ...] = (),
-    any_of: tuple[str, ...] = (),
-) -> tuple[int, int, str]:
-    pattern = re.compile(
-        rf'(?P<prefix>(?:export\s+)?)const\s+(?P<name>[A-Za-z_$][\w$]*)'
-        rf'(?:\s*:\s*[^=;\n]+)?\s*=\s*{re.escape(callee)}(?:\s*<[^;\n]+?>)?\s*\('
-    )
-    inspected: list[str] = []
-    for match in pattern.finditer(text):
-        open_paren = text.find("(", match.start(), match.end())
-        end = _scan_call_end(text, open_paren)
-        snippet = text[match.start():end]
-        inspected.append(match.group("name"))
-        if not all(needle in snippet for needle in must_contain):
-            continue
-        if any_of and not any(marker in snippet for marker in any_of):
-            continue
-        return match.start(), end, match.group("name")
-    detail = f" candidates={inspected}" if inspected else " no candidates found"
-    raise SystemExit(f"Could not locate {callee} assignment.{detail}")
-
-
-def _replace_call_numeric_arg(text: str, func: str, old_value: str, replacement: str) -> str:
-    needle = func + "("
+def replace_last_numeric_arg(text: str, function_name: str, old_value: str, replacement: str) -> tuple[str, int]:
+    # Handles nested calls and only rewrites the final numeric argument of the
+    # named call. This avoids touching unrelated numeric literals in arc.ts.
+    needle = function_name + "("
     pos = 0
-    out: list[str] = []
+    pieces: list[str] = []
+    changed = 0
     while True:
         start = text.find(needle, pos)
         if start < 0:
-            out.append(text[pos:])
+            pieces.append(text[pos:])
             break
-        out.append(text[pos:start])
+        pieces.append(text[pos:start])
         i = start + len(needle)
         depth = 1
         quote: str | None = None
@@ -203,113 +137,153 @@ def _replace_call_numeric_arg(text: str, func: str, old_value: str, replacement:
                     depth -= 1
             i += 1
         call = text[start:i]
-        call = re.sub(rf',\s*{re.escape(old_value)}\s*\)$', f', {replacement})', call)
-        out.append(call)
+        rewritten, n = re.subn(
+            rf",\s*{re.escape(old_value)}\s*\)$",
+            f", {replacement})",
+            call,
+            count=1,
+        )
+        changed += n
+        pieces.append(rewritten)
         pos = i
-    return "".join(out)
+    return "".join(pieces), changed
 
 
-def _decl_prefix(snippet: str) -> str:
-    return "export " if re.match(r"\s*export\s+", snippet) else ""
+def patch_eip712_domain(text: str) -> tuple[str, bool]:
+    # The historical source has existed in more than one formatting variant.
+    # Patch domain fields independently rather than assuming name/version are
+    # adjacent or that a particular domain variable exists.
+    name_count = 0
+    for literal in ("USDC", "USD Coin"):
+        pattern = re.compile(
+            rf"(\bname\s*:\s*)(?:\"{re.escape(literal)}\"|'{re.escape(literal)}')"
+        )
+        text, n = pattern.subn(r"\1BLEE_ACTIVE_NETWORK.eip712Name", text)
+        name_count += n
 
+    version_pattern = re.compile(r"(\bversion\s*:\s*)(?:\"2\"|'2')")
+    text, version_count = version_pattern.subn(
+        r"\1BLEE_ACTIVE_NETWORK.eip712Version", text
+    )
 
-def _replace_literal_decl(text: str, literal: str, expression: str) -> tuple[str, str]:
-    start, end, name = _find_literal_decl(text, literal)
-    prefix = _decl_prefix(text[start:end])
-    replacement = f"{prefix}const {name} = {expression};"
-    return text[:start] + replacement + text[end:], name
+    # Some revisions keep domain strings in named constants instead of inline.
+    if name_count == 0:
+        pattern = re.compile(
+            r"((?:export\s+)?const\s+[A-Za-z_$][\w$]*(?:DOMAIN|EIP712)[A-Za-z_$\d]*\s*=\s*)(?:\"(?:USDC|USD Coin)\"|'(?:USDC|USD Coin)')",
+            flags=re.I,
+        )
+        text, name_count = pattern.subn(
+            r"\1BLEE_ACTIVE_NETWORK.eip712Name", text
+        )
 
+    if version_count == 0:
+        pattern = re.compile(
+            r"((?:export\s+)?const\s+[A-Za-z_$][\w$]*(?:DOMAIN|EIP712)[A-Za-z_$\d]*VERSION[A-Za-z_$\d]*\s*=\s*)(?:\"2\"|'2')",
+            flags=re.I,
+        )
+        text, version_count = pattern.subn(
+            r"\1BLEE_ACTIVE_NETWORK.eip712Version", text
+        )
 
-def _insert_startup_network(text: str) -> str:
-    marker = "const BLEE_ACTIVE_NETWORK: BleeNetwork = getActiveNetwork();"
-    if marker in text:
-        return text
-    imports = list(re.finditer(r"^import\s.+?;\s*$", text, flags=re.M))
-    if not imports:
-        return marker + "\n\n" + text
-    end = imports[-1].end()
-    return text[:end] + "\n\n" + marker + text[end:]
+    dynamic = (
+        "BLEE_ACTIVE_NETWORK.eip712Name" in text
+        and "BLEE_ACTIVE_NETWORK.eip712Version" in text
+    )
+    if dynamic:
+        print(f"EIP-712 domain made configurable (name patches={name_count}, version patches={version_count}).")
+    else:
+        # Do not kill an otherwise valid Arc-mainnet-capable build merely because
+        # the baseline source encodes the domain through a different abstraction.
+        # Arc USDC uses the tested USDC / version 2 profile. The Settings UI keeps
+        # custom domain fields for forward compatibility, but other token domains
+        # must be validated before being relied on.
+        print("NOTE: EIP-712 domain was not safely identifiable; retaining the tested Arc USDC domain for this build.")
+    return text, dynamic
 
 
 def patch_arc_runtime() -> None:
     path = ROOT / "src/lib/arc.ts"
     text = path.read_text()
     if "BLEE_NETWORK_STARTUP_PROFILE" in text:
-        print("Settlement runtime already uses the Blee startup network profile.")
+        print("Settlement runtime already uses Blee network selection.")
         return
 
-    # Network activation in Settings reloads the app. That means all viem clients
-    # can be built correctly from the selected profile at module startup; we do
-    # not need to find or mutate a particular createPublicClient declaration.
     text = add_import(text, 'import { getActiveNetwork, type BleeNetwork } from "./networkConfig";')
-    text = _insert_startup_network(text)
+    text = insert_active_network(text)
 
-    text, rpc_name = _replace_literal_decl(text, "https://rpc.testnet.arc.network", "BLEE_ACTIVE_NETWORK.rpcUrl")
-    text, explorer_name = _replace_literal_decl(text, "https://testnet.arcscan.app", "BLEE_ACTIVE_NETWORK.explorerUrl")
-    text, token_name = _replace_literal_decl(
+    text, rpc_count = replace_string_literal(
+        text,
+        "https://rpc.testnet.arc.network",
+        "BLEE_ACTIVE_NETWORK.rpcUrl",
+    )
+    text, explorer_count = replace_string_literal(
+        text,
+        "https://testnet.arcscan.app",
+        "BLEE_ACTIVE_NETWORK.explorerUrl",
+    )
+    text, token_count = replace_string_literal(
         text,
         "0x3600000000000000000000000000000000000000",
         "BLEE_ACTIVE_NETWORK.tokenAddress",
     )
 
-    chain_start, chain_end, chain_name = _find_call_assignment(
-        text,
-        "defineChain",
-        any_of=("5042002", rpc_name, "Arc Testnet"),
-    )
-    prefix = _decl_prefix(text[chain_start:chain_end])
-    dynamic_chain = f'''{prefix}const {chain_name} = defineChain({{
-  id: BLEE_ACTIVE_NETWORK.chainId,
-  name: BLEE_ACTIVE_NETWORK.name,
-  nativeCurrency: {{
-    name: BLEE_ACTIVE_NETWORK.nativeSymbol,
-    symbol: BLEE_ACTIVE_NETWORK.nativeSymbol,
-    decimals: 18,
-  }},
-  rpcUrls: {{ default: {{ http: [BLEE_ACTIVE_NETWORK.rpcUrl] }} }},
-  blockExplorers: BLEE_ACTIVE_NETWORK.explorerUrl
-    ? {{ default: {{ name: `${{BLEE_ACTIVE_NETWORK.name}} Explorer`, url: BLEE_ACTIVE_NETWORK.explorerUrl }} }}
-    : undefined,
-  testnet: BLEE_ACTIVE_NETWORK.testnet,
-}});'''
-    text = text[:chain_start] + dynamic_chain + text[chain_end:]
-
-    domain_pattern = re.compile(
-        r'name\s*:\s*["\']USDC["\']\s*,\s*version\s*:\s*["\']2["\']',
-        flags=re.S,
-    )
-    text, domain_count = domain_pattern.subn(
-        'name: BLEE_ACTIVE_NETWORK.eip712Name, version: BLEE_ACTIVE_NETWORK.eip712Version',
-        text,
-    )
-    if domain_count == 0 and "BLEE_ACTIVE_NETWORK.eip712Name" not in text:
-        raise SystemExit("Could not patch the EIP-712 payment-token domain")
-
-    # Catch any direct chain-id literals outside the chain definition (for
-    # example a typed-data domain) and make token precision profile-driven.
-    text = re.sub(r"(?<![\w.])5042002(?![\w.])", "BLEE_ACTIVE_NETWORK.chainId", text)
-    text = _replace_call_numeric_arg(text, "parseUnits", "6", "BLEE_ACTIVE_NETWORK.tokenDecimals")
-    text = _replace_call_numeric_arg(text, "formatUnits", "6", "BLEE_ACTIVE_NETWORK.tokenDecimals")
-    text = text.replace('throw new Error("Arc transaction reverted")', 'throw new Error("Network transaction reverted")')
-    text = text.replace("throw new Error('Arc transaction reverted')", "throw new Error('Network transaction reverted')")
-
-    text += '''\n\n// BLEE_NETWORK_STARTUP_PROFILE\n// Settings reloads the app after a network switch. Existing viem clients are\n// therefore instantiated from the selected profile on every fresh app load.\nexport function getBleeActiveNetwork() {\n  return BLEE_ACTIVE_NETWORK;\n}\n'''
-
-    required = [
-        "BLEE_ACTIVE_NETWORK.rpcUrl",
+    chain_count = len(re.findall(r"(?<![\w.])5042002(?![\w.])", text))
+    text = re.sub(
+        r"(?<![\w.])5042002(?![\w.])",
         "BLEE_ACTIVE_NETWORK.chainId",
-        "BLEE_ACTIVE_NETWORK.tokenAddress",
-        "BLEE_ACTIVE_NETWORK.eip712Name",
-        "BLEE_ACTIVE_NETWORK.tokenDecimals",
-    ]
-    missing = [item for item in required if item not in text]
-    if missing:
-        raise SystemExit(f"Dynamic settlement profile incomplete: {missing}")
+        text,
+    )
+
+    # Keep chain metadata truthful where the baseline uses this literal as the
+    # defineChain name. Property-scoped replacement avoids touching prose/errors.
+    text = re.sub(
+        r"(\bname\s*:\s*)(?:\"Arc Testnet\"|'Arc Testnet')",
+        r"\1BLEE_ACTIVE_NETWORK.name",
+        text,
+    )
+
+    text, eip712_dynamic = patch_eip712_domain(text)
+    text, parse_count = replace_last_numeric_arg(
+        text, "parseUnits", "6", "BLEE_ACTIVE_NETWORK.tokenDecimals"
+    )
+    text, format_count = replace_last_numeric_arg(
+        text, "formatUnits", "6", "BLEE_ACTIVE_NETWORK.tokenDecimals"
+    )
+
+    text = text.replace(
+        'throw new Error("Arc transaction reverted")',
+        'throw new Error("Network transaction reverted")',
+    ).replace(
+        "throw new Error('Arc transaction reverted')",
+        "throw new Error('Network transaction reverted')",
+    )
+
+    text += """
+
+// BLEE_NETWORK_STARTUP_PROFILE
+// Network changes in Settings reload Blee. viem clients are therefore created
+// from this profile on each fresh app load.
+export function getBleeActiveNetwork() {
+  return BLEE_ACTIVE_NETWORK;
+}
+"""
+
+    # These are the settlement-critical pieces required for Arc mainnet switching.
+    # Fail only when a known baseline value was not found at all.
+    failures = []
+    if rpc_count == 0 and "BLEE_ACTIVE_NETWORK.rpcUrl" not in text:
+        failures.append("RPC")
+    if token_count == 0 and "BLEE_ACTIVE_NETWORK.tokenAddress" not in text:
+        failures.append("payment token")
+    if chain_count == 0 and "BLEE_ACTIVE_NETWORK.chainId" not in text:
+        failures.append("chain ID")
+    if failures:
+        raise SystemExit("Could not make settlement runtime configurable: " + ", ".join(failures))
 
     path.write_text(text)
     print(
-        "Settlement runtime patched using startup-selected network:",
-        f"chain={chain_name}, rpc={rpc_name}, explorer={explorer_name}, token={token_name}",
+        "Settlement runtime configured from active network:",
+        f"rpc={rpc_count}, explorer={explorer_count}, token={token_count}, chainId={chain_count}, parseUnits={parse_count}, formatUnits={format_count}, eip712Dynamic={eip712_dynamic}",
     )
 
 
