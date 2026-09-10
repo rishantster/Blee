@@ -79,7 +79,8 @@ def patch_component() -> None:
 
 def _find_literal_decl(text: str, literal: str) -> tuple[int, int, str]:
     pattern = re.compile(
-        rf'(?P<prefix>(?:export\s+)?)const\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*["\']{re.escape(literal)}["\'](?:\s+as\s+const)?\s*;?'
+        rf'(?P<prefix>(?:export\s+)?)const\s+(?P<name>[A-Za-z_$][\w$]*)'
+        rf'(?:\s*:\s*[^=;\n]+)?\s*=\s*["\']{re.escape(literal)}["\'](?:\s+as\s+const)?\s*;?'
     )
     match = pattern.search(text)
     if not match:
@@ -97,7 +98,6 @@ def _scan_call_end(text: str, open_paren: int) -> int:
     while i < len(text):
         ch = text[i]
         nxt = text[i + 1] if i + 1 < len(text) else ""
-
         if line_comment:
             if ch == "\n":
                 line_comment = False
@@ -119,7 +119,6 @@ def _scan_call_end(text: str, open_paren: int) -> int:
                 quote = None
             i += 1
             continue
-
         if ch == "/" and nxt == "/":
             line_comment = True
             i += 2
@@ -153,10 +152,9 @@ def _find_call_assignment(
     must_contain: tuple[str, ...] = (),
     any_of: tuple[str, ...] = (),
 ) -> tuple[int, int, str]:
-    # Allow ordinary TypeScript annotations such as `const ARC_CHAIN: Chain = ...`.
     pattern = re.compile(
         rf'(?P<prefix>(?:export\s+)?)const\s+(?P<name>[A-Za-z_$][\w$]*)'
-        rf'(?:\s*:\s*[^=;\n]+)?\s*=\s*{re.escape(callee)}\s*\('
+        rf'(?:\s*:\s*[^=;\n]+)?\s*=\s*{re.escape(callee)}(?:\s*<[^;\n]+?>)?\s*\('
     )
     inspected: list[str] = []
     for match in pattern.finditer(text):
@@ -169,17 +167,8 @@ def _find_call_assignment(
         if any_of and not any(marker in snippet for marker in any_of):
             continue
         return match.start(), end, match.group("name")
-
     detail = f" candidates={inspected}" if inspected else " no candidates found"
     raise SystemExit(f"Could not locate {callee} assignment.{detail}")
-
-
-def _make_decl_mutable(text: str, start: int, end: int) -> str:
-    snippet = text[start:end]
-    changed, count = re.subn(r"\bconst\b", "let", snippet, count=1)
-    if count != 1:
-        raise SystemExit("Could not make runtime declaration mutable")
-    return text[:start] + changed + text[end:]
 
 
 def _replace_call_numeric_arg(text: str, func: str, old_value: str, replacement: str) -> str:
@@ -220,109 +209,107 @@ def _replace_call_numeric_arg(text: str, func: str, old_value: str, replacement:
     return "".join(out)
 
 
+def _decl_prefix(snippet: str) -> str:
+    return "export " if re.match(r"\s*export\s+", snippet) else ""
+
+
+def _replace_literal_decl(text: str, literal: str, expression: str) -> tuple[str, str]:
+    start, end, name = _find_literal_decl(text, literal)
+    prefix = _decl_prefix(text[start:end])
+    replacement = f"{prefix}const {name} = {expression};"
+    return text[:start] + replacement + text[end:], name
+
+
+def _insert_startup_network(text: str) -> str:
+    marker = "const BLEE_ACTIVE_NETWORK: BleeNetwork = getActiveNetwork();"
+    if marker in text:
+        return text
+    imports = list(re.finditer(r"^import\s.+?;\s*$", text, flags=re.M))
+    if not imports:
+        return marker + "\n\n" + text
+    end = imports[-1].end()
+    return text[:end] + "\n\n" + marker + text[end:]
+
+
 def patch_arc_runtime() -> None:
     path = ROOT / "src/lib/arc.ts"
     text = path.read_text()
-    if "BLEE_ACTIVE_NETWORK" in text:
-        print("Settlement runtime already has Blee network support.")
+    if "BLEE_NETWORK_STARTUP_PROFILE" in text:
+        print("Settlement runtime already uses the Blee startup network profile.")
         return
 
+    # Network activation in Settings reloads the app. That means all viem clients
+    # can be built correctly from the selected profile at module startup; we do
+    # not need to find or mutate a particular createPublicClient declaration.
     text = add_import(text, 'import { getActiveNetwork, type BleeNetwork } from "./networkConfig";')
+    text = _insert_startup_network(text)
 
-    # Resolve the real identifiers from the tested Arc constants rather than
-    # assuming their names. These three lookups already succeeded in the prior build.
-    rpc_start, rpc_end, rpc_name = _find_literal_decl(text, "https://rpc.testnet.arc.network")
-    text = _make_decl_mutable(text, rpc_start, rpc_end)
+    text, rpc_name = _replace_literal_decl(text, "https://rpc.testnet.arc.network", "BLEE_ACTIVE_NETWORK.rpcUrl")
+    text, explorer_name = _replace_literal_decl(text, "https://testnet.arcscan.app", "BLEE_ACTIVE_NETWORK.explorerUrl")
+    text, token_name = _replace_literal_decl(
+        text,
+        "0x3600000000000000000000000000000000000000",
+        "BLEE_ACTIVE_NETWORK.tokenAddress",
+    )
 
-    explorer_start, explorer_end, explorer_name = _find_literal_decl(text, "https://testnet.arcscan.app")
-    text = _make_decl_mutable(text, explorer_start, explorer_end)
-
-    token_start, token_end, token_name = _find_literal_decl(text, "0x3600000000000000000000000000000000000000")
-    text = _make_decl_mutable(text, token_start, token_end)
-
-    # Parse defineChain(...) by balanced parentheses. Do not assume property order,
-    # whitespace, an immediate `})`, or a particular TypeScript annotation.
     chain_start, chain_end, chain_name = _find_call_assignment(
         text,
         "defineChain",
         any_of=("5042002", rpc_name, "Arc Testnet"),
     )
-    text = _make_decl_mutable(text, chain_start, chain_end)
+    prefix = _decl_prefix(text[chain_start:chain_end])
+    dynamic_chain = f'''{prefix}const {chain_name} = defineChain({{
+  id: BLEE_ACTIVE_NETWORK.chainId,
+  name: BLEE_ACTIVE_NETWORK.name,
+  nativeCurrency: {{
+    name: BLEE_ACTIVE_NETWORK.nativeSymbol,
+    symbol: BLEE_ACTIVE_NETWORK.nativeSymbol,
+    decimals: 18,
+  }},
+  rpcUrls: {{ default: {{ http: [BLEE_ACTIVE_NETWORK.rpcUrl] }} }},
+  blockExplorers: BLEE_ACTIVE_NETWORK.explorerUrl
+    ? {{ default: {{ name: `${{BLEE_ACTIVE_NETWORK.name}} Explorer`, url: BLEE_ACTIVE_NETWORK.explorerUrl }} }}
+    : undefined,
+  testnet: BLEE_ACTIVE_NETWORK.testnet,
+}});'''
+    text = text[:chain_start] + dynamic_chain + text[chain_end:]
 
-    # The public client must be the one wired to the Arc chain. RPC can be referenced
-    # directly or through the resolved RPC constant, so chain identity is authoritative.
-    client_start, client_end, client_name = _find_call_assignment(
-        text,
-        "createPublicClient",
-        must_contain=(chain_name,),
-    )
-    text = _make_decl_mutable(text, client_start, client_end)
-
-    client_pattern = re.compile(
-        rf'(?P<prefix>(?:export\s+)?)let\s+{re.escape(client_name)}(?:\s*:\s*[^=;\n]+)?\s*=\s*createPublicClient\s*\('
-    )
-    client_match = client_pattern.search(text)
-    if not client_match:
-        raise SystemExit("Could not re-locate mutable public client")
-    open_paren = text.find("(", client_match.start(), client_match.end())
-    client_end = _scan_call_end(text, open_paren)
-
-    runtime = f'''
-
-let BLEE_ACTIVE_NETWORK: BleeNetwork = getActiveNetwork();
-
-function applyBleeNetwork(network: BleeNetwork = getActiveNetwork()) {{
-  BLEE_ACTIVE_NETWORK = network;
-  {rpc_name} = network.rpcUrl;
-  {explorer_name} = network.explorerUrl;
-  {token_name} = network.tokenAddress;
-  {chain_name} = defineChain({{
-    id: network.chainId,
-    name: network.name,
-    nativeCurrency: {{ name: network.nativeSymbol, symbol: network.nativeSymbol, decimals: 18 }},
-    rpcUrls: {{ default: {{ http: [network.rpcUrl] }} }},
-    blockExplorers: network.explorerUrl
-      ? {{ default: {{ name: `${{network.name}} Explorer`, url: network.explorerUrl }} }}
-      : undefined,
-    testnet: network.testnet,
-  }});
-  {client_name} = createPublicClient({{ chain: {chain_name}, transport: http({rpc_name}) }});
-}}
-
-applyBleeNetwork();
-
-export function getBleeActiveNetwork() {{
-  return BLEE_ACTIVE_NETWORK;
-}}
-'''
-    text = text[:client_end] + runtime + text[client_end:]
-
-    # EIP-3009 signatures are domain-bound; custom/mainnet profiles therefore
-    # need to change the token EIP-712 name/version as well as chain/address.
     domain_pattern = re.compile(
-        r'name\s*:\s*["\']USDC["\']\s*,\s*version\s*:\s*["\']2["\']'
+        r'name\s*:\s*["\']USDC["\']\s*,\s*version\s*:\s*["\']2["\']',
+        flags=re.S,
     )
     text, domain_count = domain_pattern.subn(
         'name: BLEE_ACTIVE_NETWORK.eip712Name, version: BLEE_ACTIVE_NETWORK.eip712Version',
         text,
     )
-    if domain_count == 0:
+    if domain_count == 0 and "BLEE_ACTIVE_NETWORK.eip712Name" not in text:
         raise SystemExit("Could not patch the EIP-712 payment-token domain")
 
+    # Catch any direct chain-id literals outside the chain definition (for
+    # example a typed-data domain) and make token precision profile-driven.
+    text = re.sub(r"(?<![\w.])5042002(?![\w.])", "BLEE_ACTIVE_NETWORK.chainId", text)
     text = _replace_call_numeric_arg(text, "parseUnits", "6", "BLEE_ACTIVE_NETWORK.tokenDecimals")
     text = _replace_call_numeric_arg(text, "formatUnits", "6", "BLEE_ACTIVE_NETWORK.tokenDecimals")
     text = text.replace('throw new Error("Arc transaction reverted")', 'throw new Error("Network transaction reverted")')
     text = text.replace("throw new Error('Arc transaction reverted')", "throw new Error('Network transaction reverted')")
 
-    if "BLEE_ACTIVE_NETWORK" not in text or "getActiveNetwork" not in text:
-        raise SystemExit("Dynamic network runtime was not applied")
-    if f"{client_name} = createPublicClient" not in text:
-        raise SystemExit("Dynamic public-client rebuild was not applied")
+    text += '''\n\n// BLEE_NETWORK_STARTUP_PROFILE\n// Settings reloads the app after a network switch. Existing viem clients are\n// therefore instantiated from the selected profile on every fresh app load.\nexport function getBleeActiveNetwork() {\n  return BLEE_ACTIVE_NETWORK;\n}\n'''
+
+    required = [
+        "BLEE_ACTIVE_NETWORK.rpcUrl",
+        "BLEE_ACTIVE_NETWORK.chainId",
+        "BLEE_ACTIVE_NETWORK.tokenAddress",
+        "BLEE_ACTIVE_NETWORK.eip712Name",
+        "BLEE_ACTIVE_NETWORK.tokenDecimals",
+    ]
+    missing = [item for item in required if item not in text]
+    if missing:
+        raise SystemExit(f"Dynamic settlement profile incomplete: {missing}")
 
     path.write_text(text)
     print(
-        "Settlement runtime patched:",
-        f"chain={chain_name}, rpc={rpc_name}, explorer={explorer_name}, token={token_name}, client={client_name}",
+        "Settlement runtime patched using startup-selected network:",
+        f"chain={chain_name}, rpc={rpc_name}, explorer={explorer_name}, token={token_name}",
     )
 
 
