@@ -10,8 +10,8 @@ permissions:
 
 jobs:
   bootstrap-build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
+    runs-on: macos-15
+    timeout-minutes: 45
     steps:
       - name: Checkout without marketplace actions
         shell: bash
@@ -27,9 +27,15 @@ jobs:
         run: |
           set -euo pipefail
           cat bootstrap/parts/part* > /tmp/blee-source.b64
-          test "$(wc -c < /tmp/blee-source.b64)" -eq 42120
+          test "$(wc -c < /tmp/blee-source.b64 | tr -d ' ')" -eq 42120
           base64 -d /tmp/blee-source.b64 > /tmp/blee-source.tar.gz
-          echo "c28e106c9bbfb1687e061c33ec3bc3fb0ad9623fc8c320876611f390ddfc104d  /tmp/blee-source.tar.gz" | sha256sum -c -
+          python3 - <<'PY'
+          import hashlib
+          p='/tmp/blee-source.tar.gz'
+          got=hashlib.sha256(open(p,'rb').read()).hexdigest()
+          want='c28e106c9bbfb1687e061c33ec3bc3fb0ad9623fc8c320876611f390ddfc104d'
+          assert got == want, (got, want)
+          PY
           tar -xzf /tmp/blee-source.tar.gz -C .
           test -f package.json
           test -f src/hooks/useBlee.ts
@@ -38,7 +44,7 @@ jobs:
           grep -q 'durablyReceivedAt' src/hooks/useBlee.ts
           grep -q 'replacePayments' src/lib/persistence.ts
 
-      - name: Select Node 22 and Java 21
+      - name: Select Node 22
         shell: bash
         run: |
           set -euo pipefail
@@ -47,10 +53,6 @@ jobs:
             nvm install 22
             nvm use 22
             echo "$HOME/.nvm/versions/node/$(node -v)/bin" >> "$GITHUB_PATH"
-          fi
-          if [ -n "${JAVA_HOME_21_X64:-}" ]; then
-            echo "JAVA_HOME=$JAVA_HOME_21_X64" >> "$GITHUB_ENV"
-            echo "$JAVA_HOME_21_X64/bin" >> "$GITHUB_PATH"
           fi
           node --version
           npm --version
@@ -86,7 +88,11 @@ jobs:
           APK=android/app/build/outputs/apk/debug/app-debug.apk
           test -f "$APK"
           unzip -t "$APK" >/dev/null
-          sha256sum "$APK" | tee /tmp/blee-apk.sha256
+          python3 - <<'PY' | tee /tmp/blee-apk.sha256
+          import hashlib
+          p='android/app/build/outputs/apk/debug/app-debug.apk'
+          print(hashlib.sha256(open(p,'rb').read()).hexdigest(), ' Blee-1.0-sqlite-offline-debug.apk')
+          PY
           keytool -printcert -jarfile "$APK" | sed -n '1,24p'
           mkdir -p dist
           cp "$APK" dist/Blee-1.0-sqlite-offline-debug.apk
