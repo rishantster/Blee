@@ -39,9 +39,6 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
   exit 1
 fi
 
-# macOS ships a /usr/bin/java launcher even when no JDK exists, so `command -v java`
-# is not sufficient. Verify a working Java 21+ runtime and, if absent, install a
-# private Temurin JDK into this repo. No Homebrew, sudo or Android Studio required.
 JAVA_OK=0
 if java -version >/tmp/blee-java-version.txt 2>&1; then
   JAVA_MAJOR="$(java -version 2>&1 | awk -F'[\".]' '/version/ {print $2; exit}')"
@@ -114,7 +111,6 @@ export ANDROID_HOME="$SDK_ROOT"
 export ANDROID_SDK_ROOT="$SDK_ROOT"
 export PATH="$SDK_ROOT/cmdline-tools/latest/bin:$SDK_ROOT/platform-tools:$PATH"
 
-# Install both current SDK levels so Capacitor/AGP can choose what it needs.
 yes | sdkmanager --licenses >/dev/null || true
 sdkmanager \
   "platform-tools" \
@@ -144,10 +140,35 @@ PY
     WANT="c28e106c9bbfb1687e061c33ec3bc3fb0ad9623fc8c320876611f390ddfc104d"
     [ "$GOT" = "$WANT" ] || { echo "Blee source checksum mismatch: $GOT"; exit 1; }
   fi
-  tar -xzf /tmp/blee-source.tar.gz -C .
+  tar -xzf /tmp/blee-source.tar.gz -C "$ROOT"
 fi
 
-# Some tar writers add a single wrapper directory. Normalize that automatically.
+# The first source archive accidentally omitted the native Android plugin source.
+# Restore the exact Blee SQLite + BLE/LAN plugins from the separately checksummed bundle.
+NATIVE_B64="$ROOT/bootstrap/blee-native-plugins.tar.gz.b64"
+if [ -f "$NATIVE_B64" ]; then
+  echo "Restoring Blee native SQLite + nearby transport..."
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - <<'PY'
+import base64, hashlib, pathlib
+src = pathlib.Path('bootstrap/blee-native-plugins.tar.gz.b64').read_bytes()
+out = base64.b64decode(src)
+want = 'fd7c6ddcc2d076b668986ee86b088220fba98e95989b33a7cfd391be3f83309e'
+got = hashlib.sha256(out).hexdigest()
+if got != want:
+    raise SystemExit(f'Blee native plugin checksum mismatch: {got}')
+pathlib.Path('/tmp/blee-native-plugins.tar.gz').write_bytes(out)
+print('Blee native plugin archive verified:', got)
+PY
+  else
+    openssl base64 -d -A -in "$NATIVE_B64" -out /tmp/blee-native-plugins.tar.gz
+    GOT="$(shasum -a 256 /tmp/blee-native-plugins.tar.gz | awk '{print $1}')"
+    WANT="fd7c6ddcc2d076b668986ee86b088220fba98e95989b33a7cfd391be3f83309e"
+    [ "$GOT" = "$WANT" ] || { echo "Blee native plugin checksum mismatch: $GOT"; exit 1; }
+  fi
+  tar -xzf /tmp/blee-native-plugins.tar.gz -C "$ROOT"
+fi
+
 if [ ! -f "$ROOT/package.json" ]; then
   CANDIDATE_PACKAGE="$(find "$ROOT" -maxdepth 5 -type f -name package.json -not -path '*/node_modules/*' | head -n 1 || true)"
   if [ -n "$CANDIDATE_PACKAGE" ]; then
@@ -164,6 +185,7 @@ REQUIRED_FILES=(
   "package.json"
   "src/hooks/useBlee.ts"
   "plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java"
+  "plugins/blee-nearby/android/src/main/java/com/blee/nearby/BleeNearbyPlugin.java"
 )
 MISSING=0
 for REQUIRED in "${REQUIRED_FILES[@]}"; do
@@ -175,17 +197,14 @@ done
 if [ "$MISSING" -ne 0 ]; then
   echo
   echo "Top of reconstructed source tree:"
-  find "$ROOT" -maxdepth 4 -type f \
+  find "$ROOT" -maxdepth 7 -type f \
     -not -path '*/.git/*' \
     -not -path '*/.blee-tools/*' \
-    | sed "s#^$ROOT/##" | sort | head -n 120
-  echo
-  echo "Archive contents:"
-  tar -tzf /tmp/blee-source.tar.gz | head -n 120
+    | sed "s#^$ROOT/##" | sort | head -n 160
   exit 1
 fi
 
-echo "Blee source layout verified."
+echo "Blee source + native plugins verified."
 
 echo "Installing app dependencies..."
 npm install --no-audit --no-fund
