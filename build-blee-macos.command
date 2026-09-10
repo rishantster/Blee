@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-APP_NAME="Blee-1.1.0-hackathon-debug.apk"
+APP_NAME="Blee-1.1.1-storage-fixed-debug.apk"
 SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 TOOLS_ROOT="$ROOT/.blee-tools"
 CLI_VERSION="15859902"
@@ -102,8 +102,6 @@ print('Blee source archive verified:', got)
 PY
   SOURCE_TMP="$(mktemp -d)"
   tar -xzf /tmp/blee-source.tar.gz -C "$SOURCE_TMP"
-  # The bootstrap archive contains an old README/workflow snapshot. Only restore
-  # application source/configuration; never overwrite the judge-facing repo metadata.
   rsync -a \
     --exclude 'README.md' \
     --exclude '.github/' \
@@ -148,7 +146,7 @@ from pathlib import Path
 p=Path('src/lib/persistence.ts'); s=p.read_text()
 start=s.index('export function nativePersistenceAvailable()')
 end=s.index('function normalizePayments', start)
-replacement='''export function nativePersistenceAvailable() {\n  return Capacitor.isNativePlatform();\n}\n\nexport async function initPersistence(): Promise<{ native: true; journalMode: string }> {\n  if (ready) return { native: true, journalMode: 'wal' };\n  if (!Capacitor.isNativePlatform()) {\n    throw new Error('Blee payment storage requires the Android app.');\n  }\n  try {\n    const result = await BleeStore.init();\n    if (!result.ready) throw new Error('native store returned not-ready');\n    ready = true;\n    return { native: true, journalMode: result.journalMode || 'wal' };\n  } catch (error) {\n    const detail = error instanceof Error ? error.message : String(error);\n    throw new Error(`Blee SQLite initialization failed: ${detail}`);\n  }\n}\n\n'''
+replacement='''export function nativePersistenceAvailable() {\n  return Capacitor.isNativePlatform();\n}\n\nexport async function initPersistence(): Promise<{ native: true; journalMode: string }> {\n  if (ready) return { native: true, journalMode: 'wal' };\n  if (!Capacitor.isNativePlatform()) {\n    throw new Error('Blee payment storage requires the Android app.');\n  }\n  try {\n    const result = await BleeStore.init();\n    if (!result.ready) throw new Error('native store returned not-ready');\n    ready = true;\n    return { native: true, journalMode: result.journalMode || 'unknown' };\n  } catch (error) {\n    const detail = error instanceof Error ? error.message : String(error);\n    throw new Error(`Blee SQLite initialization failed: ${detail}`);\n  }\n}\n\n'''
 s=s[:start]+replacement+s[end:]
 p.write_text(s)
 
@@ -203,8 +201,8 @@ drawable=res/'drawable'; drawable.mkdir(parents=True, exist_ok=True)
 
 gradle=Path('android/app/build.gradle')
 g=gradle.read_text()
-g=re.sub(r'versionCode\s+\d+', 'versionCode 3', g)
-g=re.sub(r'versionName\s+"[^"]+"', 'versionName "1.1.0"', g)
+g=re.sub(r'versionCode\s+\d+', 'versionCode 4', g)
+g=re.sub(r'versionName\s+"[^"]+"', 'versionName "1.1.1"', g)
 gradle.write_text(g)
 
 for rel in ('values/styles.xml','values-v31/styles.xml'):
@@ -213,7 +211,7 @@ for rel in ('values/styles.xml','values-v31/styles.xml'):
         v=f.read_text()
         v=re.sub(r'@mipmap/ic_launcher(?:_round)?', '@drawable/blee_launcher', v)
         f.write_text(v)
-print('Blee 1.1 launcher identity and version verified.')
+print('Blee 1.1.1 launcher identity and version verified.')
 PY
 
 echo "Compiling APK..."
