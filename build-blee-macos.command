@@ -135,9 +135,6 @@ python3 - <<'PY'
 from pathlib import Path
 import json
 
-# 1) Capacitor can briefly report a compiled custom plugin unavailable during
-# bridge startup. Do not use that advisory check as the storage gate; call the
-# native plugin and let init() be authoritative.
 p=Path('src/lib/persistence.ts'); s=p.read_text()
 start=s.index('export function nativePersistenceAvailable()')
 end=s.index('function normalizePayments', start)
@@ -145,8 +142,6 @@ replacement='''export function nativePersistenceAvailable() {\n  return Capacito
 s=s[:start]+replacement+s[end:]
 p.write_text(s)
 
-# 2) Keep native plugin registration side-effect free. Opening SQLite from
-# Plugin.load() can make Capacitor drop the plugin if database setup throws.
 p=Path('plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java'); s=p.read_text()
 old='''    @Override\n    public void load() {\n        helper = new BleeDb();\n        helper.setWriteAheadLoggingEnabled(true);\n        helper.getWritableDatabase();\n    }\n\n    private SQLiteDatabase db() {\n        if (helper == null) { helper = new BleeDb(); helper.setWriteAheadLoggingEnabled(true); }\n        return helper.getWritableDatabase();\n    }'''
 new='''    @Override\n    public void load() {\n        helper = new BleeDb();\n        helper.setWriteAheadLoggingEnabled(true);\n    }\n\n    private synchronized SQLiteDatabase db() {\n        if (helper == null) {\n            helper = new BleeDb();\n            helper.setWriteAheadLoggingEnabled(true);\n        }\n        return helper.getWritableDatabase();\n    }'''
@@ -155,7 +150,6 @@ s=s.replace(old,new)
 s=s.replace('            db.rawQuery("PRAGMA journal_mode=WAL", null).close();\n','')
 p.write_text(s)
 
-# 3) Replace the inherited ARC Drop/A mark with a Blee-specific B mark.
 p=Path('src/components/BleeApp.tsx'); s=p.read_text()
 start=s.index('function LogoMark('); end=s.index('\nfunction Brand', start)
 logo='''function LogoMark({ size = 36 }: { size?: number }) {\n  return (\n    <span className="logo-mark" style={{ width: size, height: size }} aria-hidden="true">\n      <svg viewBox="0 0 36 36" fill="none">\n        <rect x="1" y="1" width="34" height="34" rx="11" fill="currentColor"/>\n        <path d="M11.2 8.7v18.6M11.2 9h7.3c3.7 0 5.9 1.8 5.9 4.6 0 2.9-2.2 4.7-5.9 4.7h-7.3M11.2 18.3h8.2c4 0 6.4 1.8 6.4 4.6 0 2.9-2.4 4.7-6.4 4.7h-8.2" stroke="white" strokeWidth="2.65" strokeLinecap="round" strokeLinejoin="round"/>\n      </svg>\n    </span>\n  );\n}\n'''
@@ -165,13 +159,9 @@ s=s.replace('Blee 1.0 · ARC Testnet','Blee 1.0.1 · ARC Testnet')
 p.write_text(s)
 
 pkg=Path('package.json'); data=json.loads(pkg.read_text()); data['version']='1.0.1'; pkg.write_text(json.dumps(data, indent=2)+'\n')
-
-# 4) Make Android launcher/splash identity Blee-specific and bump version code.
-Path('scripts/configure-native.mjs').write_text(r'''import fs from 'node:fs';\nimport path from 'node:path';\n\nconst manifest = path.resolve('android/app/src/main/AndroidManifest.xml');\nif (!fs.existsSync(manifest)) throw new Error('Android project not found. Run npx cap add android first.');\nlet xml = fs.readFileSync(manifest, 'utf8');\nxml = xml.replace(/android:allowBackup="true"/g, 'android:allowBackup="false"');\nif (!xml.includes('android:allowBackup=')) xml = xml.replace('<application', '<application android:allowBackup="false"');\nif (!xml.includes('android:usesCleartextTraffic=')) xml = xml.replace('<application', '<application android:usesCleartextTraffic="false"');\nif (!xml.includes('android:fullBackupContent=')) xml = xml.replace('<application', '<application android:fullBackupContent="false"');\n\nconst resDir = path.resolve('android/app/src/main/res');\nconst drawableDir = path.join(resDir, 'drawable');\nfs.mkdirSync(drawableDir, { recursive: true });\nconst icon = `<?xml version="1.0" encoding="utf-8"?>\n<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="48" android:viewportHeight="48">\n  <path android:fillColor="#0B0C0D" android:pathData="M8,4 H40 A4,4 0,0 1,44 8 V40 A4,4 0,0 1,40 44 H8 A4,4 0,0 1,4 40 V8 A4,4 0,0 1,8 4 Z"/>\n  <path android:fillColor="@android:color/transparent" android:strokeColor="#FFFFFF" android:strokeWidth="3.2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M15,12 V36 M15,12 H25 C29.5,12 32,14.3 32,17.8 C32,21.3 29.5,23.5 25,23.5 H15 M15,23.5 H26 C30.8,23.5 33.5,25.8 33.5,29.7 C33.5,33.5 30.8,36 26,36 H15"/>\n</vector>`;\nfs.writeFileSync(path.join(drawableDir, 'blee_launcher.xml'), icon);\nxml = xml.replace(/android:icon="[^"]+"/g, 'android:icon="@drawable/blee_launcher"');\nxml = xml.replace(/android:roundIcon="[^"]+"/g, 'android:roundIcon="@drawable/blee_launcher"');\nfs.writeFileSync(manifest, xml);\n\nconst gradleFile = path.resolve('android/app/build.gradle');\nif (fs.existsSync(gradleFile)) {\n  let g=fs.readFileSync(gradleFile,'utf8');\n  g=g.replace(/versionCode\\s+\\d+/, 'versionCode 2');\n  g=g.replace(/versionName\\s+"[^"]+"/, 'versionName "1.0.1"');\n  fs.writeFileSync(gradleFile,g);\n}\nfor (const rel of ['values/styles.xml','values-v31/styles.xml']) {\n  const f=path.join(resDir,rel);\n  if (!fs.existsSync(f)) continue;\n  let v=fs.readFileSync(f,'utf8');\n  v=v.replace(/@mipmap\\/ic_launcher(?:_round)?/g,'@drawable/blee_launcher');\n  fs.writeFileSync(f,v);\n}\nconsole.log('Blee Android storage safety + launcher identity verified.');\n'''.replace(/\\n/g,'\n'))
-print('Blee 1.0.1 hotfixes applied.')
+print('Blee 1.0.1 source hotfixes applied.')
 PY
 
-echo "Blee source + native plugins verified."
 echo "Installing app dependencies..."
 npm install --no-audit --no-fund
 
@@ -184,8 +174,36 @@ npm run build
 echo "Generating Android project..."
 rm -rf android
 npm run android:prepare
-# Run once more after Capacitor sync so launcher/version patches cannot be overwritten.
-node scripts/configure-native.mjs
+
+echo "Applying Blee launcher icon + Android version..."
+python3 - <<'PY'
+from pathlib import Path
+import re
+
+manifest=Path('android/app/src/main/AndroidManifest.xml')
+xml=manifest.read_text()
+xml=re.sub(r'android:icon="[^"]+"', 'android:icon="@drawable/blee_launcher"', xml)
+xml=re.sub(r'android:roundIcon="[^"]+"', 'android:roundIcon="@drawable/blee_launcher"', xml)
+manifest.write_text(xml)
+
+res=Path('android/app/src/main/res')
+drawable=res/'drawable'; drawable.mkdir(parents=True, exist_ok=True)
+(drawable/'blee_launcher.xml').write_text('''<?xml version="1.0" encoding="utf-8"?>\n<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="48" android:viewportHeight="48">\n  <path android:fillColor="#0B0C0D" android:pathData="M8,4 H40 C42.2,4 44,5.8 44,8 V40 C44,42.2 42.2,44 40,44 H8 C5.8,44 4,42.2 4,40 V8 C4,5.8 5.8,4 8,4 Z"/>\n  <path android:fillColor="#00000000" android:strokeColor="#FFFFFF" android:strokeWidth="3.2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M15,12 V36 M15,12 H25 C29.5,12 32,14.3 32,17.8 C32,21.3 29.5,23.5 25,23.5 H15 M15,23.5 H26 C30.8,23.5 33.5,25.8 33.5,29.7 C33.5,33.5 30.8,36 26,36 H15"/>\n</vector>\n''')
+
+gradle=Path('android/app/build.gradle')
+g=gradle.read_text()
+g=re.sub(r'versionCode\s+\d+', 'versionCode 2', g)
+g=re.sub(r'versionName\s+"[^"]+"', 'versionName "1.0.1"', g)
+gradle.write_text(g)
+
+for rel in ('values/styles.xml','values-v31/styles.xml'):
+    f=res/rel
+    if f.exists():
+        v=f.read_text()
+        v=re.sub(r'@mipmap/ic_launcher(?:_round)?', '@drawable/blee_launcher', v)
+        f.write_text(v)
+print('Blee launcher identity and version verified.')
+PY
 
 echo "Compiling APK..."
 (
