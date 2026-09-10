@@ -6,16 +6,21 @@ cd "$ROOT"
 
 APP_NAME="Blee-1.0-sqlite-offline-debug.apk"
 SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+TOOLS_ROOT="$ROOT/.blee-tools"
 CLI_VERSION="15859902"
+
+mkdir -p "$TOOLS_ROOT"
 
 case "$(uname -m)" in
   arm64)
     CLI_ARCHIVE="commandlinetools-mac_arm64-${CLI_VERSION}_latest.zip"
     CLI_SHA256="835b62a26162b229b441d1f6d4680383815a270809eb33522c0d480fa5002c4e"
+    ADOPTIUM_ARCH="aarch64"
     ;;
   x86_64)
     CLI_ARCHIVE="commandlinetools-mac_x86_64-${CLI_VERSION}_latest.zip"
     CLI_SHA256="c5a6378ab5cf7e0d5701921405115befff13e9ff7417fb588389338f8bd050f3"
+    ADOPTIUM_ARCH="x64"
     ;;
   *)
     echo "Unsupported Mac architecture: $(uname -m)"
@@ -23,55 +28,71 @@ case "$(uname -m)" in
     ;;
 esac
 
-require_or_brew() {
-  local cmd="$1"
-  local formula="$2"
-  if ! command -v "$cmd" >/dev/null 2>&1; then
-    if command -v brew >/dev/null 2>&1; then
-      echo "Installing $formula..."
-      brew install "$formula"
-    else
-      echo "Missing $cmd and Homebrew is not installed. Install Homebrew first: https://brew.sh"
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+  echo "Node.js/npm are required. Install Node 22+ and rerun."
+  exit 1
+fi
+
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+if [ "$NODE_MAJOR" -lt 22 ]; then
+  echo "Node 22+ is required. Current: $(node --version)"
+  exit 1
+fi
+
+# macOS ships a /usr/bin/java launcher even when no JDK exists, so `command -v java`
+# is not sufficient. Verify a working Java 21+ runtime and, if absent, install a
+# private Temurin JDK into this repo. No Homebrew, sudo or Android Studio required.
+JAVA_OK=0
+if java -version >/tmp/blee-java-version.txt 2>&1; then
+  JAVA_MAJOR="$(java -version 2>&1 | awk -F'[\".]' '/version/ {print $2; exit}')"
+  if [ "${JAVA_MAJOR:-0}" -ge 21 ] 2>/dev/null; then
+    JAVA_OK=1
+  fi
+fi
+
+if [ "$JAVA_OK" -ne 1 ]; then
+  JDK_DIR="$TOOLS_ROOT/jdk-21"
+  if [ ! -x "$JDK_DIR/Contents/Home/bin/java" ]; then
+    echo "Java 21 not found. Installing a private Temurin JDK 21 (no sudo)..."
+    TMP_JDK="$(mktemp -d)"
+    trap 'rm -rf "${TMP_JDK:-}" "${TMP_SDK:-}"' EXIT
+    curl --fail --location --retry 4 --retry-delay 2 \
+      "https://api.adoptium.net/v3/binary/latest/21/ga/mac/${ADOPTIUM_ARCH}/jdk/hotspot/normal/eclipse" \
+      --output "$TMP_JDK/temurin21.tar.gz"
+    tar -xzf "$TMP_JDK/temurin21.tar.gz" -C "$TMP_JDK"
+    BUNDLE="$(find "$TMP_JDK" -maxdepth 3 -type d -name '*.jdk' | head -n 1)"
+    if [ -z "$BUNDLE" ] || [ ! -d "$BUNDLE/Contents/Home" ]; then
+      echo "Could not locate the downloaded JDK bundle."
       exit 1
     fi
+    rm -rf "$JDK_DIR"
+    mkdir -p "$JDK_DIR"
+    cp -R "$BUNDLE/." "$JDK_DIR/"
   fi
-}
-
-require_or_brew node node@22
-require_or_brew npm node@22
-require_or_brew java openjdk@21
-require_or_brew python3 python@3.13
-
-# Homebrew's versioned Node/OpenJDK can be keg-only.
-if command -v brew >/dev/null 2>&1; then
-  if [ -d "$(brew --prefix node@22 2>/dev/null)/bin" ]; then
-    export PATH="$(brew --prefix node@22)/bin:$PATH"
-  fi
-  if [ -d "$(brew --prefix openjdk@21 2>/dev/null)" ]; then
-    export JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home"
-    export PATH="$JAVA_HOME/bin:$PATH"
-  fi
+  export JAVA_HOME="$JDK_DIR/Contents/Home"
+  export PATH="$JAVA_HOME/bin:$PATH"
 fi
 
 echo "Node: $(node --version)"
 echo "npm: $(npm --version)"
+echo "Java:"
 java -version
 
 mkdir -p "$SDK_ROOT/cmdline-tools"
 
 if [ ! -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
-  TMP_DIR="$(mktemp -d)"
-  trap 'rm -rf "${TMP_DIR:-}"' EXIT
-  echo "Installing Android command-line tools..."
-  curl --fail --location --retry 3 \
+  TMP_SDK="$(mktemp -d)"
+  trap 'rm -rf "${TMP_JDK:-}" "${TMP_SDK:-}"' EXIT
+  echo "Installing Android command-line tools (no Android Studio required)..."
+  curl --fail --location --retry 4 --retry-delay 2 \
     "https://dl.google.com/android/repository/$CLI_ARCHIVE" \
-    --output "$TMP_DIR/$CLI_ARCHIVE"
+    --output "$TMP_SDK/$CLI_ARCHIVE"
 
-  echo "$CLI_SHA256  $TMP_DIR/$CLI_ARCHIVE" | shasum -a 256 -c -
-  unzip -q "$TMP_DIR/$CLI_ARCHIVE" -d "$TMP_DIR/unpacked"
+  echo "$CLI_SHA256  $TMP_SDK/$CLI_ARCHIVE" | shasum -a 256 -c -
+  unzip -q "$TMP_SDK/$CLI_ARCHIVE" -d "$TMP_SDK/unpacked"
   rm -rf "$SDK_ROOT/cmdline-tools/latest"
   mkdir -p "$SDK_ROOT/cmdline-tools/latest"
-  cp -R "$TMP_DIR/unpacked/cmdline-tools/." "$SDK_ROOT/cmdline-tools/latest/"
+  cp -R "$TMP_SDK/unpacked/cmdline-tools/." "$SDK_ROOT/cmdline-tools/latest/"
 fi
 
 export ANDROID_HOME="$SDK_ROOT"
@@ -90,7 +111,8 @@ sdkmanager \
 if [ -d bootstrap/parts ]; then
   echo "Reconstructing Blee source..."
   cat bootstrap/parts/part* > /tmp/blee-source.b64
-  python3 - <<'PY'
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - <<'PY'
 import base64, hashlib, pathlib
 src = pathlib.Path('/tmp/blee-source.b64').read_bytes()
 out = base64.b64decode(src)
@@ -101,6 +123,12 @@ if got != want:
 pathlib.Path('/tmp/blee-source.tar.gz').write_bytes(out)
 print('Blee source archive verified:', got)
 PY
+  else
+    openssl base64 -d -A -in /tmp/blee-source.b64 -out /tmp/blee-source.tar.gz
+    GOT="$(shasum -a 256 /tmp/blee-source.tar.gz | awk '{print $1}')"
+    WANT="c28e106c9bbfb1687e061c33ec3bc3fb0ad9623fc8c320876611f390ddfc104d"
+    [ "$GOT" = "$WANT" ] || { echo "Blee source checksum mismatch: $GOT"; exit 1; }
+  fi
   tar -xzf /tmp/blee-source.tar.gz -C .
 fi
 
@@ -118,13 +146,14 @@ echo "Building Blee UI..."
 npm run build
 
 echo "Generating Android project..."
+rm -rf android
 npm run android:prepare
 
 echo "Compiling APK..."
 (
   cd android
   chmod +x gradlew
-  ./gradlew assembleDebug --stacktrace
+  ./gradlew --no-daemon assembleDebug --stacktrace
 )
 
 APK="android/app/build/outputs/apk/debug/app-debug.apk"
