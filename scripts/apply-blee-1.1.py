@@ -59,7 +59,6 @@ def patch_component() -> None:
             raise SystemExit("Could not locate profile lock button for advanced settings insertion")
         text = text.replace(marker, '<BleeAdvancedSettings />\n\n          ' + marker, 1)
 
-    # Dynamic network labels. Keep the UI truthful after a custom network is activated.
     replacements = {
         "USDC · ARC Testnet": "{configuredNetwork.tokenSymbol} · {configuredNetwork.name}",
         "ARC Testnet · USDC": "{configuredNetwork.name} · {configuredNetwork.tokenSymbol}",
@@ -75,24 +74,105 @@ def patch_component() -> None:
     text = text.replace('<span>USDC</span>', '<span>{configuredNetwork.tokenSymbol}</span>')
     text = text.replace('RECEIVE USDC', 'RECEIVE TOKEN')
     text = text.replace('SEND USDC', 'SEND TOKEN')
-
     path.write_text(text)
 
 
-def _find_decl(text: str, literal: str):
-    pattern = re.compile(rf'(?P<prefix>(?:export\s+)?)const\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*["\']{re.escape(literal)}["\']\s*;?')
+def _find_literal_decl(text: str, literal: str) -> tuple[int, int, str]:
+    pattern = re.compile(
+        rf'(?P<prefix>(?:export\s+)?)const\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*["\']{re.escape(literal)}["\'](?:\s+as\s+const)?\s*;?'
+    )
     match = pattern.search(text)
     if not match:
         raise SystemExit(f"Could not find declaration for {literal}")
-    return match
+    return match.start(), match.end(), match.group("name")
+
+
+def _scan_call_end(text: str, open_paren: int) -> int:
+    depth = 0
+    quote: str | None = None
+    escape = False
+    line_comment = False
+    block_comment = False
+    i = open_paren
+    while i < len(text):
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+
+        if line_comment:
+            if ch == "\n":
+                line_comment = False
+            i += 1
+            continue
+        if block_comment:
+            if ch == "*" and nxt == "/":
+                block_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
+        if quote:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == quote:
+                quote = None
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "/":
+            line_comment = True
+            i += 2
+            continue
+        if ch == "/" and nxt == "*":
+            block_comment = True
+            i += 2
+            continue
+        if ch in ('"', "'", '`'):
+            quote = ch
+            i += 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                while end < len(text) and text[end].isspace():
+                    end += 1
+                if end < len(text) and text[end] == ";":
+                    end += 1
+                return end
+        i += 1
+    raise SystemExit("Unbalanced function call while patching Arc runtime")
+
+
+def _find_call_assignment(text: str, callee: str, must_contain: tuple[str, ...] = ()) -> tuple[int, int, str]:
+    pattern = re.compile(
+        rf'(?P<prefix>(?:export\s+)?)const\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*{re.escape(callee)}\s*\('
+    )
+    for match in pattern.finditer(text):
+        open_paren = text.find("(", match.start(), match.end())
+        end = _scan_call_end(text, open_paren)
+        snippet = text[match.start():end]
+        if all(needle in snippet for needle in must_contain):
+            return match.start(), end, match.group("name")
+    wanted = ", ".join(must_contain) if must_contain else "any call"
+    raise SystemExit(f"Could not locate {callee} assignment containing: {wanted}")
+
+
+def _make_decl_mutable(text: str, start: int, end: int) -> str:
+    snippet = text[start:end]
+    changed, count = re.subn(r"\bconst\b", "let", snippet, count=1)
+    if count != 1:
+        raise SystemExit("Could not make runtime declaration mutable")
+    return text[:start] + changed + text[end:]
 
 
 def _replace_call_numeric_arg(text: str, func: str, old_value: str, replacement: str) -> str:
-    # Replace a top-level final numeric argument in calls such as parseUnits(x, 6)
-    # and formatUnits(await client.readContract({...}), 6) while respecting nesting.
     needle = func + "("
     pos = 0
-    out = []
+    out: list[str] = []
     while True:
         start = text.find(needle, pos)
         if start < 0:
@@ -101,7 +181,7 @@ def _replace_call_numeric_arg(text: str, func: str, old_value: str, replacement:
         out.append(text[pos:start])
         i = start + len(needle)
         depth = 1
-        quote = None
+        quote: str | None = None
         escape = False
         while i < len(text) and depth:
             ch = text[i]
@@ -131,41 +211,44 @@ def patch_arc_runtime() -> None:
     path = ROOT / "src/lib/arc.ts"
     text = path.read_text()
     if "BLEE_ACTIVE_NETWORK" in text:
+        print("Arc runtime already has Blee network support.")
         return
 
     text = add_import(text, 'import { getActiveNetwork, type BleeNetwork } from "./networkConfig";')
 
-    rpc = _find_decl(text, "https://rpc.testnet.arc.network")
-    explorer = _find_decl(text, "https://testnet.arcscan.app")
-    token = _find_decl(text, "0x3600000000000000000000000000000000000000")
-    rpc_name, explorer_name, token_name = rpc.group("name"), explorer.group("name"), token.group("name")
+    # Identify the exact Arc constants by their values, not by guessed variable names.
+    rpc_start, rpc_end, rpc_name = _find_literal_decl(text, "https://rpc.testnet.arc.network")
+    text = _make_decl_mutable(text, rpc_start, rpc_end)
 
-    for match in (rpc, explorer, token):
-        original = match.group(0)
-        text = text.replace(original, original.replace("const", "let", 1), 1)
+    explorer_start, explorer_end, explorer_name = _find_literal_decl(text, "https://testnet.arcscan.app")
+    text = _make_decl_mutable(text, explorer_start, explorer_end)
 
-    chain_match = re.search(
-        r'(?P<prefix>(?:export\s+)?)const\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*defineChain\(\{(?P<body>.*?id\s*:\s*5042002.*?testnet\s*:\s*true.*?)\}\)\s*;?',
-        text,
-        flags=re.S,
+    token_start, token_end, token_name = _find_literal_decl(text, "0x3600000000000000000000000000000000000000")
+    text = _make_decl_mutable(text, token_start, token_end)
+
+    # The previous patcher assumed a particular formatting/order inside defineChain.
+    # Instead, parse the actual defineChain(...) call and select the one containing
+    # Arc Testnet's chain ID. This survives formatting and property-order changes.
+    chain_start, chain_end, chain_name = _find_call_assignment(text, "defineChain", ("5042002",))
+    text = _make_decl_mutable(text, chain_start, chain_end)
+
+    # Re-locate after the prior edits, then identify the public client from the
+    # actual chain/RPC identifiers used by this source file.
+    client_start, client_end, client_name = _find_call_assignment(
+        text, "createPublicClient", (chain_name, rpc_name)
     )
-    if not chain_match:
-        raise SystemExit("Could not locate Arc defineChain declaration")
-    chain_name = chain_match.group("name")
-    chain_original = chain_match.group(0)
-    text = text.replace(chain_original, chain_original.replace("const", "let", 1), 1)
+    text = _make_decl_mutable(text, client_start, client_end)
 
-    client_match = re.search(
-        rf'(?P<prefix>(?:export\s+)?)const\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*createPublicClient\(\{{\s*chain\s*:\s*{re.escape(chain_name)}\s*,\s*transport\s*:\s*http\(\s*{re.escape(rpc_name)}\s*\)\s*\}}\)\s*;?',
-        text,
-        flags=re.S,
+    # Re-locate the mutable public-client declaration so the runtime block is
+    # inserted immediately after it.
+    client_pattern = re.compile(
+        rf'(?P<prefix>(?:export\s+)?)let\s+{re.escape(client_name)}\s*=\s*createPublicClient\s*\('
     )
+    client_match = client_pattern.search(text)
     if not client_match:
-        raise SystemExit("Could not locate Arc public client declaration")
-    client_name = client_match.group("name")
-    client_original = client_match.group(0)
-    client_mutable = client_original.replace("const", "let", 1)
-    text = text.replace(client_original, client_mutable, 1)
+        raise SystemExit("Could not re-locate mutable public client")
+    open_paren = text.find("(", client_match.start(), client_match.end())
+    client_end = _scan_call_end(text, open_paren)
 
     runtime = f'''
 
@@ -195,19 +278,36 @@ export function getBleeActiveNetwork() {{
   return BLEE_ACTIVE_NETWORK;
 }}
 '''
-    insert_at = text.find(client_mutable) + len(client_mutable)
-    text = text[:insert_at] + runtime + text[insert_at:]
+    text = text[:client_end] + runtime + text[client_end:]
 
-    # Make typed-data domain follow the selected network.
-    text = re.sub(r'name\s*:\s*["\']USDC["\']\s*,\s*version\s*:\s*["\']2["\']',
-                  'name: BLEE_ACTIVE_NETWORK.eip712Name, version: BLEE_ACTIVE_NETWORK.eip712Version', text)
+    # EIP-3009 typed-data domain must follow the configured token/network.
+    domain_pattern = re.compile(
+        r'name\s*:\s*["\']USDC["\']\s*,\s*version\s*:\s*["\']2["\']'
+    )
+    text, domain_count = domain_pattern.subn(
+        'name: BLEE_ACTIVE_NETWORK.eip712Name, version: BLEE_ACTIVE_NETWORK.eip712Version',
+        text,
+    )
+    if domain_count == 0:
+        raise SystemExit("Could not patch the EIP-712 USDC domain")
 
     text = _replace_call_numeric_arg(text, "parseUnits", "6", "BLEE_ACTIVE_NETWORK.tokenDecimals")
     text = _replace_call_numeric_arg(text, "formatUnits", "6", "BLEE_ACTIVE_NETWORK.tokenDecimals")
     text = text.replace('throw new Error("Arc transaction reverted")', 'throw new Error("Network transaction reverted")')
     text = text.replace("throw new Error('Arc transaction reverted')", "throw new Error('Network transaction reverted')")
 
+    # Guardrails: fail the build if the static settlement constants still appear
+    # in executable declarations after the runtime patch was applied.
+    if "BLEE_ACTIVE_NETWORK" not in text or "getActiveNetwork" not in text:
+        raise SystemExit("Dynamic network runtime was not applied")
+    if f"{client_name} = createPublicClient" not in text:
+        raise SystemExit("Dynamic public client rebuild was not applied")
+
     path.write_text(text)
+    print(
+        "Arc runtime patched for configurable networks:",
+        f"chain={chain_name}, rpc={rpc_name}, explorer={explorer_name}, token={token_name}, client={client_name}",
+    )
 
 
 def bump_version() -> None:
@@ -219,8 +319,8 @@ def bump_version() -> None:
     configure = ROOT / "scripts/configure-native.mjs"
     if configure.exists():
         text = configure.read_text()
-        text = re.sub(r"versionCode\\s+\\d+", "versionCode 3", text)
-        text = re.sub(r'versionName\\s+"[^\"]+"', 'versionName "1.1.0"', text)
+        text = re.sub(r"versionCode\s+\d+", "versionCode 3", text)
+        text = re.sub(r'versionName\s+"[^\"]+"', 'versionName "1.1.0"', text)
         configure.write_text(text)
 
 
