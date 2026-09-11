@@ -19,8 +19,8 @@ def require(path: Path, markers: tuple[str, ...]) -> None:
 
 def main() -> None:
     package = json.loads((ROOT / "package.json").read_text())
-    if package.get("version") != "2.3.0":
-        raise SystemExit(f"VERIFY ERROR: package version is {package.get('version')}, expected 2.3.0")
+    if package.get("version") != "2.4.0":
+        raise SystemExit(f"VERIFY ERROR: package version is {package.get('version')}, expected 2.4.0")
 
     require(
         ROOT / "plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java",
@@ -72,7 +72,17 @@ def main() -> None:
         ),
     )
     require(ROOT / "src/hooks/useBlee.ts", ("BLEE_EXPLICIT_LOGOUT_ONLY",))
-    require(ROOT / "app/globals.css", ("BLEE_PREMIUM_MONOCHROME_2_3", "--blee-bg", "blee-brand-lockup"))
+    require(
+        ROOT / "app/globals.css",
+        (
+            "BLEE_PRODUCTION_WALLET_2_4",
+            "--b-bg",
+            "blee-brand-lockup",
+            "[data-blee-action=\"send\"]",
+            "[class*=\"orbit\" i]",
+            "blee-screen-in",
+        ),
+    )
     require(
         ROOT / "src/components/BleeRuntime.tsx",
         (
@@ -87,11 +97,12 @@ def main() -> None:
     require(
         ROOT / "src/components/BleeApp.tsx",
         (
-            "BLEE_UI_2_3",
-            "Blee 2.3",
+            "BLEE_UI_2_4",
+            "BLEE_NO_DECORATIVE_HERO",
+            "Blee 2.4",
             "blee-brand-lockup",
-            "Pay nearby. Settle when connected.",
             'data-blee-action="send"',
+            'data-blee-action="receive"',
             "formatLedgerTimestamp",
         ),
     )
@@ -102,10 +113,12 @@ def main() -> None:
 
     if re.search(r"(?i)at\s+least\s+12\s+characters|passphrase\.length\s*<\s*12", app + "\n" + wallet):
         raise SystemExit("VERIFY ERROR: old 12-character passphrase rule/copy remains")
-    if 'data-blee-action="send"' not in app:
-        raise SystemExit("VERIFY ERROR: no explicit Send action survives generated UI")
+    if not re.search(r"passphrase\.length\s*<\s*8", wallet):
+        raise SystemExit("VERIFY ERROR: wallet crypto path is not enforcing 8-character minimum")
+    if 'data-blee-action="send"' not in app or 'data-blee-action="receive"' not in app:
+        raise SystemExit("VERIFY ERROR: Send/Receive actions are not explicitly wired in generated UI")
     if "Payments that keep moving" in app:
-        raise SystemExit("VERIFY ERROR: obsolete header tagline remains in generated UI")
+        raise SystemExit("VERIFY ERROR: obsolete marketing tagline remains in generated UI")
 
     for timer in re.finditer(r"set(?:Timeout|Interval)\((.{0,3500}?)\)", hook, re.S):
         if re.search(r"logout|lockWallet|lockSession|clearWalletSession|setUnlocked\(false\)|setLocked\(true\)", timer.group(1)):
@@ -198,15 +211,16 @@ def main() -> None:
         raise SystemExit(f"VERIFY ERROR: obsolete sponsored-relay implementation remains: {found}")
 
     print("============================================================")
-    print("VERIFIED: Blee 2.3 Mesh v2 source wiring")
+    print("VERIFIED: Blee 2.4 production wallet + Mesh v2")
     print("- crash-atomic signing + native nonce reservation")
     print("- sender-funded raw transaction relay path")
     print("- explicit logout-only in-process session policy")
     print("- 8-character wallet passphrase in UI + crypto path")
-    print("- explicit Send action present in generated wallet UI")
-    print("- compact centered Blee brand; obsolete header tagline removed")
+    print("- wired Send and Receive actions preserved")
+    print("- duplicate home navigation suppressed; bottom nav remains authoritative")
+    print("- legacy orbit/radar/halo onboarding art removed")
     print("- BLE low-latency scan/high-power advertise + supported LE PHY preference")
-    print("- premium monochrome Blee 2.3 design system")
+    print("- Blee 2.4 monochrome production design system + transitions")
     print("============================================================")
 
 
