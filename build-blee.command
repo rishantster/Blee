@@ -122,20 +122,25 @@ PY
   tar -xzf /tmp/blee-source.tar.gz -C "$SOURCE_TMP"
   rsync -a \
     --exclude 'README.md' \
+    --exclude 'ARCHITECTURE.md' \
+    --exclude 'UI_ARCHITECTURE.md' \
     --exclude '.github/' \
     --exclude 'dist/' \
     --exclude 'build-blee.command' \
     --exclude 'build-blee-macos.command' \
     --exclude 'build-blee-professional.command' \
     --exclude 'build-blee-final.command' \
+    --exclude 'scripts/apply-blee-*.py' \
+    --exclude 'scripts/verify-*.py' \
     "$SOURCE_TMP/" "$ROOT/"
   rm -rf "$SOURCE_TMP"
 
-  # Fail immediately if reconstruction somehow replaced the canonical entrypoint.
+  # Fail immediately if reconstruction somehow replaced canonical control-plane files.
   grep -q 'CANONICAL_BLEE_BUILDER_V2' "$ROOT/build-blee.command" || {
     echo "ERROR: canonical build entrypoint was replaced during source materialization"
     exit 1
   }
+  python3 scripts/verify-canonical-build.py
 fi
 
 NATIVE_B64="$ROOT/bootstrap/blee-native-plugins.tar.gz.b64"
