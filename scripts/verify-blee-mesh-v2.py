@@ -42,8 +42,10 @@ def main() -> None:
             "signTransaction",
             "sendRawTransaction",
             "refreshSenderFundedSettlementProfile",
+            "profile.nextNonce",
             "txNonce",
             "rawTransaction",
+            "maxGasCostNative",
         ),
     )
     require(
@@ -77,6 +79,7 @@ def main() -> None:
             "eth_sendRawTransaction",
             "SENDER_FUNDED_RAW_TX",
             "TRUSTED_CHAIN_ID = 5042002L",
+            "settlementRetryAfter.put(paymentId, Long.MAX_VALUE)",
         ),
         "BleeMeshPlugin.java": (
             "BleeMesh",
@@ -128,6 +131,7 @@ def main() -> None:
     print("- Native foreground BLE mesh service + reboot recovery")
     print("- Persistent dedup + bounded store-and-forward courier path")
     print("- Offline notification + viem-verified financial acceptance")
+    print("- Crash-safe local EOA nonce reservation")
     print("- Sender-funded EIP-1559 raw transaction prepared by Phone A")
     print("- Any online mesh phone can broadcast; relay phone pays zero gas")
     print("- Arc receipt is gossiped back through the BLE mesh")
