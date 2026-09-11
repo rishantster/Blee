@@ -43,12 +43,48 @@ def replace_function(text: str, name: str, replacement: str) -> tuple[str, bool]
     start = text.find(marker)
     if start < 0:
         return text, False
-    brace = text.find("{", start)
+
+    # Find the function body, not a destructuring/type brace in the parameter list.
+    paren = text.find("(", start)
+    if paren < 0:
+        return text, False
+    pdepth = 0
+    quote: str | None = None
+    escaped = False
+    i = paren
+    body_search_from = -1
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"', "`"):
+            quote = ch
+            i += 1
+            continue
+        if ch == "(":
+            pdepth += 1
+        elif ch == ")":
+            pdepth -= 1
+            if pdepth == 0:
+                body_search_from = i + 1
+                break
+        i += 1
+    if body_search_from < 0:
+        return text, False
+
+    brace = text.find("{", body_search_from)
     if brace < 0:
         return text, False
 
     depth = 0
-    quote: str | None = None
+    quote = None
     escaped = False
     i = brace
     while i < len(text):
