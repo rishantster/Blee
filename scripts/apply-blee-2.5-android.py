@@ -34,6 +34,25 @@ def install_biometric(activity: Path, package: str) -> None:
     print(f"Blee 2.5 biometric: {target.relative_to(ROOT)}")
 
 
+def harden_capacitor_reject_types(activity: Path) -> None:
+    """Capacitor PluginCall.reject accepts Exception, not arbitrary Throwable.
+
+    The biometric implementation intentionally catches broad failures around
+    Android keystore/biometric APIs, but the generated Java must narrow the
+    value passed into PluginCall.reject so javac can select the correct overload.
+    """
+    target = activity.parent / "BleeBiometricPlugin.java"
+    text = target.read_text()
+    hits = text.count("catch (Throwable error)")
+    if hits < 5:
+        raise SystemExit(f"Blee 2.5: expected biometric Throwable catches, found {hits}")
+    text = text.replace("catch (Throwable error)", "catch (Exception error)")
+    target.write_text(text)
+    if re.search(r"call\.reject\([^;\n]+,\s*error\s*\);", text) and "catch (Throwable error)" in text:
+        raise SystemExit("Blee 2.5: a Throwable is still being passed to PluginCall.reject")
+    print(f"Blee 2.5: Capacitor reject overload hardened ({hits} biometric catch blocks)")
+
+
 def generate_chime() -> None:
     raw = ANDROID / "res/raw"
     raw.mkdir(parents=True, exist_ok=True)
@@ -161,6 +180,10 @@ def verify(activity: Path) -> None:
     for marker in ('AndroidKeyStore', 'BiometricPrompt', 'AES/GCM/NoPadding', 'Use a passphrase of at least 8 characters', '@CapacitorPlugin(name = "BleeBiometric")'):
         if marker not in ptext:
             raise SystemExit(f"Blee 2.5 biometric implementation incomplete: {marker}")
+    if 'catch (Throwable error)' in ptext:
+        raise SystemExit("Blee 2.5 biometric compile guard: Throwable catch survives in reject-capable paths")
+    if ptext.count('catch (Exception error)') < 5:
+        raise SystemExit("Blee 2.5 biometric compile guard: Exception narrowing was not applied")
     manifest = (ANDROID / 'AndroidManifest.xml').read_text()
     for marker in ('USE_BIOMETRIC', 'POST_NOTIFICATIONS'):
         if marker not in manifest:
@@ -180,6 +203,7 @@ def main() -> None:
     activity = locate_activity()
     package = package_name(activity)
     install_biometric(activity, package)
+    harden_capacitor_reject_types(activity)
     generate_chime()
     patch_activity(activity)
     patch_manifest()
