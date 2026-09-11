@@ -2,7 +2,9 @@ name: Verify Blee
 
 on:
   push:
-    branches: [blee-2.4-ui-rebuild]
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -30,6 +32,9 @@ jobs:
 
       - name: Install build utilities
         run: sudo apt-get update && sudo apt-get install -y rsync
+
+      - name: Verify repository contract
+        run: python3 scripts/verify-canonical-build.py
 
       - name: Build canonical APK
         env:
