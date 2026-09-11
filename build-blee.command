@@ -34,7 +34,6 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
   exit 1
 fi
 
-# Prefer the user's Homebrew JDK 21 before downloading anything.
 if command -v brew >/dev/null 2>&1; then
   BREW_JDK="$(brew --prefix openjdk@21 2>/dev/null || true)"
   if [ -n "$BREW_JDK" ] && [ -x "$BREW_JDK/bin/java" ]; then
@@ -101,8 +100,6 @@ export PATH="$SDK_ROOT/cmdline-tools/latest/bin:$SDK_ROOT/platform-tools:$PATH"
 yes | sdkmanager --licenses >/dev/null || true
 sdkmanager "platform-tools" "platforms;android-35" "platforms;android-36" "build-tools;35.0.0" "build-tools;36.0.0"
 
-# Build starts from a clean reconstructed source snapshot every time. No prior
-# generated src/android state is trusted.
 if [ -d bootstrap/parts ]; then
   echo "Materializing Blee application source..."
   cat bootstrap/parts/part* > /tmp/blee-source.b64
@@ -153,11 +150,8 @@ for REQUIRED in "${REQUIRED_FILES[@]}"; do
   [ -f "$ROOT/$REQUIRED" ] || { echo "ERROR: materialized source is missing: $REQUIRED"; exit 1; }
 done
 
-# Base storage startup fix. This is intentionally kept here until the repository
-# is flattened into direct source; there is only one executable build pipeline.
 python3 - <<'PY'
 from pathlib import Path
-
 p=Path('src/lib/persistence.ts'); s=p.read_text()
 start=s.index('export function nativePersistenceAvailable()')
 end=s.index('function normalizePayments', start)
@@ -166,7 +160,8 @@ s=s[:start]+replacement+s[end:]
 p.write_text(s)
 PY
 
-# Apply the frozen application source in deterministic order.
+# This order is the canonical implementation recipe. Historical builders are
+# unsupported and are not called from this entrypoint.
 python3 scripts/apply-blee-1.1.py
 python3 scripts/apply-blee-professional.py
 python3 scripts/apply-blee-1.4.py
@@ -185,15 +180,12 @@ npm install --no-audit --no-fund
 npm run check
 npm run build
 
-# Android project is recreated from the verified web/plugin source, then all
-# native Blee services are installed before a second invariant check.
 rm -rf android
 npm run android:prepare
 
 python3 - <<'PY'
 from pathlib import Path
 import re
-
 gradle=Path('android/app/build.gradle')
 g=gradle.read_text()
 g=re.sub(r'versionCode\s+\d+', 'versionCode 15', g)
@@ -219,7 +211,7 @@ APK="$ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
 test -f "$APK"
 unzip -t "$APK" >/dev/null
 mkdir -p "$ROOT/dist"
-rm -f "$FINAL_APK" "$FINAL_APK.sha256"
+rm -f "$ROOT/dist"/*.apk "$ROOT/dist"/*.apk.sha256 2>/dev/null || true
 cp "$APK" "$FINAL_APK"
 
 if command -v shasum >/dev/null 2>&1; then
