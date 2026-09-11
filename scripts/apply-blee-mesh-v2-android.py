@@ -42,6 +42,30 @@ def install_templates(activity: Path, package: str) -> None:
         print(f"mesh v2 android: {target.relative_to(ROOT)}")
 
 
+def harden_sender_funded_service(activity: Path) -> None:
+    path = activity.parent / "BleeMeshService.java"
+    text = path.read_text()
+
+    # Do not let already-settled envelopes consume the first small settlement
+    # candidate window forever. The DB still bounds storage/expiry; the worker
+    # can inspect a larger local batch cheaply.
+    text = text.replace(
+        "List<String> candidates = db.settlementCandidates(now, 64);",
+        "List<String> candidates = db.settlementCandidates(now, 512);",
+        1,
+    )
+
+    # Once this process has seen a successful chain receipt, stop re-submitting
+    # the same raw transaction every loop. A reboot may re-check once, which is
+    # harmless and useful for recovery.
+    old = "db.markSettlementAttempt(paymentId, true, null);\n                settlementRetryAfter.remove(paymentId);"
+    new = "db.markSettlementAttempt(paymentId, true, null);\n                settlementRetryAfter.put(paymentId, Long.MAX_VALUE);"
+    if old not in text:
+        raise SystemExit("Could not locate sender-funded settlement success marker")
+    text = text.replace(old, new, 1)
+    path.write_text(text)
+
+
 def patch_main_activity(activity: Path) -> None:
     text = activity.read_text()
     if "import android.os.Bundle;" not in text:
@@ -166,15 +190,27 @@ def verify(activity: Path, package: str) -> None:
         if not path.exists() or f"package {package};" not in path.read_text():
             raise SystemExit(f"Mesh v2 Android source invalid: {name}")
 
+    service = (activity.parent / "BleeMeshService.java").read_text()
+    required_service = (
+        "attemptSenderFundedSettlement",
+        "eth_sendRawTransaction",
+        "SENDER_FUNDED_RAW_TX",
+        "settlementRetryAfter.put(paymentId, Long.MAX_VALUE)",
+    )
+    missing = [marker for marker in required_service if marker not in service]
+    if missing:
+        raise SystemExit(f"Sender-funded Android service incomplete: {missing}")
+
 
 def main() -> None:
     activity = locate_main_activity()
     package = app_package(activity)
     install_templates(activity, package)
+    harden_sender_funded_service(activity)
     patch_main_activity(activity)
     patch_manifest(package)
     verify(activity, package)
-    print(f"Blee Mesh v2 Android service installed for {package}.")
+    print(f"Blee 2.1 Mesh v2 sender-funded Android service installed for {package}.")
 
 
 if __name__ == "__main__":
