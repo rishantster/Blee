@@ -141,7 +141,7 @@ def patch_activity(activity: Path) -> None:
     }
 
     @Override
-    protected void onStart() {
+    public void onStart() {
         super.onStart();
         // Replay the Blee sonic identity when the user genuinely brings the app
         // to the foreground. A short cooldown prevents duplicate playback from
@@ -233,11 +233,13 @@ def verify(activity: Path) -> None:
     for marker in (
         'BleeBiometricPlugin.class', 'POST_NOTIFICATIONS', 'playBleeLaunchChime()', 'R.raw.blee_open_chime',
         'BLEE_NEARBY_PERMISSION_REQUEST', 'BLUETOOTH_SCAN', 'BLUETOOTH_CONNECT', 'BLUETOOTH_ADVERTISE',
-        'ensureBleeNearbyPermissions();', 'recreate();', 'protected void onStart()', 'SystemClock.elapsedRealtime()',
+        'ensureBleeNearbyPermissions();', 'recreate();', 'public void onStart()', 'SystemClock.elapsedRealtime()',
         'bleeLaunchChimeLastPlayedAt', 'player.setVolume(0.24f, 0.24f)'
     ):
         if marker not in text:
             raise SystemExit(f"Blee 2.5 Android activity feature missing: {marker}")
+    if 'protected void onStart()' in text:
+        raise SystemExit("Blee 2.5 Android compile guard: onStart must remain public for Capacitor BridgeActivity")
     plugin = activity.parent / "BleeBiometricPlugin.java"
     ptext = plugin.read_text()
     for marker in ('AndroidKeyStore', 'BiometricPrompt', 'FingerprintManager', 'AES/GCM/NoPadding', 'Use a passphrase of at least 8 characters', '@CapacitorPlugin(name = "BleeBiometric")'):
