@@ -1,6 +1,6 @@
 # Blee Mesh v2 — Frozen Architecture
 
-Status: **frozen for Blee 2.1.1 implementation**
+Status: **frozen protocol foundation for the Blee 2.2 implementation**
 
 Blee is an offline-first, self-custodial payment system. Internet availability controls blockchain settlement, not whether Blee devices can create, persist, deliver, acknowledge, notify, carry or reconcile payments.
 
@@ -82,14 +82,14 @@ If the cached raw transaction becomes stale because the sender changed the EOA n
 
 ## 4. Crash-atomic signing
 
-Blee 2.1.1 makes signing persistence explicit. There are two SQLite transaction boundaries around wallet signing.
+Blee uses two SQLite transaction boundaries around wallet signing.
 
 ### Boundary A — reserve before signing
 
 Before either signature is allowed to become usable by the app, native SQLite reserves the signing intent:
 
 ```text
-BEGIN IMMEDIATE/SQLite transaction
+BEGIN SQLite transaction
 
 signing_id
 session_id
@@ -138,9 +138,15 @@ The next signing session marks old incomplete `SIGNING` rows `ABORTED`. Their EO
 
 Rows in `READY` or `PERSISTED` are never reclaimed this way.
 
+### Capacitor bridge numeric rule
+
+The bridge representation of chain ID, expiry and locally reserved transaction nonce is transport detail, not financial authority. Blee serializes these values losslessly and the native store accepts either numeric JSON values or numeric strings before validating them.
+
+The canonical development chain ID remains `5042002`; bridge coercion must never change the signed value.
+
 ## 5. Payment-journal atomicity
 
-When the existing Blee payment journal persists an outgoing payment, one SQLite transaction performs all of the following:
+When the Blee payment journal persists an outgoing payment, one SQLite transaction performs all of the following:
 
 ```text
 BEGIN
@@ -155,7 +161,7 @@ COMMIT
 
 If any validation fails, the payment row rolls back as well.
 
-For pre-2.1.1 durable outgoing payments, the store has an explicit one-time legacy migration path that synthesizes a `PERSISTED` signing record from the already durable payment payload. New payments always carry the atomic-signing marker.
+For pre-atomic durable outgoing payments, the store may use an explicit one-time legacy migration path that synthesizes a `PERSISTED` signing record from the already durable payment payload. New payments always carry the atomic-signing marker.
 
 ## 6. Mesh-outbox atomicity
 
@@ -396,6 +402,10 @@ Production should use rotating BLE identifiers and authenticated/private peer se
 
 Modern Android can still restrict background work, and user force-stop is authoritative. Blee cannot silently force Bluetooth or Wi-Fi on.
 
+### Discovery implementation
+
+Bluetooth LE uses the 2.4 GHz ISM band; there are no additional Bluetooth frequency bands for Blee to enable. The Android implementation may improve discovery and transfer reliability with low-latency scanning, high-power advertising, scan-failure rearming, high-priority GATT links and preference for supported 1M, 2M and LE Coded PHYs. These are implementation optimizations and do not change the Mesh v2 packet protocol.
+
 ## 18. Development settlement rail
 
 Current validated rail:
@@ -442,3 +452,9 @@ Blee still requires:
 16. Wallet keys authorize money; device keys authorize transport.
 17. Recovery comes from durable SQLite/WAL state after normal process/reboot lifecycle.
 18. If sender-funded raw settlement cannot be prepared safely, Blee degrades to `AUTH_ONLY` rather than inventing a nonce or charging another user.
+
+## 21. Product/session policy outside the payment protocol
+
+Blee 2.2 intentionally removes application-level inactivity auto-logout. An explicitly unlocked wallet remains unlocked for the lifetime of the active app process unless the user chooses Log out. This is a product session policy, not a weakening of the cryptographic persistence rules above.
+
+The decrypted wallet key is not written to ordinary persistent storage merely to preserve an unlocked session. Android process death, device reboot, force-stop or other OS lifecycle events may therefore require the wallet to be unlocked again.
