@@ -35,17 +35,22 @@ def install_biometric(activity: Path, package: str) -> None:
 
 
 def harden_capacitor_reject_types(activity: Path) -> None:
-    """Capacitor PluginCall.reject accepts Exception, not arbitrary Throwable."""
+    """Capacitor PluginCall.reject accepts Exception, not arbitrary Throwable.
+
+    Newer templates are already narrowed. Older templates are normalized here so
+    a reconstructed source snapshot cannot reintroduce the javac failure.
+    """
     target = activity.parent / "BleeBiometricPlugin.java"
     text = target.read_text()
     hits = text.count("catch (Throwable error)")
-    if hits < 5:
-        raise SystemExit(f"Blee 2.5: expected biometric Throwable catches, found {hits}")
-    text = text.replace("catch (Throwable error)", "catch (Exception error)")
-    target.write_text(text)
+    if hits:
+        text = text.replace("catch (Throwable error)", "catch (Exception error)")
+        target.write_text(text)
     if re.search(r"call\.reject\([^;\n]+,\s*error\s*\);", text) and "catch (Throwable error)" in text:
         raise SystemExit("Blee 2.5: a Throwable is still being passed to PluginCall.reject")
-    print(f"Blee 2.5: Capacitor reject overload hardened ({hits} biometric catch blocks)")
+    if text.count("catch (Exception error)") < 5:
+        raise SystemExit("Blee 2.5: biometric reject paths are not Exception-safe")
+    print(f"Blee 2.5: Capacitor reject overload hardened ({hits} legacy Throwable catch blocks normalized)")
 
 
 def generate_chime() -> None:
@@ -150,9 +155,6 @@ def patch_activity(activity: Path) -> None:
             }
         }
         if (granted) {
-            // The mesh service retries every few seconds, but recreating the
-            // Capacitor activity also re-arms the legacy nearby peer scanner
-            // after its first permission-gated start attempt.
             BleeMeshService.start(this);
             recreate();
         }
@@ -224,7 +226,7 @@ def verify(activity: Path) -> None:
             raise SystemExit(f"Blee 2.5 Android activity feature missing: {marker}")
     plugin = activity.parent / "BleeBiometricPlugin.java"
     ptext = plugin.read_text()
-    for marker in ('AndroidKeyStore', 'BiometricPrompt', 'AES/GCM/NoPadding', 'Use a passphrase of at least 8 characters', '@CapacitorPlugin(name = "BleeBiometric")'):
+    for marker in ('AndroidKeyStore', 'BiometricPrompt', 'FingerprintManager', 'AES/GCM/NoPadding', 'Use a passphrase of at least 8 characters', '@CapacitorPlugin(name = "BleeBiometric")'):
         if marker not in ptext:
             raise SystemExit(f"Blee 2.5 biometric implementation incomplete: {marker}")
     if 'catch (Throwable error)' in ptext:
@@ -243,7 +245,7 @@ def verify(activity: Path) -> None:
     db = (activity.parent / 'BleeMeshDb.java').read_text()
     if 'Payment delivered' not in db:
         raise SystemExit("Blee 2.5 delivery notification missing")
-    print("Blee 2.5 Android verified: biometric + notifications + startup chime + runtime nearby permissions/rearm")
+    print("Blee 2.5 Android verified: fingerprint-only biometric + notifications + startup chime + runtime nearby permissions/rearm")
 
 
 def main() -> None:
