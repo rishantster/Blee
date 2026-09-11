@@ -1,0 +1,486 @@
+package __BLEE_APP_PACKAGE__;
+
+import android.content.ContentValues;
+import android.content.Context;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+
+import org.json.JSONObject;
+
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
+
+final class BleeMeshDb {
+    private final Context context;
+    private SQLiteDatabase database;
+
+    BleeMeshDb(Context context) {
+        this.context = context.getApplicationContext();
+    }
+
+    synchronized SQLiteDatabase db() {
+        if (database == null || !database.isOpen()) {
+            File file = context.getDatabasePath("blee.db");
+            File parent = file.getParentFile();
+            if (parent != null) parent.mkdirs();
+            database = SQLiteDatabase.openOrCreateDatabase(file, null);
+            database.enableWriteAheadLogging();
+            ensureSchema(database);
+        }
+        return database;
+    }
+
+    synchronized void close() {
+        if (database != null) database.close();
+        database = null;
+    }
+
+    private static void ensureSchema(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS payments (payment_key TEXT PRIMARY KEY NOT NULL,payment_id TEXT NOT NULL,direction TEXT NOT NULL,state TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,payload TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL,value TEXT NOT NULL,updated_at INTEGER NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS payment_events (event_id TEXT PRIMARY KEY NOT NULL,payment_id TEXT NOT NULL,event_type TEXT NOT NULL,event_at INTEGER NOT NULL,source_device TEXT,payload TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS mesh_inbox (message_id TEXT PRIMARY KEY NOT NULL,packet_type TEXT NOT NULL,payment_id TEXT,received_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,hop_count INTEGER NOT NULL,packet TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS mesh_outbox (message_id TEXT PRIMARY KEY NOT NULL,packet_type TEXT NOT NULL,payment_id TEXT,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,hop_count INTEGER NOT NULL,hop_limit INTEGER NOT NULL,copy_budget INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,next_attempt_at INTEGER NOT NULL,packet TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS mesh_seen_packets (message_id TEXT PRIMARY KEY NOT NULL,seen_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS courier_envelopes (message_id TEXT PRIMARY KEY NOT NULL,payment_id TEXT,destination_wallet TEXT,received_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,hop_count INTEGER NOT NULL,packet TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS settlement_jobs (payment_id TEXT PRIMARY KEY NOT NULL,state TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,next_attempt_at INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,last_error TEXT,authorization TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS settlement_receipts (payment_id TEXT PRIMARY KEY NOT NULL,tx_hash TEXT NOT NULL,chain_id INTEGER,block_number TEXT,reported_at INTEGER NOT NULL,verified_at INTEGER,receipt TEXT NOT NULL)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS peer_identities (wallet_address TEXT PRIMARY KEY NOT NULL,display_name TEXT,avatar TEXT,device_id TEXT,updated_at INTEGER NOT NULL,payload TEXT NOT NULL)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS mesh_outbox_due_idx ON mesh_outbox(next_attempt_at,expires_at)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS payment_events_payment_idx ON payment_events(payment_id,event_at ASC)");
+    }
+
+    synchronized String activeWallet() {
+        try (Cursor c = db().query("kv", new String[] { "value" }, "key=?", new String[] { "wallet.vault.v2" }, null, null, null)) {
+            if (!c.moveToFirst()) return null;
+            JSONObject vault = new JSONObject(c.getString(0));
+            String address = vault.optString("address", "");
+            return address.isEmpty() ? null : address.toLowerCase(Locale.ROOT);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    synchronized String getKv(String key) {
+        try (Cursor c = db().query("kv", new String[] { "value" }, "key=?", new String[] { key }, null, null, null)) {
+            return c.moveToFirst() ? c.getString(0) : null;
+        }
+    }
+
+    synchronized void setKv(String key, String value) {
+        ContentValues cv = new ContentValues();
+        cv.put("key", key);
+        cv.put("value", value);
+        cv.put("updated_at", System.currentTimeMillis());
+        db().insertWithOnConflict("kv", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    synchronized void bootstrapOutgoing(String deviceId, String publicKey) {
+        long now = System.currentTimeMillis();
+        cleanup(now);
+        try (Cursor c = db().query("payments", new String[] { "payment_id","state","payload","created_at" }, "direction=?", new String[] { "outgoing" }, null, null, "created_at ASC")) {
+            while (c.moveToNext()) {
+                String paymentId = c.getString(0);
+                String state = c.getString(1);
+                if (isFinalState(state)) continue;
+                JSONObject payment;
+                try { payment = new JSONObject(c.getString(2)); } catch (Throwable ignored) { continue; }
+                JSONObject auth = payment.optJSONObject("authorization");
+                if (auth == null) auth = payment.optJSONObject("auth");
+                if (auth == null || auth.optString("signature", "").isEmpty()) continue;
+
+                long expiry = authorizationExpiry(auth, now + 24L * 60L * 60L * 1000L);
+                String messageId = "pay:" + paymentId;
+                if (outboxExists(messageId)) continue;
+
+                String destination = firstNonEmpty(
+                    payment.optString("receiver", ""),
+                    payment.optString("to", ""),
+                    auth.optString("to", "")
+                ).toLowerCase(Locale.ROOT);
+                try {
+                    JSONObject packet = packet("PAYMENT_ENVELOPE", messageId, paymentId, destination, payment.toString(), now, expiry, 0, 6, deviceId, publicKey);
+                    enqueue(packet, 3);
+                    addEvent(paymentId, "QUEUED", now, deviceId, packet.toString());
+                    ContentValues job = new ContentValues();
+                    job.put("payment_id", paymentId);
+                    job.put("state", "PENDING");
+                    job.put("created_at", now);
+                    job.put("updated_at", now);
+                    job.put("next_attempt_at", now);
+                    job.put("attempts", 0);
+                    job.put("authorization", auth.toString());
+                    db().insertWithOnConflict("settlement_jobs", null, job, SQLiteDatabase.CONFLICT_IGNORE);
+                } catch (Throwable ignored) {}
+            }
+        }
+    }
+
+    synchronized List<String> duePackets(long now, int limit) {
+        List<String> rows = new ArrayList<>();
+        try (Cursor c = db().query("mesh_outbox", new String[] { "packet" }, "expires_at>? AND next_attempt_at<=?", new String[] { String.valueOf(now), String.valueOf(now) }, null, null, "created_at ASC", String.valueOf(limit))) {
+            while (c.moveToNext()) rows.add(c.getString(0));
+        }
+        return rows;
+    }
+
+    synchronized void recordAttempt(String messageId) {
+        long now = System.currentTimeMillis();
+        int attempts = 0;
+        try (Cursor c = db().query("mesh_outbox", new String[] { "attempts" }, "message_id=?", new String[] { messageId }, null, null, null)) {
+            if (c.moveToFirst()) attempts = c.getInt(0);
+        }
+        attempts += 1;
+        long delay = Math.min(60_000L, (1L << Math.min(attempts, 6)) * 1000L);
+        ContentValues cv = new ContentValues();
+        cv.put("attempts", attempts);
+        cv.put("next_attempt_at", now + delay);
+        db().update("mesh_outbox", cv, "message_id=?", new String[] { messageId });
+    }
+
+    synchronized ProcessResult receive(String raw, String localDeviceId, String localPublicKey) {
+        long now = System.currentTimeMillis();
+        try {
+            JSONObject packet = new JSONObject(raw);
+            if (packet.optInt("version", 0) != 2) return ProcessResult.reject();
+            String messageId = packet.optString("messageId", "");
+            String type = packet.optString("type", "");
+            String paymentId = packet.optString("paymentId", "");
+            long expiresAt = packet.optLong("expiresAt", 0);
+            int hopCount = packet.optInt("hopCount", 0);
+            int hopLimit = packet.optInt("hopLimit", 6);
+            if (messageId.isEmpty() || type.isEmpty() || expiresAt <= now || hopCount > hopLimit) return ProcessResult.reject();
+            if (!verifyPacket(packet)) return ProcessResult.reject();
+            if (hasSeen(messageId)) return ProcessResult.duplicate();
+
+            ContentValues seen = new ContentValues();
+            seen.put("message_id", messageId);
+            seen.put("seen_at", now);
+            seen.put("expires_at", expiresAt);
+            db().insertWithOnConflict("mesh_seen_packets", null, seen, SQLiteDatabase.CONFLICT_IGNORE);
+
+            ContentValues inbox = new ContentValues();
+            inbox.put("message_id", messageId);
+            inbox.put("packet_type", type);
+            inbox.put("payment_id", paymentId);
+            inbox.put("received_at", now);
+            inbox.put("expires_at", expiresAt);
+            inbox.put("hop_count", hopCount);
+            inbox.put("packet", raw);
+            db().insertWithOnConflict("mesh_inbox", null, inbox, SQLiteDatabase.CONFLICT_IGNORE);
+
+            String destination = packet.optString("destinationWallet", "").toLowerCase(Locale.ROOT);
+            String wallet = activeWallet();
+            boolean forUs = wallet != null && !destination.isEmpty() && wallet.equals(destination);
+            boolean changed = false;
+            String notifyTitle = null;
+            String notifyBody = null;
+
+            if ("PAYMENT_ENVELOPE".equals(type) && forUs) {
+                JSONObject payment = new JSONObject(packet.optString("payload", "{}"));
+                String id = payment.optString("id", paymentId);
+                if (!id.isEmpty()) {
+                    payment.put("direction", "incoming");
+                    payment.put("state", "delivered_offline");
+                    payment.put("updatedAt", now);
+                    if (!payment.has("createdAt")) payment.put("createdAt", packet.optLong("createdAt", now));
+                    ContentValues pv = new ContentValues();
+                    pv.put("payment_key", "incoming:" + id);
+                    pv.put("payment_id", id);
+                    pv.put("direction", "incoming");
+                    pv.put("state", "delivered_offline");
+                    pv.put("created_at", payment.optLong("createdAt", now));
+                    pv.put("updated_at", now);
+                    pv.put("payload", payment.toString());
+                    db().insertWithOnConflict("payments", null, pv, SQLiteDatabase.CONFLICT_REPLACE);
+                    addEvent(id, "RECIPIENT_RECEIVED", now, packet.optString("originDeviceId", null), raw);
+                    changed = true;
+
+                    String amount = firstNonEmpty(payment.optString("amount", ""), payment.optString("formattedAmount", ""));
+                    String sender = firstNonEmpty(payment.optString("senderName", ""), payment.optString("peerName", ""), payment.optString("sender", ""), "Nearby sender");
+                    String symbol = firstNonEmpty(payment.optString("symbol", ""), payment.optString("tokenSymbol", ""), "USDC");
+                    notifyTitle = "Payment received";
+                    notifyBody = sender + " sent " + (amount.isEmpty() ? "a payment" : amount + " " + symbol) + " · settlement pending";
+
+                    String senderWallet = extractSender(payment);
+                    try {
+                        JSONObject ackPayload = new JSONObject();
+                        ackPayload.put("paymentId", id);
+                        ackPayload.put("receivedAt", now);
+                        ackPayload.put("recipientWallet", wallet);
+                        String ackId = "ack:" + id + ":" + wallet;
+                        JSONObject ack = packet("DELIVERY_ACK", ackId, id, senderWallet, ackPayload.toString(), now, expiresAt, 0, 6, localDeviceId, localPublicKey);
+                        enqueue(ack, 3);
+                    } catch (Throwable ignored) {}
+                }
+            } else if ("DELIVERY_ACK".equals(type) && forUs) {
+                changed = updateOutgoingState(paymentId, "acknowledged", "RECIPIENT_ACKNOWLEDGED", now, packet.optString("originDeviceId", null), raw);
+            } else if ("SETTLEMENT_RECEIPT".equals(type)) {
+                JSONObject receipt = new JSONObject(packet.optString("payload", "{}"));
+                String txHash = receipt.optString("txHash", "");
+                if (!paymentId.isEmpty() && !txHash.isEmpty()) {
+                    ContentValues rv = new ContentValues();
+                    rv.put("payment_id", paymentId);
+                    rv.put("tx_hash", txHash);
+                    rv.put("chain_id", receipt.optLong("chainId", 0));
+                    rv.put("block_number", receipt.optString("blockNumber", ""));
+                    rv.put("reported_at", now);
+                    rv.put("receipt", receipt.toString());
+                    db().insertWithOnConflict("settlement_receipts", null, rv, SQLiteDatabase.CONFLICT_REPLACE);
+                    changed = updateAnyPaymentState(paymentId, "settled_relay_reported", "SETTLED_RELAY_REPORTED", now, packet.optString("originDeviceId", null), receipt.toString()) || changed;
+                    notifyTitle = "Payment settled";
+                    notifyBody = "A nearby Blee relay reported settlement. Chain verification will follow when this phone is online.";
+                }
+            }
+
+            boolean shouldForward = !forUs && hopCount < hopLimit;
+            if (shouldForward) {
+                JSONObject forwarded = new JSONObject(raw);
+                forwarded.put("hopCount", hopCount + 1);
+                forwarded.put("deviceSignature", "");
+                // Forwarded packet keeps the origin signature/evidence. It is not re-signed as a new payment authorization.
+                ContentValues courier = new ContentValues();
+                courier.put("message_id", messageId);
+                courier.put("payment_id", paymentId);
+                courier.put("destination_wallet", destination);
+                courier.put("received_at", now);
+                courier.put("expires_at", expiresAt);
+                courier.put("hop_count", hopCount + 1);
+                courier.put("packet", raw);
+                db().insertWithOnConflict("courier_envelopes", null, courier, SQLiteDatabase.CONFLICT_IGNORE);
+                enqueueRaw(raw, type, paymentId, expiresAt, hopCount + 1, hopLimit, Math.max(1, packet.optInt("copyBudget", 3) - 1));
+            }
+
+            return new ProcessResult(true, false, changed, paymentId, type, notifyTitle, notifyBody);
+        } catch (Throwable ignored) {
+            return ProcessResult.reject();
+        }
+    }
+
+    synchronized List<String> settlementCandidates(long now, int limit) {
+        List<String> rows = new ArrayList<>();
+        try (Cursor c = db().query("mesh_inbox", new String[] { "packet" }, "packet_type=? AND expires_at>?", new String[] { "PAYMENT_ENVELOPE", String.valueOf(now) }, null, null, "received_at ASC", String.valueOf(limit))) {
+            while (c.moveToNext()) rows.add(c.getString(0));
+        }
+        return rows;
+    }
+
+    synchronized void recordSettlementReceipt(JSONObject sourcePacket, JSONObject receipt, String deviceId, String publicKey) {
+        try {
+            long now = System.currentTimeMillis();
+            String paymentId = sourcePacket.optString("paymentId", "");
+            if (paymentId.isEmpty()) return;
+            receipt.put("paymentId", paymentId);
+            String txHash = receipt.optString("txHash", "");
+            if (txHash.isEmpty()) return;
+            ContentValues rv = new ContentValues();
+            rv.put("payment_id", paymentId);
+            rv.put("tx_hash", txHash);
+            rv.put("chain_id", receipt.optLong("chainId", 0));
+            rv.put("block_number", receipt.optString("blockNumber", ""));
+            rv.put("reported_at", now);
+            rv.put("receipt", receipt.toString());
+            db().insertWithOnConflict("settlement_receipts", null, rv, SQLiteDatabase.CONFLICT_REPLACE);
+            updateAnyPaymentState(paymentId, "settled_relay_reported", "SETTLED_RELAY_REPORTED", now, deviceId, receipt.toString());
+
+            String destination = extractSender(new JSONObject(sourcePacket.optString("payload", "{}")));
+            JSONObject packet = packet("SETTLEMENT_RECEIPT", "settle:" + paymentId + ":" + txHash, paymentId, destination, receipt.toString(), now, sourcePacket.optLong("expiresAt", now + 3600000L), 0, 6, deviceId, publicKey);
+            enqueue(packet, 3);
+        } catch (Throwable ignored) {}
+    }
+
+    synchronized void markSettlementAttempt(String paymentId, boolean success, String error) {
+        long now = System.currentTimeMillis();
+        ContentValues cv = new ContentValues();
+        cv.put("updated_at", now);
+        if (success) {
+            cv.put("state", "REPORTED");
+            cv.put("last_error", (String) null);
+        } else {
+            int attempts = 0;
+            try (Cursor c = db().query("settlement_jobs", new String[] { "attempts" }, "payment_id=?", new String[] { paymentId }, null, null, null)) {
+                if (c.moveToFirst()) attempts = c.getInt(0);
+            }
+            attempts += 1;
+            cv.put("attempts", attempts);
+            cv.put("state", "PENDING");
+            cv.put("last_error", error);
+            cv.put("next_attempt_at", now + Math.min(120000L, (1L << Math.min(attempts, 7)) * 1000L));
+        }
+        db().update("settlement_jobs", cv, "payment_id=?", new String[] { paymentId });
+    }
+
+    private boolean outboxExists(String id) {
+        try (Cursor c = db().rawQuery("SELECT 1 FROM mesh_outbox WHERE message_id=? LIMIT 1", new String[] { id })) { return c.moveToFirst(); }
+    }
+
+    private boolean hasSeen(String id) {
+        try (Cursor c = db().rawQuery("SELECT 1 FROM mesh_seen_packets WHERE message_id=? LIMIT 1", new String[] { id })) { return c.moveToFirst(); }
+    }
+
+    private void enqueue(JSONObject packet, int copyBudget) {
+        enqueueRaw(packet.toString(), packet.optString("type", ""), packet.optString("paymentId", ""), packet.optLong("expiresAt", System.currentTimeMillis() + 3600000L), packet.optInt("hopCount", 0), packet.optInt("hopLimit", 6), copyBudget);
+    }
+
+    private void enqueueRaw(String raw, String type, String paymentId, long expiresAt, int hopCount, int hopLimit, int copyBudget) {
+        try {
+            JSONObject packet = new JSONObject(raw);
+            String id = packet.optString("messageId", "");
+            if (id.isEmpty()) return;
+            ContentValues cv = new ContentValues();
+            cv.put("message_id", id);
+            cv.put("packet_type", type);
+            cv.put("payment_id", paymentId);
+            cv.put("created_at", packet.optLong("createdAt", System.currentTimeMillis()));
+            cv.put("expires_at", expiresAt);
+            cv.put("hop_count", hopCount);
+            cv.put("hop_limit", hopLimit);
+            cv.put("copy_budget", copyBudget);
+            cv.put("attempts", 0);
+            cv.put("next_attempt_at", System.currentTimeMillis());
+            cv.put("packet", raw);
+            db().insertWithOnConflict("mesh_outbox", null, cv, SQLiteDatabase.CONFLICT_IGNORE);
+        } catch (Throwable ignored) {}
+    }
+
+    private JSONObject packet(String type, String messageId, String paymentId, String destination, String payload, long createdAt, long expiresAt, int hopCount, int hopLimit, String deviceId, String publicKey) throws Exception {
+        JSONObject packet = new JSONObject();
+        packet.put("version", 2);
+        packet.put("messageId", messageId);
+        packet.put("eventId", UUID.randomUUID().toString());
+        packet.put("paymentId", paymentId);
+        packet.put("type", type);
+        packet.put("originDeviceId", deviceId);
+        packet.put("destinationWallet", destination == null ? "" : destination.toLowerCase(Locale.ROOT));
+        packet.put("createdAt", createdAt);
+        packet.put("expiresAt", expiresAt);
+        packet.put("hopCount", hopCount);
+        packet.put("hopLimit", hopLimit);
+        packet.put("copyBudget", 3);
+        packet.put("payloadHash", sha256(payload));
+        packet.put("payload", payload);
+        packet.put("devicePublicKey", publicKey);
+        String signing = signingString(packet);
+        packet.put("deviceSignature", BleeDeviceIdentity.sign(signing));
+        return packet;
+    }
+
+    private boolean verifyPacket(JSONObject packet) {
+        try {
+            String payload = packet.optString("payload", "");
+            if (!sha256(payload).equals(packet.optString("payloadHash", ""))) return false;
+            return BleeDeviceIdentity.verify(packet.optString("devicePublicKey", ""), signingString(packet), packet.optString("deviceSignature", ""));
+        } catch (Throwable ignored) { return false; }
+    }
+
+    private static String signingString(JSONObject p) {
+        return p.optInt("version", 0) + "|" + p.optString("messageId", "") + "|" + p.optString("paymentId", "") + "|" + p.optString("type", "") + "|" + p.optString("originDeviceId", "") + "|" + p.optString("destinationWallet", "") + "|" + p.optLong("createdAt", 0) + "|" + p.optLong("expiresAt", 0) + "|" + p.optInt("hopCount", 0) + "|" + p.optInt("hopLimit", 0) + "|" + p.optString("payloadHash", "");
+    }
+
+    private boolean updateOutgoingState(String paymentId, String state, String eventType, long at, String sourceDevice, String eventPayload) {
+        return updatePaymentState(paymentId, "outgoing", state, eventType, at, sourceDevice, eventPayload);
+    }
+
+    private boolean updateAnyPaymentState(String paymentId, String state, String eventType, long at, String sourceDevice, String eventPayload) {
+        boolean a = updatePaymentState(paymentId, "incoming", state, eventType, at, sourceDevice, eventPayload);
+        boolean b = updatePaymentState(paymentId, "outgoing", state, eventType, at, sourceDevice, eventPayload);
+        return a || b;
+    }
+
+    private boolean updatePaymentState(String paymentId, String direction, String state, String eventType, long at, String sourceDevice, String eventPayload) {
+        String key = direction + ":" + paymentId;
+        try (Cursor c = db().query("payments", new String[] { "payload" }, "payment_key=?", new String[] { key }, null, null, null)) {
+            if (!c.moveToFirst()) return false;
+            JSONObject payment = new JSONObject(c.getString(0));
+            payment.put("state", state);
+            payment.put("updatedAt", at);
+            ContentValues cv = new ContentValues();
+            cv.put("state", state);
+            cv.put("updated_at", at);
+            cv.put("payload", payment.toString());
+            db().update("payments", cv, "payment_key=?", new String[] { key });
+            addEvent(paymentId, eventType, at, sourceDevice, eventPayload);
+            return true;
+        } catch (Throwable ignored) { return false; }
+    }
+
+    private void addEvent(String paymentId, String type, long at, String sourceDevice, String payload) {
+        ContentValues cv = new ContentValues();
+        cv.put("event_id", type + ":" + paymentId + ":" + at + ":" + sha256(payload).substring(0, 12));
+        cv.put("payment_id", paymentId);
+        cv.put("event_type", type);
+        cv.put("event_at", at);
+        cv.put("source_device", sourceDevice);
+        cv.put("payload", payload == null ? "{}" : payload);
+        db().insertWithOnConflict("payment_events", null, cv, SQLiteDatabase.CONFLICT_IGNORE);
+    }
+
+    private void cleanup(long now) {
+        db().delete("mesh_seen_packets", "expires_at<?", new String[] { String.valueOf(now) });
+        db().delete("mesh_outbox", "expires_at<?", new String[] { String.valueOf(now) });
+        db().delete("courier_envelopes", "expires_at<?", new String[] { String.valueOf(now) });
+    }
+
+    private static long authorizationExpiry(JSONObject auth, long fallback) {
+        try {
+            String raw = auth.optString("validBefore", "");
+            if (raw.isEmpty()) return fallback;
+            long seconds = Long.parseLong(raw);
+            return seconds * 1000L;
+        } catch (Throwable ignored) { return fallback; }
+    }
+
+    private static String extractSender(JSONObject payment) {
+        JSONObject auth = payment.optJSONObject("authorization");
+        if (auth == null) auth = payment.optJSONObject("auth");
+        return firstNonEmpty(payment.optString("sender", ""), payment.optString("from", ""), auth == null ? "" : auth.optString("from", "")).toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean isFinalState(String state) {
+        String s = state == null ? "" : state.toLowerCase(Locale.ROOT);
+        return s.contains("confirm") || s.contains("settled") || s.contains("expired") || s.contains("fail") || s.contains("revert");
+    }
+
+    private static String firstNonEmpty(String... values) {
+        for (String value : values) if (value != null && !value.trim().isEmpty()) return value.trim();
+        return "";
+    }
+
+    private static String sha256(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
+            StringBuilder out = new StringBuilder();
+            for (byte b : bytes) out.append(String.format(Locale.ROOT, "%02x", b));
+            return out.toString();
+        } catch (Throwable ignored) { return ""; }
+    }
+
+    static final class ProcessResult {
+        final boolean accepted;
+        final boolean duplicate;
+        final boolean ledgerChanged;
+        final String paymentId;
+        final String type;
+        final String notificationTitle;
+        final String notificationBody;
+
+        ProcessResult(boolean accepted, boolean duplicate, boolean ledgerChanged, String paymentId, String type, String notificationTitle, String notificationBody) {
+            this.accepted = accepted;
+            this.duplicate = duplicate;
+            this.ledgerChanged = ledgerChanged;
+            this.paymentId = paymentId;
+            this.type = type;
+            this.notificationTitle = notificationTitle;
+            this.notificationBody = notificationBody;
+        }
+
+        static ProcessResult reject() { return new ProcessResult(false, false, false, "", "", null, null); }
+        static ProcessResult duplicate() { return new ProcessResult(true, true, false, "", "", null, null); }
+    }
+}
