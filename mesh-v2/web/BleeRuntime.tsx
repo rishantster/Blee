@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
-import BleeApp from '../../src/components/BleeApp';
+import BleeApp from './BleeApp';
 
 type MeshStatus = {
   running: boolean;
