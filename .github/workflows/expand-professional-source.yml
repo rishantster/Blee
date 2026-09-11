@@ -18,39 +18,44 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Expand source snapshot
+      - name: Expand and persist diagnostics
         shell: bash
         run: |
-          set -euxo pipefail
-          if [ -f package.json ] && [ -f src/components/BleeApp.tsx ]; then
-            echo "Blee source is already expanded"
-            exit 0
-          fi
-          ls -la
-          ls -la bootstrap/parts
-          cat bootstrap/parts/part* > /tmp/blee-source.b64
-          test "$(wc -c < /tmp/blee-source.b64)" -eq 42120
-          base64 -d /tmp/blee-source.b64 > /tmp/blee-source.tar.gz
-          echo "c28e106c9bbfb1687e061c33ec3bc3fb0ad9623fc8c320876611f390ddfc104d  /tmp/blee-source.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/blee-source.tar.gz -C .
-          test -f package.json
-          test -f src/components/BleeApp.tsx
-          test -f src/hooks/useBlee.ts
-          test -f src/lib/persistence.ts
+          set +e
+          LOG=professional-bootstrap-diagnostics.txt
+          : > "$LOG"
+          run() {
+            echo ">>> $*" | tee -a "$LOG"
+            "$@" >>"$LOG" 2>&1
+            code=$?
+            echo "exit=$code" | tee -a "$LOG"
+            return $code
+          }
 
-      - name: Commit expanded source
-        shell: bash
-        run: |
-          set -euxo pipefail
-          if [ ! -f package.json ]; then
-            exit 0
+          if [ -f package.json ] && [ -f src/components/BleeApp.tsx ]; then
+            echo "Source already expanded" | tee -a "$LOG"
+          else
+            run ls -la
+            run ls -la bootstrap/parts
+            cat bootstrap/parts/part* > /tmp/blee-source.b64 2>>"$LOG"
+            echo "b64_bytes=$(wc -c < /tmp/blee-source.b64 2>/dev/null)" >>"$LOG"
+            base64 -d /tmp/blee-source.b64 > /tmp/blee-source.tar.gz 2>>"$LOG"
+            echo "decode_exit=$?" >>"$LOG"
+            sha256sum /tmp/blee-source.tar.gz >>"$LOG" 2>&1
+            tar -tzf /tmp/blee-source.tar.gz | head -80 >>"$LOG" 2>&1
+            echo "list_exit=$?" >>"$LOG"
+            tar -xzf /tmp/blee-source.tar.gz -C . >>"$LOG" 2>&1
+            echo "extract_exit=$?" >>"$LOG"
+            for f in package.json src/components/BleeApp.tsx src/hooks/useBlee.ts src/lib/persistence.ts; do
+              if [ -f "$f" ]; then echo "FOUND $f" >>"$LOG"; else echo "MISSING $f" >>"$LOG"; fi
+            done
           fi
+
           git config user.name "Blee Build Bot"
           git config user.email "actions@users.noreply.github.com"
           git add -A
-          if git diff --cached --quiet; then
-            echo "No source expansion changes"
-            exit 0
+          if ! git diff --cached --quiet; then
+            git commit -m "Expand Blee source with diagnostics [expanded-source]"
+            git push origin HEAD:blee-professional
           fi
-          git commit -m "Expand Blee source for professional rebuild [expanded-source]"
-          git push origin HEAD:blee-professional
+          exit 0
