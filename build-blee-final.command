@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
 EXPECTED_BRANCH="blee-professional"
-EXPECTED_APK="Blee-1.2.0-professional-debug.apk"
+EXPECTED_APK="Blee-1.3.0-professional-debug.apk"
 
 CURRENT_BRANCH="$(git branch --show-current)"
 if [ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]; then
@@ -37,7 +37,7 @@ import base64, hashlib, pathlib, tarfile, tempfile
 parts = sorted(pathlib.Path('professional/parts').glob('part*'))
 raw = base64.b64decode(b''.join(p.read_bytes() for p in parts), validate=True)
 digest = hashlib.sha256(raw).hexdigest()
-want = 'ecec910512330005d630bea85951169b3e221b9f7caf4180d029c3c42435a29b'
+want = 'a698f4f239334875c96b46022582b964db69f3496c5c5aaed0691aa5632c4da6'
 if digest != want:
     raise SystemExit(f'Professional source checksum mismatch: {digest}')
 with tempfile.TemporaryDirectory() as tmp:
@@ -45,7 +45,14 @@ with tempfile.TemporaryDirectory() as tmp:
     archive.write_bytes(raw)
     with tarfile.open(archive, 'r:gz') as tar:
         names = set(tar.getnames())
-    required = {'src/components/BleeApp.tsx', 'src/hooks/useBlee.ts', 'app/globals.css', 'app/layout.tsx', 'native/BleeStorePlugin.java'}
+    required = {
+        'src/components/BleeApp.tsx',
+        'src/components/BleeAdvancedSettings.tsx',
+        'src/hooks/useBlee.ts',
+        'app/globals.css',
+        'app/layout.tsx',
+        'native/BleeStorePlugin.java',
+    }
     missing = required - names
     if missing:
         raise SystemExit(f'Professional snapshot is missing: {sorted(missing)}')
@@ -114,7 +121,7 @@ ensure_java21() {
 
   if command -v brew >/dev/null 2>&1; then
     echo "Java 21 not found. Installing Homebrew openjdk@21..."
-    brew install openjdk@21
+    HOMEBREW_NO_AUTO_UPDATE=1 brew install openjdk@21
     local brew_prefix
     brew_prefix="$(brew --prefix openjdk@21)"
     if activate_java_home "$brew_prefix/libexec/openjdk.jdk/Contents/Home" || activate_java_home "$brew_prefix"; then
@@ -146,15 +153,20 @@ APK="$ROOT/dist/$EXPECTED_APK"
 unzip -t "$APK" >/dev/null
 SHA="$(shasum -a 256 "$APK" | awk '{print $1}')"
 
-grep -Eq 'versionCode[[:space:]]+5' android/app/build.gradle || { echo "ERROR: Android versionCode 5 was not applied."; exit 1; }
-grep -Eq 'versionName[[:space:]]+\"1\.2\.0\"' android/app/build.gradle || { echo "ERROR: Android versionName 1.2.0 was not applied."; exit 1; }
+grep -Eq 'versionCode[[:space:]]+6' android/app/build.gradle || { echo "ERROR: Android versionCode 6 was not applied."; exit 1; }
+grep -Eq 'versionName[[:space:]]+"1\.3\.0"' android/app/build.gradle || { echo "ERROR: Android versionName 1.3.0 was not applied."; exit 1; }
 grep -q '@drawable/blee_launcher' android/app/src/main/AndroidManifest.xml || { echo "ERROR: Blee launcher icon is not wired into AndroidManifest.xml."; exit 1; }
 grep -q 'BleeAdvancedSettings' src/components/BleeApp.tsx || { echo "ERROR: Settings UI was not wired into BleeApp."; exit 1; }
 grep -q 'sendQueueRef' src/hooks/useBlee.ts || { echo "ERROR: Professional send serialization was overwritten."; exit 1; }
 grep -q 'authenticatedRecipient' src/hooks/useBlee.ts || { echo "ERROR: Professional ACK authentication was overwritten."; exit 1; }
+grep -q 'rememberIdentity' src/hooks/useBlee.ts || { echo "ERROR: Nearby identity synchronization is missing."; exit 1; }
+grep -q 'profilePhotoRef' src/hooks/useBlee.ts || { echo "ERROR: Profile photo relay is missing."; exit 1; }
+grep -q 'QRCodeSVG' src/components/BleeApp.tsx || { echo "ERROR: Receive QR implementation is missing."; exit 1; }
+grep -q 'Settlement network' src/components/BleeAdvancedSettings.tsx || { echo "ERROR: Professional network settings UI is missing."; exit 1; }
 grep -q 'BLEE_NETWORK_STARTUP_PROFILE' src/lib/arc.ts || { echo "ERROR: Startup network profile was not wired into settlement."; exit 1; }
 grep -q 'getActiveNetwork' src/lib/arc.ts || { echo "ERROR: Active network lookup is missing from settlement runtime."; exit 1; }
 grep -q 'BLEE_STORE_PRO_V3' plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java || { echo "ERROR: Professional SQLite implementation was overwritten."; exit 1; }
+grep -q '"qrcode.react"' package.json || { echo "ERROR: QR dependency was not installed into the professional source."; exit 1; }
 
 echo "Verifying Blee Professional features inside compiled APK..."
 VERIFY_DIR="$(mktemp -d)"
@@ -164,11 +176,14 @@ WEB_ROOT="$VERIFY_DIR/assets/public"
 
 grep -R -q 'Wallet recovery' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing Wallet recovery UI."; exit 1; }
 grep -R -q 'Add network' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing Add network UI."; exit 1; }
+grep -R -q 'Settlement network' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing the redesigned settlement-network UI."; exit 1; }
+grep -R -q 'Final after settlement' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing the redesigned How Blee works UI."; exit 1; }
+grep -R -q 'Profile photo' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing profile photo controls."; exit 1; }
+grep -R -q 'Scan to copy this wallet address' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing the Receive QR UI."; exit 1; }
 grep -R -q 'blee.networks.v1' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing persistent network profiles."; exit 1; }
 grep -R -q 'blee.active-network.v1' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing active-network persistence."; exit 1; }
 grep -R -q 'wallet.vault.v2' "$WEB_ROOT" || { echo "ERROR: Compiled APK wallet recovery is not using the encrypted Blee vault."; exit 1; }
-grep -R -q 'Mainnet status' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing mainnet/testnet disclosure."; exit 1; }
-grep -R -q 'Blee 1.2' "$WEB_ROOT" || { echo "ERROR: Compiled APK does not identify itself as Blee 1.2."; exit 1; }
+grep -R -q 'Blee 1.3' "$WEB_ROOT" || { echo "ERROR: Compiled APK does not identify itself as Blee 1.3."; exit 1; }
 grep -R -q 'CONFIRMED SPENDABLE' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing confirmed-spendable balance UX."; exit 1; }
 grep -R -q 'Nearby delivery is not final settlement' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing nearby-vs-settlement disclosure."; exit 1; }
 grep -R -q 'Recipient acknowledgement is authenticated' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing authenticated ACK disclosure."; exit 1; }
@@ -180,6 +195,10 @@ if grep -R -q 'ARC DROP' "$WEB_ROOT"; then
 fi
 if grep -R -q 'INTERNET OPTIONAL' "$WEB_ROOT"; then
   echo "ERROR: Prototype connectivity copy still exists in packaged web assets."
+  exit 1
+fi
+if grep -R -q 'MetaMask-style' "$WEB_ROOT"; then
+  echo "ERROR: Old MetaMask-style network copy still exists in packaged web assets."
   exit 1
 fi
 
@@ -201,11 +220,11 @@ trap - EXIT
 
 echo
 echo "============================================================"
-echo "✅ VERIFIED BLEE 1.2.0 PROFESSIONAL APK"
+echo "✅ VERIFIED BLEE 1.3.0 PROFESSIONAL APK"
 echo "File: $APK"
 echo "SHA-256: $SHA"
-echo "Version: 1.2.0 (Android versionCode 5)"
-echo "Verified: SQLite/WAL + durable journal + BLE/LAN + authenticated ACKs + serialized sends + expiry reconciliation + wallet recovery + custom networks + professional UX"
+echo "Version: 1.3.0 (Android versionCode 6)"
+echo "Verified: durable SQLite + authenticated ACKs + serialized sends + identity/name/photo relay + auto nearby discovery + Receive QR + wallet recovery + clean network/settings UX"
 echo "============================================================"
 echo
 open "$ROOT/dist" 2>/dev/null || true

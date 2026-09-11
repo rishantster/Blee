@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PARTS = ROOT / "professional" / "parts"
-ARCHIVE_SHA256 = "ecec910512330005d630bea85951169b3e221b9f7caf4180d029c3c42435a29b"
+ARCHIVE_SHA256 = "a698f4f239334875c96b46022582b964db69f3496c5c5aaed0691aa5632c4da6"
 
 
 def unpack_professional_source() -> Path:
@@ -50,10 +50,12 @@ def copy_tree(source: Path, target: Path) -> None:
         print(f"professional overlay: {dest.relative_to(ROOT)}")
 
 
-def update_package_version() -> None:
+def update_package() -> None:
     package = ROOT / "package.json"
     data = json.loads(package.read_text())
-    data["version"] = "1.2.0"
+    data["version"] = "1.3.0"
+    dependencies = data.setdefault("dependencies", {})
+    dependencies["qrcode.react"] = "^4.2.0"
     package.write_text(json.dumps(data, indent=2) + "\n")
 
 
@@ -62,8 +64,8 @@ def update_native_generator_version() -> None:
     if not path.exists():
         return
     text = path.read_text()
-    text = re.sub(r"versionCode\s+\d+", "versionCode 5", text)
-    text = re.sub(r'versionName\s+"[^"]+"', 'versionName "1.2.0"', text)
+    text = re.sub(r"versionCode\s+\d+", "versionCode 6", text)
+    text = re.sub(r'versionName\s+"[^"]+"', 'versionName "1.3.0"', text)
     path.write_text(text)
 
 
@@ -75,17 +77,34 @@ def verify_markers() -> None:
             "receiver: a.address",
             "expireAuthorizations",
             "confirmed spendable balance",
+            "profilePhoto",
+            "rememberIdentity",
+            "avatar: profilePhotoRef.current",
+            "startMesh().catch",
+            "PEER_IDENTITIES_KEY",
         ],
         "src/components/BleeApp.tsx": [
             "CONFIRMED SPENDABLE",
             "Nearby delivery is not final settlement.",
             "Recipient acknowledgement is authenticated",
-            "Blee 1.2",
+            "Blee 1.3",
+            "QRCodeSVG",
+            "prepareProfilePhoto",
+            "Profile photo",
+            "Scan to copy this wallet address",
+        ],
+        "src/components/BleeAdvancedSettings.tsx": [
+            "Settlement network",
+            "Final after settlement",
+            "Stored on your phone",
         ],
         "app/globals.css": [
             ".pending-banner",
             ".status-panel",
             "prefers-reduced-motion",
+            ".qr-frame",
+            ".advanced-network-hero",
+            ".profile-photo-row",
         ],
         "plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java": [
             "BLEE_STORE_PRO_V3",
@@ -104,16 +123,19 @@ def verify_markers() -> None:
 
 def reject_prototype_copy() -> None:
     app = (ROOT / "src/components/BleeApp.tsx").read_text()
-    banned = (
+    advanced = (ROOT / "src/components/BleeAdvancedSettings.tsx").read_text()
+    banned_app = (
         "projectedBalance",
         "INTERNET OPTIONAL",
         "Local wallet",
         "Configured EVM rail",
         "Payment delivered nearby</strong><span>The signed authorization reached",
     )
-    found = [term for term in banned if term in app]
+    found = [term for term in banned_app if term in app]
     if found:
         raise SystemExit(f"Prototype copy still present in professional app: {found}")
+    if "MetaMask-style" in advanced:
+        raise SystemExit("Prototype MetaMask-style network copy still present in settings")
 
 
 def main() -> None:
@@ -131,11 +153,11 @@ def main() -> None:
         shutil.copy2(native, native_target)
         print("professional overlay: native BleeStorePlugin.java [BLEE_STORE_PRO_V3]")
 
-        update_package_version()
+        update_package()
         update_native_generator_version()
         verify_markers()
         reject_prototype_copy()
-        print("Blee 1.2 professional overlay verified.")
+        print("Blee 1.3 professional overlay verified.")
     finally:
         shutil.rmtree(temp, ignore_errors=True)
 
