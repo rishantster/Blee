@@ -1,4 +1,4 @@
-# Blee 2.4 UI Architecture
+# Blee 2.5 UI Architecture
 
 This document freezes the production presentation model for Blee. It is intentionally scoped to the actual Blee product: one wallet, one current settlement network profile, USDC payments, nearby BLE delivery, durable local state and Arc settlement.
 
@@ -10,12 +10,21 @@ This document freezes the production presentation model for Blee. It is intentio
 - Home contains only the primary payment actions: **Send** and **Receive**.
 - **Nearby**, **Activity** and **Profile** are destinations in the persistent bottom navigation.
 - Settings are entered from Profile / appropriate header control, not duplicated across Home.
-- The Blee logo appears once per screen header. No pill containing a second logo, no tagline beneath the app header.
+- The supplied Blee wordmark appears once per screen header at its natural aspect ratio. It must never be synthesized from a standalone mark + text or forced into a fixed-height box.
 - No decorative radar, orbit, halo or concentric-ring artwork.
 - Monochrome only: off-white, white, black and neutral greys.
 - Error/success states stay calm and legible; financial state must never be encoded by colour alone.
 - A wallet passphrase is functionally rejected below 8 characters. The UI copy and encryption validation must agree.
+- Passphrase entry provides explicit Show / Hide controls.
+- Fingerprint unlock is optional and never replaces the passphrase as recovery/fallback.
 - Blee does not intentionally auto-log-out an unlocked user because of inactivity/backgrounding while the process remains alive. Explicit Log out is authoritative.
+- Native payment notifications must work without requiring the React screen to remain open, subject to Android notification permission.
+
+## Cold launch
+
+Cold start shows the supplied Blee wordmark only, with a restrained one-time logo transition. No decorative rings or marketing carousel are allowed.
+
+The Android activity may play one short low-volume Blee chime per process start. The visual layer respects `prefers-reduced-motion`.
 
 ## Screen map
 
@@ -23,28 +32,41 @@ This document freezes the production presentation model for Blee. It is intentio
 Purpose: create encrypted local identity and wallet.
 
 Required controls:
-- Blee brand lockup
+- Blee wordmark
+- minimal title: **Create wallet**
 - Display name
-- Passphrase
-- Confirm passphrase
+- Passphrase with Show / Hide
+- Confirm passphrase with Show / Hide
+- optional **Use fingerprint next time** setup
 - Create wallet
 - Import / restore path
 
 Functional rules:
 - display name required
-- passphrase minimum 8 characters
+- passphrase minimum 8 characters in the actual encryption path
 - confirmation must match
 - encrypted wallet creation must complete before entering Home
+- fingerprint setup happens only after a valid passphrase has created/unlocked the wallet
+
+Explicitly not present:
+- “SELF-CUSTODIAL · OFFLINE-READY” marketing kicker
+- verbose Arc/Testnet product paragraph
+- decorative onboarding hero/ring
 
 ### 2. Unlock
 Purpose: restore the already-created encrypted local wallet into the active process.
 
 Required controls:
-- Blee brand lockup
-- passphrase
-- reveal/hide control if supported
+- Blee wordmark
+- Passphrase with Show / Hide
 - Unlock
+- **Unlock with fingerprint** when configured and available
 - recovery path
+
+Functional rules:
+- passphrase remains available as fallback
+- a cold launch may automatically present the biometric prompt once when fingerprint unlock is configured
+- biometric enrollment changes invalidate the device biometric wrapper and return the user to passphrase fallback
 
 ### 3. Home
 Purpose: at-a-glance wallet state and immediate payment actions.
@@ -178,16 +200,18 @@ Purpose: product/device preferences.
 Required rows:
 - discoverability
 - notifications
-- security
+- fingerprint unlock / security
 - backup & recovery
 - settlement network information
 - about
 - Log out
 
+Fingerprint settings must support enable/setup when hardware is available and disable when already configured.
+
 ### 14. Backup & recovery
 Purpose: export or restore the encrypted wallet material through the existing recovery implementation.
 
-The UI must never expose a raw private key by default.
+The UI must never expose a raw private key by default. Passphrase fields in recovery flows use the same 8-character policy and Show / Hide pattern.
 
 ### 15. Network & payment setup
 Purpose: describe the active Blee settlement rail, not advertise unsupported multi-network/multi-asset functionality.
@@ -199,6 +223,28 @@ Current product:
 
 Any future network expansion must be introduced deliberately and must not leak into the current UI before supported end-to-end.
 
+## Notifications
+
+The native payment notification matrix currently includes:
+
+- nearby payment received;
+- recipient delivery ACK returned to sender;
+- settlement receipt reported through the mesh;
+- chain confirmation observed by an online Blee node.
+
+Android 13+ requires runtime notification permission. If permission is denied, ledger correctness must remain unaffected; only OS notification delivery is suppressed.
+
+## Biometric security contract
+
+- Android biometric unlock is optional.
+- Android Keystore holds the wrapping key.
+- The wrapping key requires biometric user authentication.
+- The wallet passphrase remains the fallback and recovery credential.
+- The passphrase must not be stored plaintext at rest.
+- The biometric-protected ciphertext may live in private app storage.
+- Biometric enrollment changes invalidate the protected key where supported.
+- Disabling fingerprint unlock removes the wrapped credential.
+
 ## Navigation
 
 Bottom navigation is the single primary destination navigation:
@@ -209,6 +255,7 @@ Send and Receive are payment actions, not permanent tabs.
 
 ## Motion
 
+- cold-start logo transition: restrained fade + slight scale/translate, about 700ms maximum
 - screen transition: 180–240ms, fade + 4–6px translate
 - sheet transition: 220–260ms upward motion
 - button press: subtle scale only
@@ -219,11 +266,16 @@ Send and Receive are payment actions, not permanent tabs.
 
 The Blee build must fail if any of the following regress:
 
-- 12-character passphrase rule/copy returns
+- 12-character passphrase rule/copy returns anywhere in wallet UI/crypto source
 - wallet crypto path does not enforce 8-character minimum
+- Show / Hide passphrase controls disappear
+- biometric web bridge or native Android Keystore/BiometricPrompt implementation disappears
+- notification permission/event plumbing disappears
+- supplied Blee wordmark is stretched or replaced by synthetic text/logo geometry
+- launch logo/chime wiring disappears
 - Send or Receive action is missing
 - inactivity/background auto-lock timer returns
 - sponsored relay implementation returns
 - sender-funded raw transaction path disappears
 - native atomic signing reservation disappears
-- legacy orbit/radar/halo design layer is not disabled
+- legacy orbit/radar/halo design layer returns
