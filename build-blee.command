@@ -223,6 +223,11 @@ python3 scripts/apply-blee-final-hardening.py --android
 # bounded copy budgets. It patches both generated Android and web source, so the
 # web bundle is rebuilt and synced without regenerating the Android project.
 python3 scripts/apply-blee-final-hardening-2.py
+# Runtime reliability closes the two device-level regressions that are invisible
+# to same-Wi-Fi testing: BLE-native peer identity/discovery and background session
+# preservation. It patches both generated Android and useBlee, so run it before
+# the final web rebuild/sync.
+python3 scripts/apply-blee-runtime-reliability.py
 npm run check
 npm run build
 npx cap sync android
