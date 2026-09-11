@@ -1,0 +1,289 @@
+/* BLEE_PRODUCTION_WALLET_2_4
+   Production presentation layer for the existing Blee payment engine.
+   Monochrome, compact, mobile-first. No decorative hero/radar/orbit UI. */
+
+:root {
+  --b-bg: #f6f6f3;
+  --b-surface: #ffffff;
+  --b-surface-soft: #eeeeea;
+  --b-ink: #090909;
+  --b-muted: #74746e;
+  --b-faint: #a5a59e;
+  --b-line: rgba(9,9,9,.09);
+  --b-line-strong: rgba(9,9,9,.15);
+  --b-shadow: 0 10px 34px rgba(0,0,0,.055);
+  --b-r-sm: 14px;
+  --b-r-md: 18px;
+  --b-r-lg: 24px;
+  --b-r-xl: 30px;
+  --b-safe-top: max(12px, env(safe-area-inset-top));
+  --b-safe-bottom: max(12px, env(safe-area-inset-bottom));
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--b-bg) !important; color: var(--b-ink) !important; }
+body {
+  min-height: 100dvh;
+  overflow-x: hidden;
+  font-family: ui-rounded, "SF Pro Rounded", "Avenir Next Rounded", "Avenir Next", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  letter-spacing: -.012em;
+}
+button, input, textarea, select { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+
+/* hard kill every legacy onboarding decoration */
+[class*="orbit" i],
+[class*="radar" i],
+[class*="halo" i],
+[class*="hero-art" i],
+[class*="heroArt" i],
+[class*="hero-visual" i],
+[class*="heroVisual" i],
+[class*="signal-ring" i],
+[class*="signalRing" i],
+[data-blee-decorative="true"] { display: none !important; }
+
+/* Old hero pseudo-elements created the visible concentric circle. */
+[class*="hero" i]::before,
+[class*="hero" i]::after,
+[class*="orbit" i]::before,
+[class*="orbit" i]::after { content: none !important; display: none !important; }
+
+/* Screen frame */
+main,
+[class*="app-shell" i],
+[class*="screen-shell" i],
+[class*="page-shell" i],
+[data-blee-screen] {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-height: 100dvh;
+  margin: 0 !important;
+  background: var(--b-bg) !important;
+}
+main { padding: 0 18px calc(94px + var(--b-safe-bottom)) !important; }
+
+/* Header: one Blee lockup only. Never a pill/card. */
+header,
+[class*="topbar" i],
+[class*="top-bar" i],
+[class*="app-header" i] {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  min-height: 62px !important;
+  padding: var(--b-safe-top) 18px 8px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: color-mix(in srgb, var(--b-bg) 92%, transparent) !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.blee-brand-lockup {
+  display: inline-flex !important;
+  width: auto !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 8px !important;
+  padding: 0 !important;
+  margin: 0 auto !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+.blee-brand-lockup .blee-brand-mark { width: 24px !important; height: 31px !important; max-width: 24px !important; max-height: 31px !important; }
+.blee-brand-lockup .blee-wordmark { height: 22px !important; width: auto !important; max-width: 92px !important; }
+header > button, [class*="topbar" i] > button, [class*="top-bar" i] > button { position: absolute !important; top: calc(var(--b-safe-top) + 4px); }
+header > button:first-of-type, [class*="topbar" i] > button:first-of-type { left: 18px !important; }
+header > button:last-of-type, [class*="topbar" i] > button:last-of-type { right: 18px !important; }
+
+/* Onboarding / unlock — product screen, never marketing landing page. */
+[class*="onboard" i], [class*="auth" i], [class*="unlock" i] { max-width: 520px !important; margin-inline: auto !important; }
+[class*="hero" i] {
+  min-height: 0 !important;
+  padding: 26px 0 22px !important;
+  margin: 0 !important;
+  text-align: left !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+[class*="hero" i] > .blee-brand-mark,
+[class*="hero" i] > .blee-wordmark { display: none !important; }
+[class*="hero" i] h1 { margin: 0 0 10px !important; max-width: 345px; font-size: clamp(36px, 10vw, 46px) !important; line-height: .97 !important; letter-spacing: -.052em !important; }
+[class*="hero" i] p { margin: 0 !important; max-width: 345px; color: var(--b-muted) !important; font-size: 14px !important; line-height: 1.5 !important; }
+
+/* Typography */
+h1, h2, h3, h4 { color: var(--b-ink) !important; }
+h1 { font-size: 36px !important; line-height: 1 !important; letter-spacing: -.05em !important; font-weight: 720 !important; }
+h2 { font-size: 26px !important; line-height: 1.05 !important; letter-spacing: -.04em !important; font-weight: 700 !important; }
+h3 { font-size: 17px !important; line-height: 1.15 !important; letter-spacing: -.025em !important; font-weight: 660 !important; }
+p { line-height: 1.48; }
+small, [class*="caption" i], [class*="meta" i], [class*="hint" i], [class*="eyebrow" i], [class*="label" i], [class*="subtext" i] { color: var(--b-muted) !important; }
+
+/* Surfaces */
+[class*="card" i], [class*="panel" i], [class*="tile" i], [class*="form" i] {
+  background: var(--b-surface) !important;
+  border: 1px solid var(--b-line) !important;
+  border-radius: var(--b-r-lg) !important;
+  box-shadow: none !important;
+}
+[class*="card" i], [class*="panel" i], [class*="form" i] { padding: 18px !important; }
+
+/* Home balance is the hero; everything else recedes. */
+[class*="balance" i][class*="card" i], [class*="balance-card" i], [class*="wallet-card" i] {
+  padding: 22px !important;
+  border-radius: 26px !important;
+  background: var(--b-surface) !important;
+}
+[class*="balance" i] [class*="amount" i], [class*="balance-amount" i], [data-amount] {
+  font-variant-numeric: tabular-nums lining-nums;
+  font-size: clamp(42px, 12vw, 58px) !important;
+  line-height: .95 !important;
+  letter-spacing: -.06em !important;
+  font-weight: 710 !important;
+}
+
+/* Home quick actions: Send + Receive only. Navigation stays in the tab bar. */
+[class*="quick" i] [data-blee-action="nearby"],
+[class*="quick" i] [data-blee-action="activity"],
+[class*="quick" i] [data-blee-action="profile"],
+[class*="quick" i] [data-blee-action="settings"],
+[class*="action" i] [data-blee-action="nearby"],
+[class*="action" i] [data-blee-action="activity"],
+[class*="action" i] [data-blee-action="profile"],
+[class*="action" i] [data-blee-action="settings"] { display: none !important; }
+[class*="quick" i], [class*="primary-actions" i], [class*="payment-actions" i] {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+}
+[data-blee-action="send"], [data-blee-action="receive"] { min-height: 58px; }
+[data-blee-action="send"] { background: var(--b-ink) !important; color: #fff !important; border-color: var(--b-ink) !important; }
+[data-blee-action="receive"] { background: var(--b-surface) !important; color: var(--b-ink) !important; border-color: var(--b-line-strong) !important; }
+
+/* Forms */
+label { display: block; margin: 0 0 7px !important; font-size: 12px !important; font-weight: 640 !important; color: var(--b-muted) !important; }
+input, textarea, select {
+  width: 100%;
+  min-height: 54px !important;
+  padding: 0 16px !important;
+  border: 1px solid var(--b-line-strong) !important;
+  border-radius: 17px !important;
+  background: var(--b-surface) !important;
+  color: var(--b-ink) !important;
+  outline: none !important;
+  box-shadow: none !important;
+  font-size: 15px !important;
+}
+textarea { min-height: 104px !important; padding-block: 14px !important; resize: none; }
+input:focus, textarea:focus, select:focus { border-color: var(--b-ink) !important; box-shadow: 0 0 0 1px var(--b-ink) !important; }
+input::placeholder, textarea::placeholder { color: var(--b-faint) !important; opacity: 1; }
+
+/* Buttons */
+button {
+  min-height: 48px;
+  border-radius: 16px;
+  border: 1px solid var(--b-line-strong);
+  background: var(--b-surface);
+  color: var(--b-ink);
+  font-weight: 640;
+  box-shadow: none !important;
+}
+button[class*="primary" i], button[type="submit"], [class*="primary-button" i] {
+  min-height: 56px !important;
+  background: var(--b-ink) !important;
+  color: #fff !important;
+  border-color: var(--b-ink) !important;
+  border-radius: 18px !important;
+}
+button:disabled { opacity: .34 !important; }
+button:active:not(:disabled) { transform: scale(.985); }
+
+/* Lists — simple dividers, no nested card soup. */
+[class*="peer-row" i], [class*="activity-row" i], [class*="transaction-row" i], [class*="settings-row" i], [class*="list-item" i] {
+  min-height: 68px;
+  padding: 12px 4px !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--b-line) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+[class*="avatar" i] { background: #e8e8e3 !important; color: var(--b-ink) !important; border: 0 !important; }
+
+/* Send sheet / send screen */
+[class*="send" i] [class*="amount" i] input,
+[class*="send" i] input[inputmode="decimal"] { font-size: 34px !important; min-height: 76px !important; font-weight: 700 !important; letter-spacing: -.045em !important; }
+[class*="sheet" i], [class*="modal" i], [class*="drawer" i] {
+  background: var(--b-surface) !important;
+  border: 1px solid var(--b-line) !important;
+  border-radius: 30px 30px 0 0 !important;
+  box-shadow: 0 -18px 54px rgba(0,0,0,.10) !important;
+}
+
+/* QR receive */
+[class*="qr" i] { background: #fff !important; border-color: var(--b-line) !important; }
+[class*="qr-frame" i] { padding: 22px !important; border-radius: 24px !important; }
+
+/* Status/error surfaces are monochrome, calm and compact. */
+[class*="error" i], [class*="warning" i], [class*="success" i], [class*="notice" i], [class*="banner" i] {
+  color: var(--b-ink) !important;
+  background: #ecece7 !important;
+  border: 1px solid var(--b-line) !important;
+  border-radius: 16px !important;
+  box-shadow: none !important;
+}
+
+/* Bottom nav: sole destination navigation. */
+nav[class*="bottom" i], [class*="bottom-nav" i], [class*="tab-bar" i], [class*="tabbar" i] {
+  position: fixed !important;
+  left: 0; right: 0; bottom: 0;
+  z-index: 30;
+  min-height: 72px;
+  padding: 8px 12px var(--b-safe-bottom) !important;
+  display: grid !important;
+  grid-template-columns: repeat(4, 1fr) !important;
+  background: rgba(248,248,245,.94) !important;
+  border: 0 !important;
+  border-top: 1px solid var(--b-line) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+nav[class*="bottom" i] button, [class*="bottom-nav" i] button, [class*="tab-bar" i] button {
+  min-height: 52px !important;
+  padding: 6px 4px !important;
+  background: transparent !important;
+  color: var(--b-muted) !important;
+  border: 0 !important;
+  border-radius: 12px !important;
+  font-size: 11px !important;
+}
+nav [aria-current="page"], nav .active, [class*="bottom-nav" i] .active, [class*="tab-bar" i] .active { color: var(--b-ink) !important; font-weight: 700 !important; }
+
+/* Production motion: screen entry, sheet motion, button response. */
+[data-blee-screen], [class*="screen" i] { animation: blee-screen-in 220ms cubic-bezier(.2,.8,.2,1) both; }
+[class*="sheet" i], [class*="modal" i], [class*="drawer" i] { animation: blee-sheet-in 240ms cubic-bezier(.2,.85,.2,1) both; }
+button, input, [class*="row" i], [class*="card" i] { transition: transform 150ms cubic-bezier(.2,.8,.2,1), opacity 150ms ease, border-color 150ms ease, background-color 150ms ease; }
+@keyframes blee-screen-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes blee-sheet-in { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+
+/* No color leakage. */
+svg:not([data-allow-color]) { color: currentColor; }
+svg:not([data-allow-color]) [fill]:not([fill="none"]) { fill: currentColor; }
+
+@media (max-width: 420px) {
+  main { padding-inline: 16px !important; }
+  [class*="card" i], [class*="panel" i], [class*="form" i] { padding: 16px !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
