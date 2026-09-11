@@ -45,12 +45,13 @@ def main() -> None:
     app = require(ROOT / "src/components/BleeApp.tsx", (
         "useBlee", "BottomNav", "Home", "Nearby", "Activity", "Profile", "QRCodeSVG", "Backup & recovery",
         "PasswordField", "Show passphrase", "Hide passphrase", "Fingerprint unlock", "BleeBiometric.unlock",
-        "BleeBiometric.enroll", "splash-logo", "/brand/blee-wordmark.svg", "/brand/blee-logo.svg",
+        "BleeBiometric.enroll", "splash-logo", "/brand/blee-wordmark.svg",
     ))
     css = require(ROOT / "app/globals.css", (
         "BLEE_UI_2_4", "grid-template-columns: repeat(4, 1fr)", ".blee-phone.with-nav",
         ".blee-wordmark", "height: auto", ".password-input", ".biometric-opt-in",
         "@keyframes blee-launch-logo", "animation: blee-launch-logo 680ms", "safe-area-inset-bottom", "BLEE_BIOMETRIC_CAPABILITY_CSS_V1",
+        "BLEE_STANDALONE_LAUNCH_LOGO_V2", 'url("/brand/blee-logo.svg")', "aspect-ratio: 300 / 399",
     ))
     biometric = require(ROOT / "src/lib/biometric.ts", (
         "registerPlugin<NativeBleeBiometric>('BleeBiometric')", "enroll(passphrase", "unlock():", "disable()",
@@ -71,16 +72,31 @@ def main() -> None:
     if "logs.slice(0, 100)" in payments:
         raise SystemExit("VERIFY ERROR: settlement history is still silently truncated at 100 transfers")
 
-    # Brand contract: normal headers may use the wordmark, but the cold-launch
-    # animation must use the user's standalone Blee logo—not a wordmark or a
-    # generated placeholder icon.
-    splash_tags = re.findall(r'<img\b[^>]*splash-logo[^>]*>', app, flags=re.I)
-    if len(splash_tags) != 1:
-        raise SystemExit(f"VERIFY ERROR: expected exactly one splash logo image, found {len(splash_tags)}")
-    if "/brand/blee-logo.svg" not in splash_tags[0]:
-        raise SystemExit("VERIFY ERROR: cold launch is not using the standalone Blee logo")
-    if "/brand/blee-wordmark.svg" in splash_tags[0]:
-        raise SystemExit("VERIFY ERROR: cold launch regressed to the Blee wordmark")
+    # Brand contract: the v5 splash may be either a direct <img> or a wrapper.
+    # The canonical brand installer supports both forms. Do not require the logo
+    # URL to exist literally in BleeApp.tsx when CSS binds a wrapper to the
+    # standalone asset; verify the rendered contract instead.
+    splash_nodes = re.findall(r'<[^>]*\bsplash-logo\b[^>]*>', app, flags=re.I | re.S)
+    if len(splash_nodes) < 1:
+        raise SystemExit("VERIFY ERROR: cold-launch splash element is missing")
+
+    direct_splash_imgs = [node for node in splash_nodes if node.lstrip().lower().startswith('<img')]
+    if direct_splash_imgs:
+        if not any('/brand/blee-logo.svg' in node for node in direct_splash_imgs):
+            raise SystemExit("VERIFY ERROR: direct cold-launch image is not using the standalone Blee logo")
+        if any('/brand/blee-wordmark.svg' in node for node in direct_splash_imgs):
+            raise SystemExit("VERIFY ERROR: direct cold-launch image regressed to the Blee wordmark")
+    else:
+        for marker in (
+            'BLEE_STANDALONE_LAUNCH_LOGO_V2',
+            '.splash-screen .splash-logo:not(img)',
+            'background-image: url("/brand/blee-logo.svg")',
+            '.splash-screen .splash-logo:not(img) > *',
+            'visibility: hidden',
+        ):
+            if marker not in css:
+                raise SystemExit(f"VERIFY ERROR: wrapper-based cold launch is missing {marker}")
+
     canonical_logo = ROOT / "brand-assets/blee-logo.svg"
     public_logo = ROOT / "public/brand/blee-logo.svg"
     if not canonical_logo.is_file() or not public_logo.is_file() or canonical_logo.read_bytes() != public_logo.read_bytes():
@@ -148,6 +164,7 @@ def main() -> None:
     print("============================================================")
     print("VERIFIED: Blee production test build invariants")
     print("- standalone Blee logo drives cold launch + Android launcher identity")
+    print("- direct-image and wrapper splash implementations are both verified")
     print("- subtle cold-launch animation + native chime remain wired")
     print("- 8-character passphrase enforced in UI + crypto paths")
     print("- fingerprint UI/native unlock gated by real hardware capability")
