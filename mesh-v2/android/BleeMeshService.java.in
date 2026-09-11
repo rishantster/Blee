@@ -1,0 +1,518 @@
+package __BLEE_APP_PACKAGE__;
+
+import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Service;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothGatt;
+import android.bluetooth.BluetoothGattCallback;
+import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattServer;
+import android.bluetooth.BluetoothGattServerCallback;
+import android.bluetooth.BluetoothGattService;
+import android.bluetooth.BluetoothManager;
+import android.bluetooth.BluetoothProfile;
+import android.bluetooth.le.AdvertiseCallback;
+import android.bluetooth.le.AdvertiseData;
+import android.bluetooth.le.AdvertiseSettings;
+import android.bluetooth.le.BluetoothLeAdvertiser;
+import android.bluetooth.le.BluetoothLeScanner;
+import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanFilter;
+import android.bluetooth.le.ScanResult;
+import android.bluetooth.le.ScanSettings;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.os.Build;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.os.ParcelUuid;
+import android.util.Base64;
+import android.util.Log;
+
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public class BleeMeshService extends Service {
+    static final String ACTION_LEDGER_CHANGED = "__BLEE_APP_PACKAGE__.BLEE_LEDGER_CHANGED";
+    static final String EXTRA_PAYMENT_ID = "paymentId";
+    static final String EXTRA_EVENT_TYPE = "eventType";
+
+    private static final String TAG = "BleeMeshV2";
+    private static final String CHANNEL_SERVICE = "blee_mesh_service";
+    private static final String CHANNEL_PAYMENTS = "blee_payments";
+    private static final int SERVICE_NOTIFICATION_ID = 24001;
+    private static final UUID SERVICE_UUID = UUID.fromString("50f57a10-7bd4-4b6a-bf45-blee20000001".replace("blee", "b1ee"));
+    private static final UUID WRITE_UUID = UUID.fromString("50f57a10-7bd4-4b6a-bf45-b1ee20000002");
+    private static final long LOOP_MS = 4_000L;
+    private static final long PEER_RETRY_MS = 8_000L;
+
+    static volatile boolean running = false;
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final Map<String, BluetoothDevice> peers = Collections.synchronizedMap(new HashMap<String, BluetoothDevice>());
+    private final Map<String, Long> lastConnect = Collections.synchronizedMap(new HashMap<String, Long>());
+    private final Map<String, Assembly> assemblies = Collections.synchronizedMap(new HashMap<String, Assembly>());
+
+    private BleeMeshDb db;
+    private String deviceId;
+    private String publicKey;
+    private BluetoothManager bluetoothManager;
+    private BluetoothAdapter adapter;
+    private BluetoothLeScanner scanner;
+    private BluetoothLeAdvertiser advertiser;
+    private BluetoothGattServer gattServer;
+    private ConnectivityManager connectivity;
+    private volatile boolean networkAvailable = false;
+    private volatile boolean scanning = false;
+
+    public static void start(Context context) {
+        Intent intent = new Intent(context, BleeMeshService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent);
+        else context.startService(intent);
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        running = true;
+        db = new BleeMeshDb(this);
+        deviceId = BleeDeviceIdentity.deviceId(this);
+        try { publicKey = BleeDeviceIdentity.publicKey(); }
+        catch (Throwable error) { publicKey = ""; }
+        createNotificationChannels();
+        startForeground(SERVICE_NOTIFICATION_ID, serviceNotification("Nearby payments active"));
+        observeConnectivity();
+        startBluetooth();
+        handler.post(loop);
+    }
+
+    @Override public int onStartCommand(Intent intent, int flags, int startId) { return START_STICKY; }
+    @Override public IBinder onBind(Intent intent) { return null; }
+
+    @Override
+    public void onDestroy() {
+        running = false;
+        handler.removeCallbacksAndMessages(null);
+        stopBluetooth();
+        if (connectivity != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try { connectivity.unregisterNetworkCallback(networkCallback); } catch (Throwable ignored) {}
+        }
+        io.shutdownNow();
+        if (db != null) db.close();
+        super.onDestroy();
+    }
+
+    private final Runnable loop = new Runnable() {
+        @Override public void run() {
+            try {
+                db.bootstrapOutgoing(deviceId, publicKey);
+                if (!scanning) startBluetooth();
+                pumpKnownPeers();
+                if (networkAvailable) io.execute(new Runnable() { @Override public void run() { attemptSponsoredSettlement(); } });
+            } catch (Throwable error) {
+                Log.w(TAG, "mesh loop", error);
+            } finally {
+                handler.postDelayed(this, LOOP_MS);
+            }
+        }
+    };
+
+    private void observeConnectivity() {
+        connectivity = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (connectivity == null) return;
+        try {
+            Network active = connectivity.getActiveNetwork();
+            networkAvailable = hasInternet(active);
+        } catch (Throwable ignored) {}
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try { connectivity.registerDefaultNetworkCallback(networkCallback); } catch (Throwable ignored) {}
+        }
+    }
+
+    private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
+        @Override public void onAvailable(Network network) {
+            networkAvailable = hasInternet(network);
+            if (networkAvailable) io.execute(new Runnable() { @Override public void run() { attemptSponsoredSettlement(); } });
+        }
+        @Override public void onLost(Network network) {
+            try {
+                Network active = connectivity == null ? null : connectivity.getActiveNetwork();
+                networkAvailable = hasInternet(active);
+            } catch (Throwable ignored) { networkAvailable = false; }
+        }
+        @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
+            networkAvailable = capabilities != null && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+        }
+    };
+
+    private boolean hasInternet(Network network) {
+        if (network == null || connectivity == null) return false;
+        NetworkCapabilities c = connectivity.getNetworkCapabilities(network);
+        return c != null && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+    }
+
+    private boolean bluetoothPermissionsGranted() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true;
+        return checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+            && checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+            && checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void startBluetooth() {
+        if (!bluetoothPermissionsGranted()) return;
+        bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
+        if (bluetoothManager == null) return;
+        adapter = bluetoothManager.getAdapter();
+        if (adapter == null || !adapter.isEnabled()) return;
+        try {
+            startGattServer();
+            advertiser = adapter.getBluetoothLeAdvertiser();
+            scanner = adapter.getBluetoothLeScanner();
+            if (advertiser != null) {
+                AdvertiseSettings settings = new AdvertiseSettings.Builder()
+                    .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
+                    .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
+                    .setConnectable(true)
+                    .build();
+                AdvertiseData data = new AdvertiseData.Builder()
+                    .addServiceUuid(new ParcelUuid(SERVICE_UUID))
+                    .setIncludeDeviceName(false)
+                    .build();
+                try { advertiser.startAdvertising(settings, data, advertiseCallback); } catch (Throwable ignored) {}
+            }
+            if (scanner != null && !scanning) {
+                ScanFilter filter = new ScanFilter.Builder().setServiceUuid(new ParcelUuid(SERVICE_UUID)).build();
+                ScanSettings settings = new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build();
+                scanner.startScan(Arrays.asList(filter), settings, scanCallback);
+                scanning = true;
+            }
+        } catch (Throwable error) {
+            Log.w(TAG, "Unable to start BLE mesh", error);
+        }
+    }
+
+    private void stopBluetooth() {
+        if (!bluetoothPermissionsGranted()) return;
+        try { if (scanner != null && scanning) scanner.stopScan(scanCallback); } catch (Throwable ignored) {}
+        try { if (advertiser != null) advertiser.stopAdvertising(advertiseCallback); } catch (Throwable ignored) {}
+        try { if (gattServer != null) gattServer.close(); } catch (Throwable ignored) {}
+        scanning = false;
+        gattServer = null;
+    }
+
+    private void startGattServer() {
+        if (gattServer != null || bluetoothManager == null) return;
+        gattServer = bluetoothManager.openGattServer(this, serverCallback);
+        if (gattServer == null) return;
+        BluetoothGattService service = new BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY);
+        BluetoothGattCharacteristic write = new BluetoothGattCharacteristic(
+            WRITE_UUID,
+            BluetoothGattCharacteristic.PROPERTY_WRITE,
+            BluetoothGattCharacteristic.PERMISSION_WRITE
+        );
+        service.addCharacteristic(write);
+        gattServer.addService(service);
+    }
+
+    private final AdvertiseCallback advertiseCallback = new AdvertiseCallback() {};
+
+    private final ScanCallback scanCallback = new ScanCallback() {
+        @Override public void onScanResult(int callbackType, ScanResult result) {
+            if (result == null || result.getDevice() == null) return;
+            BluetoothDevice device = result.getDevice();
+            peers.put(device.getAddress(), device);
+            maybeConnect(device);
+        }
+    };
+
+    private void pumpKnownPeers() {
+        List<String> due = db.duePackets(System.currentTimeMillis(), 1);
+        if (due.isEmpty()) return;
+        List<BluetoothDevice> snapshot;
+        synchronized (peers) { snapshot = new ArrayList<BluetoothDevice>(peers.values()); }
+        for (BluetoothDevice device : snapshot) maybeConnect(device);
+    }
+
+    private void maybeConnect(BluetoothDevice device) {
+        if (!bluetoothPermissionsGranted()) return;
+        long now = System.currentTimeMillis();
+        Long previous = lastConnect.get(device.getAddress());
+        if (previous != null && now - previous < PEER_RETRY_MS) return;
+        if (db.duePackets(now, 1).isEmpty()) return;
+        lastConnect.put(device.getAddress(), now);
+        try { device.connectGatt(this, false, clientCallback, BluetoothDevice.TRANSPORT_LE); }
+        catch (Throwable error) { Log.d(TAG, "connect failed: " + error.getMessage()); }
+    }
+
+    private final BluetoothGattCallback clientCallback = new BluetoothGattCallback() {
+        @Override public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) {
+                try { gatt.discoverServices(); } catch (Throwable ignored) { closeGatt(gatt); }
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) closeGatt(gatt);
+        }
+
+        @Override public void onServicesDiscovered(final BluetoothGatt gatt, int status) {
+            if (status != BluetoothGatt.GATT_SUCCESS) { closeGatt(gatt); return; }
+            try {
+                gatt.requestMtu(247);
+                handler.postDelayed(new Runnable() { @Override public void run() { sendOnePacket(gatt); } }, 500L);
+            } catch (Throwable ignored) { sendOnePacket(gatt); }
+        }
+
+        @Override public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            SendState state = SendState.forGatt(gatt);
+            if (state == null) { closeGatt(gatt); return; }
+            if (status != BluetoothGatt.GATT_SUCCESS) { SendState.clear(gatt); closeGatt(gatt); return; }
+            if (!state.writeNext(gatt)) {
+                db.recordAttempt(state.messageId);
+                SendState.clear(gatt);
+                closeGatt(gatt);
+            }
+        }
+    };
+
+    private void sendOnePacket(BluetoothGatt gatt) {
+        List<String> packets = db.duePackets(System.currentTimeMillis(), 1);
+        if (packets.isEmpty()) { closeGatt(gatt); return; }
+        BluetoothGattService service = gatt.getService(SERVICE_UUID);
+        BluetoothGattCharacteristic characteristic = service == null ? null : service.getCharacteristic(WRITE_UUID);
+        if (characteristic == null) { closeGatt(gatt); return; }
+        try {
+            JSONObject packet = new JSONObject(packets.get(0));
+            String messageId = packet.optString("messageId", UUID.randomUUID().toString());
+            SendState state = SendState.create(messageId, packets.get(0), characteristic);
+            SendState.put(gatt, state);
+            if (!state.writeNext(gatt)) { SendState.clear(gatt); closeGatt(gatt); }
+        } catch (Throwable ignored) { closeGatt(gatt); }
+    }
+
+    private void closeGatt(BluetoothGatt gatt) {
+        try { gatt.disconnect(); } catch (Throwable ignored) {}
+        try { gatt.close(); } catch (Throwable ignored) {}
+    }
+
+    private final BluetoothGattServerCallback serverCallback = new BluetoothGattServerCallback() {
+        @Override public void onCharacteristicWriteRequest(BluetoothDevice device, int requestId, BluetoothGattCharacteristic characteristic, boolean preparedWrite, boolean responseNeeded, int offset, byte[] value) {
+            int status = BluetoothGatt.GATT_FAILURE;
+            try {
+                if (characteristic != null && WRITE_UUID.equals(characteristic.getUuid()) && value != null) {
+                    String frame = new String(value, StandardCharsets.UTF_8);
+                    status = acceptFrame(device, frame) ? BluetoothGatt.GATT_SUCCESS : BluetoothGatt.GATT_FAILURE;
+                }
+            } catch (Throwable ignored) {}
+            if (responseNeeded && gattServer != null) {
+                try { gattServer.sendResponse(device, requestId, status, 0, null); } catch (Throwable ignored) {}
+            }
+        }
+    };
+
+    private boolean acceptFrame(BluetoothDevice device, String frame) {
+        if (!frame.startsWith("B2|")) return false;
+        String[] parts = frame.split("\\|", 5);
+        if (parts.length != 5) return false;
+        String messageId = parts[1];
+        int index;
+        int total;
+        try { index = Integer.parseInt(parts[2]); total = Integer.parseInt(parts[3]); }
+        catch (Throwable ignored) { return false; }
+        if (total <= 0 || total > 512 || index < 0 || index >= total) return false;
+        String key = device.getAddress() + ":" + messageId;
+        Assembly assembly = assemblies.get(key);
+        if (assembly == null || assembly.total != total) {
+            assembly = new Assembly(total);
+            assemblies.put(key, assembly);
+        }
+        assembly.parts[index] = parts[4];
+        if (!assembly.complete()) return true;
+        assemblies.remove(key);
+        try {
+            StringBuilder b64 = new StringBuilder();
+            for (String part : assembly.parts) b64.append(part);
+            String raw = new String(Base64.decode(b64.toString(), Base64.NO_WRAP), StandardCharsets.UTF_8);
+            BleeMeshDb.ProcessResult result = db.receive(raw, deviceId, publicKey);
+            if (result.accepted && result.ledgerChanged) notifyLedgerChanged(result.paymentId, result.type);
+            if (result.notificationTitle != null) paymentNotification(result.notificationTitle, result.notificationBody, result.paymentId);
+            return result.accepted;
+        } catch (Throwable error) {
+            Log.w(TAG, "packet assembly failed", error);
+            return false;
+        }
+    }
+
+    private void notifyLedgerChanged(String paymentId, String type) {
+        Intent intent = new Intent(ACTION_LEDGER_CHANGED);
+        intent.setPackage(getPackageName());
+        intent.putExtra(EXTRA_PAYMENT_ID, paymentId == null ? "" : paymentId);
+        intent.putExtra(EXTRA_EVENT_TYPE, type == null ? "" : type);
+        sendBroadcast(intent);
+    }
+
+    private void attemptSponsoredSettlement() {
+        String endpoint = db.getKv("mesh.relay.endpoint");
+        String mode = db.getKv("mesh.relay.mode");
+        if (endpoint == null || endpoint.trim().isEmpty()) return;
+        if (mode == null || mode.trim().isEmpty()) mode = "SPONSORED_AUTO_RELAY";
+        if (!("SPONSORED_AUTO_RELAY".equals(mode) || "TESTNET_AUTO_RELAY".equals(mode))) return;
+        endpoint = endpoint.trim();
+        if (!endpoint.startsWith("https://")) return;
+
+        List<String> candidates = db.settlementCandidates(System.currentTimeMillis(), 4);
+        for (String raw : candidates) {
+            try {
+                JSONObject packet = new JSONObject(raw);
+                String paymentId = packet.optString("paymentId", "");
+                JSONObject request = new JSONObject();
+                request.put("protocol", "blee-mesh-v2");
+                request.put("mode", mode);
+                request.put("packet", packet);
+                JSONObject receipt = postJson(endpoint, request);
+                if (receipt != null && !receipt.optString("txHash", "").isEmpty()) {
+                    db.recordSettlementReceipt(packet, receipt, deviceId, publicKey);
+                    db.markSettlementAttempt(paymentId, true, null);
+                    notifyLedgerChanged(paymentId, "SETTLEMENT_RECEIPT");
+                }
+            } catch (Throwable error) {
+                try {
+                    JSONObject packet = new JSONObject(raw);
+                    db.markSettlementAttempt(packet.optString("paymentId", ""), false, error.getMessage());
+                } catch (Throwable ignored) {}
+            }
+        }
+    }
+
+    private JSONObject postJson(String endpoint, JSONObject body) throws Exception {
+        URL url = new URL(endpoint);
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod("POST");
+        connection.setConnectTimeout(8000);
+        connection.setReadTimeout(15000);
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Content-Type", "application/json");
+        connection.setRequestProperty("Accept", "application/json");
+        byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+        connection.setFixedLengthStreamingMode(bytes.length);
+        try (OutputStream out = connection.getOutputStream()) { out.write(bytes); }
+        int code = connection.getResponseCode();
+        if (code < 200 || code >= 300) throw new IllegalStateException("Relay returned HTTP " + code);
+        StringBuilder text = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) text.append(line);
+        } finally { connection.disconnect(); }
+        return new JSONObject(text.toString());
+    }
+
+    private void createNotificationChannels() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager == null) return;
+        NotificationChannel service = new NotificationChannel(CHANNEL_SERVICE, "Blee nearby payments", NotificationManager.IMPORTANCE_LOW);
+        service.setDescription("Keeps Blee nearby payment delivery and reconciliation active.");
+        manager.createNotificationChannel(service);
+        NotificationChannel payments = new NotificationChannel(CHANNEL_PAYMENTS, "Blee payments", NotificationManager.IMPORTANCE_HIGH);
+        payments.setDescription("Payment received and settlement notifications.");
+        manager.createNotificationChannel(payments);
+    }
+
+    private Notification serviceNotification(String text) {
+        Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        PendingIntent pending = launch == null ? null : PendingIntent.getActivity(this, 0, launch, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new Notification.Builder(this, CHANNEL_SERVICE) : new Notification.Builder(this);
+        builder.setContentTitle("Blee")
+            .setContentText(text)
+            .setSmallIcon(getApplicationInfo().icon)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(Notification.CATEGORY_SERVICE);
+        if (pending != null) builder.setContentIntent(pending);
+        return builder.build();
+    }
+
+    private void paymentNotification(String title, String body, String paymentId) {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager == null) return;
+        Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (launch != null && paymentId != null) launch.putExtra("bleePaymentId", paymentId);
+        PendingIntent pending = launch == null ? null : PendingIntent.getActivity(this, paymentId == null ? 0 : paymentId.hashCode(), launch, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new Notification.Builder(this, CHANNEL_PAYMENTS) : new Notification.Builder(this);
+        builder.setContentTitle(title).setContentText(body).setSmallIcon(getApplicationInfo().icon).setAutoCancel(true).setCategory(Notification.CATEGORY_MESSAGE);
+        if (pending != null) builder.setContentIntent(pending);
+        manager.notify(paymentId == null ? (int) System.currentTimeMillis() : paymentId.hashCode(), builder.build());
+    }
+
+    private static final class Assembly {
+        final int total;
+        final String[] parts;
+        Assembly(int total) { this.total = total; this.parts = new String[total]; }
+        boolean complete() { for (String p : parts) if (p == null) return false; return true; }
+    }
+
+    private static final class SendState {
+        private static final Map<BluetoothGatt, SendState> STATES = Collections.synchronizedMap(new HashMap<BluetoothGatt, SendState>());
+        final String messageId;
+        final BluetoothGattCharacteristic characteristic;
+        final List<byte[]> frames;
+        int next = 0;
+
+        private SendState(String messageId, BluetoothGattCharacteristic characteristic, List<byte[]> frames) {
+            this.messageId = messageId;
+            this.characteristic = characteristic;
+            this.frames = frames;
+        }
+
+        static SendState create(String messageId, String raw, BluetoothGattCharacteristic characteristic) {
+            String encoded = Base64.encodeToString(raw.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP);
+            int chunkSize = 120;
+            int total = (encoded.length() + chunkSize - 1) / chunkSize;
+            List<byte[]> frames = new ArrayList<byte[]>();
+            for (int i = 0; i < total; i++) {
+                int end = Math.min(encoded.length(), (i + 1) * chunkSize);
+                String frame = "B2|" + messageId + "|" + i + "|" + total + "|" + encoded.substring(i * chunkSize, end);
+                frames.add(frame.getBytes(StandardCharsets.UTF_8));
+            }
+            return new SendState(messageId, characteristic, frames);
+        }
+
+        boolean writeNext(BluetoothGatt gatt) {
+            if (next >= frames.size()) return false;
+            byte[] data = frames.get(next++);
+            characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            if (Build.VERSION.SDK_INT >= 33) {
+                return gatt.writeCharacteristic(characteristic, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == 0;
+            }
+            characteristic.setValue(data);
+            return gatt.writeCharacteristic(characteristic);
+        }
+
+        static void put(BluetoothGatt gatt, SendState state) { STATES.put(gatt, state); }
+        static SendState forGatt(BluetoothGatt gatt) { return STATES.get(gatt); }
+        static void clear(BluetoothGatt gatt) { STATES.remove(gatt); }
+    }
+}
