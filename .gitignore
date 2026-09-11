@@ -1,30 +1,29 @@
-# Generated app workspace reconstructed by build-blee.command
-/src/
-/app/
-/plugins/
-/android/
-/public/
-/out/
-/.next/
-/node_modules/
-/dist/
-/.blee-tools/
-/.blee-professional-inner.command
+# Dependencies
+node_modules/
 
-# Reconstructed project manifests/config
-/package.json
-/package-lock.json
-/tsconfig.json
-/next-env.d.ts
-/next.config.*
-/capacitor.config.*
+# Next.js / web build output
+.next/
+out/
 
-# Local environment / IDE
-.env
-.env.*
+# Android generated/build output
+android/.gradle/
+android/**/build/
+
+# Canonical APK output
+dist/
+
+# Local build tools/cache
+.blee-tools/
+
+# OS/editor
 .DS_Store
+*.swp
+*.swo
 .idea/
 .vscode/
 
-# Build logs
+# Logs
 *.log
+
+# Temporary generated builder files
+.blee-professional-inner.command
