@@ -5,7 +5,7 @@
 :root {
   --blee-bg: #f5f5f2;
   --blee-surface: #ffffff;
-  --blee-surface-2: #ededE8;
+  --blee-surface-2: #edede8;
   --blee-ink: #090909;
   --blee-muted: #71716b;
   --blee-faint: #a4a49d;
@@ -13,7 +13,6 @@
   --blee-line-strong: rgba(9,9,9,.16);
   --blee-radius: 22px;
   --blee-radius-lg: 28px;
-  --blee-shadow: 0 16px 45px rgba(0,0,0,.055);
 }
 
 * { box-sizing: border-box; }
@@ -26,7 +25,6 @@ body {
   letter-spacing: -.012em;
 }
 
-/* Never let the WebView look like a desktop landing page. */
 main, [class*="shell" i], [class*="screen" i], [class*="page" i] {
   width: 100% !important;
   max-width: 100% !important;
@@ -34,7 +32,6 @@ main, [class*="shell" i], [class*="screen" i], [class*="page" i] {
 }
 main { padding-inline: 18px !important; padding-bottom: calc(112px + env(safe-area-inset-bottom)) !important; }
 
-/* Brand: one compact, centered lockup. No logo jammed into the left corner. */
 .blee-brand-lockup {
   width: 100%;
   display: inline-flex;
@@ -57,30 +54,20 @@ header, [class*="topbar" i], [class*="top-bar" i], [class*="app-header" i], [cla
   border: 0 !important;
   box-shadow: none !important;
 }
-header > button, [class*="topbar" i] > button, [class*="header" i] > button {
-  position: absolute !important;
-}
+header > button, [class*="topbar" i] > button, [class*="header" i] > button { position: absolute !important; }
 header > button:first-of-type, [class*="topbar" i] > button:first-of-type, [class*="header" i] > button:first-of-type { left: 16px !important; }
 header > button:last-of-type, [class*="topbar" i] > button:last-of-type, [class*="header" i] > button:last-of-type { right: 16px !important; }
 
-/* Any decorative duplicate mark outside the lockup stays intentionally small. */
 .blee-brand-mark { max-width: 50px !important; max-height: 50px !important; }
 .blee-wordmark { max-height: 26px !important; }
 
-/* Compact wallet-first typography. */
 h1, h2, h3 { margin-top: 0; color: var(--blee-ink) !important; }
-h1 {
-  font-size: clamp(34px, 9.5vw, 43px) !important;
-  line-height: .98 !important;
-  letter-spacing: -.052em !important;
-  font-weight: 700 !important;
-}
+h1 { font-size: clamp(34px, 9.5vw, 43px) !important; line-height: .98 !important; letter-spacing: -.052em !important; font-weight: 700 !important; }
 h2 { font-size: 27px !important; line-height: 1.02 !important; letter-spacing: -.04em !important; font-weight: 700 !important; }
 h3 { font-size: 17px !important; line-height: 1.12 !important; font-weight: 650 !important; }
 p { line-height: 1.45; }
 small, [class*="caption" i], [class*="meta" i], [class*="hint" i], [class*="eyebrow" i], [class*="label" i] { color: var(--blee-muted) !important; }
 
-/* Remove the old giant marketing hero feel. */
 [class*="hero" i] {
   min-height: 0 !important;
   padding: 12px 0 18px !important;
@@ -94,7 +81,6 @@ small, [class*="caption" i], [class*="meta" i], [class*="hint" i], [class*="eyeb
 [class*="hero" i] h1 { max-width: 330px !important; margin: 8px 0 12px !important; }
 [class*="hero" i] p { max-width: 340px !important; margin: 0 !important; color: var(--blee-muted) !important; font-size: 14px !important; }
 
-/* Surfaces */
 [class*="card" i], [class*="panel" i], [class*="tile" i], [class*="form" i] {
   background: var(--blee-surface) !important;
   border: 1px solid var(--blee-line) !important;
@@ -103,7 +89,6 @@ small, [class*="caption" i], [class*="meta" i], [class*="hint" i], [class*="eyeb
 }
 [class*="card" i], [class*="panel" i], [class*="form" i] { padding: 18px !important; }
 
-/* Form fields: dense, premium, not oversized MVP boxes. */
 label { display: block; font-size: 12px !important; font-weight: 600 !important; color: var(--blee-muted) !important; margin: 0 0 7px !important; }
 input, textarea, select {
   width: 100%;
@@ -121,12 +106,8 @@ textarea { min-height: 108px !important; padding-block: 14px !important; }
 input:focus, textarea:focus, select:focus { border-color: var(--blee-ink) !important; box-shadow: 0 0 0 1px var(--blee-ink) !important; }
 input::placeholder, textarea::placeholder { color: var(--blee-faint) !important; opacity: 1; }
 
-button {
-  font: inherit;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
-}
-button[class*="primary" i], button[type="submit"], .blee-primary-send {
+button { font: inherit; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+button[class*="primary" i], button[type="submit"], .blee-primary-send, [data-blee-action="send"] {
   min-height: 56px !important;
   border-radius: 18px !important;
   border: 1px solid var(--blee-ink) !important;
@@ -136,7 +117,7 @@ button[class*="primary" i], button[type="submit"], .blee-primary-send {
   letter-spacing: -.018em !important;
   box-shadow: none !important;
 }
-button[class*="secondary" i], .blee-secondary-receive {
+button[class*="secondary" i], .blee-secondary-receive, [data-blee-action="receive"] {
   min-height: 54px !important;
   border-radius: 18px !important;
   border: 1px solid var(--blee-line-strong) !important;
@@ -148,15 +129,12 @@ button[class*="secondary" i], .blee-secondary-receive {
 button:disabled { opacity: .35 !important; }
 button:active:not(:disabled) { transform: scale(.985); }
 
-/* Balances should read like a wallet, not a dashboard card. */
 [class*="balance" i], [data-amount], [class*="amount" i] { font-variant-numeric: tabular-nums lining-nums; }
 [class*="balance" i] { letter-spacing: -.05em !important; }
 
-/* Send/receive actions stay visible and obvious when rendered on the wallet home. */
-.blee-primary-send, .blee-secondary-receive { width: 100% !important; }
+.blee-primary-send, .blee-secondary-receive, [data-blee-action="send"], [data-blee-action="receive"] { width: 100% !important; }
 [class*="actions" i], [class*="quick" i] { gap: 10px !important; }
 
-/* Bottom navigation: compact and native-like. */
 nav, [class*="bottom-nav" i], [class*="bottomnav" i] {
   border-top: 1px solid var(--blee-line) !important;
   background: rgba(250,250,247,.96) !important;
@@ -165,7 +143,6 @@ nav, [class*="bottom-nav" i], [class*="bottomnav" i] {
   box-shadow: none !important;
 }
 
-/* Sheets */
 [class*="sheet" i], [class*="modal" i], [class*="drawer" i] {
   background: var(--blee-surface) !important;
   border-radius: 28px 28px 0 0 !important;
@@ -173,7 +150,6 @@ nav, [class*="bottom-nav" i], [class*="bottomnav" i] {
   box-shadow: 0 -18px 50px rgba(0,0,0,.10) !important;
 }
 
-/* Keep all status semantics monochrome. */
 [class*="error" i], [class*="warning" i], [class*="success" i], [class*="notice" i], [class*="banner" i] {
   color: var(--blee-ink) !important;
   background: #e9e9e4 !important;
