@@ -26,12 +26,12 @@ def decode_bundle() -> tuple[Path, Path]:
     if not PARTS.is_dir():
         raise SystemExit("Blee 2.4: ui-v4/parts is missing")
     parts = sorted(PARTS.glob("part*"))
-    if len(parts) != 11:
-        raise SystemExit(f"Blee 2.4: expected 11 UI bundle parts, found {len(parts)}")
     expected_names = [f"part{i:02d}" for i in range(11)]
     if [p.name for p in parts] != expected_names:
-        raise SystemExit(f"Blee 2.4: UI parts are incomplete or out of order: {[p.name for p in parts]}")
+        raise SystemExit(f"Blee 2.4: expected UI bundle parts {expected_names}, found {[p.name for p in parts]}")
 
+    # GitHub stores the bundle as wrapped base64 text. Whitespace is intentionally ignored;
+    # the decoded archive checksum is the authoritative integrity boundary.
     encoded = b"".join(b"".join(path.read_bytes().split()) for path in parts)
     try:
         archive = base64.b64decode(encoded, validate=True)
@@ -40,7 +40,7 @@ def decode_bundle() -> tuple[Path, Path]:
 
     digest = hashlib.sha256(archive).hexdigest()
     if digest != ARCHIVE_SHA256:
-        raise SystemExit(f"Blee 2.4: UI bundle checksum mismatch: {digest}")
+        raise SystemExit(f"Blee 2.4: UI bundle checksum mismatch: {digest}; expected {ARCHIVE_SHA256}")
 
     temp = Path(tempfile.mkdtemp(prefix="blee-ui-2.4-"))
     archive_path = temp / "blee-ui-2.4.tar.gz"
@@ -53,13 +53,15 @@ def decode_bundle() -> tuple[Path, Path]:
         for member in tar.getmembers():
             target = (source / member.name).resolve()
             if not str(target).startswith(str(source_root) + "/") and target != source_root:
-                raise SystemExit(f"Blee 2.4: unsafe bundle member: {member.name}")
+                raise SystemExit(f"Blee 2.4: unsafe UI bundle member: {member.name}")
         tar.extractall(source)
 
     return temp, source
 
 
 def install_ground_up_ui(source: Path) -> None:
+    # This runs LAST after all historical UX overlays. These files are replaced wholesale,
+    # so 1.x/2.2/2.3 JSX and CSS cannot leak into the 2.4 presentation.
     for rel in FILES:
         src = source / rel
         dst = ROOT / rel
@@ -67,7 +69,7 @@ def install_ground_up_ui(source: Path) -> None:
             raise SystemExit(f"Blee 2.4: UI bundle missing {rel}")
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
-        print(f"Blee 2.4 source: {rel}")
+        print(f"Blee 2.4 source replacement: {rel}")
 
 
 def replace_old_passphrase_rules(text: str) -> str:
@@ -86,15 +88,14 @@ def inject_create_vault_minimum(text: str) -> tuple[str, bool]:
         return text, False
 
     patterns = (
-        r"(export\s+async\s+function\s+createVault\s*\(\s*passphrase\s*:\s*string\s*\)\s*\{)",
-        r"(async\s+function\s+createVault\s*\(\s*passphrase\s*:\s*string\s*\)\s*\{)",
-        r"(export\s+const\s+createVault\s*=\s*async\s*\(\s*passphrase\s*:\s*string\s*\)\s*=>\s*\{)",
+        r"((?:export\s+)?async\s+function\s+createVault\s*\([^)]*\bpassphrase\b[^)]*\)\s*(?::\s*[^\{]+)?\{)",
+        r"((?:export\s+)?const\s+createVault\s*=\s*async\s*\([^)]*\bpassphrase\b[^)]*\)\s*(?::\s*[^=]+)?=>\s*\{)",
     )
     guard = '\n  if (passphrase.length < 8) throw new Error("Use a passphrase of at least 8 characters");'
     for pattern in patterns:
-        text, count = re.subn(pattern, r"\1" + guard, text, count=1)
+        updated, count = re.subn(pattern, r"\1" + guard, text, count=1, flags=re.S)
         if count:
-            return text, True
+            return updated, True
     raise SystemExit("Blee 2.4: createVault(passphrase) could not be found for functional passphrase enforcement")
 
 
@@ -111,26 +112,29 @@ def enforce_passphrase_functionally() -> None:
             path.write_text(updated)
             touched.append(str(path.relative_to(ROOT)))
 
+    # useBlee.create() calls createVault(), so this is the actual new-wallet enforcement path.
     vault = ROOT / "src/lib/vault.ts"
     if not vault.is_file():
         raise SystemExit("Blee 2.4: src/lib/vault.ts is missing; wallet creation policy cannot be verified")
-    text = replace_old_passphrase_rules(vault.read_text())
-    text, injected = inject_create_vault_minimum(text)
-    vault.write_text(text)
+    vault_text = replace_old_passphrase_rules(vault.read_text())
+    vault_text, injected = inject_create_vault_minimum(vault_text)
+    vault.write_text(vault_text)
     if injected:
         touched.append("src/lib/vault.ts (8-character create guard injected)")
 
+    # Import / recovery uses walletRecovery.encryptAndStore(). It must enforce the same rule.
     recovery = ROOT / "src/lib/walletRecovery.ts"
     if not recovery.is_file():
         raise SystemExit("Blee 2.4: walletRecovery.ts is missing")
     recovery_text = replace_old_passphrase_rules(recovery.read_text())
     recovery.write_text(recovery_text)
-    if not re.search(r"passphrase\.length\s*<\s*8", recovery_text):
-        raise SystemExit("Blee 2.4: wallet import/encryption path does not enforce 8 characters")
-    if not re.search(r"passphrase\.length\s*<\s*8", vault.read_text()):
-        raise SystemExit("Blee 2.4: createVault does not enforce 8 characters")
 
-    print("Blee 2.4: functional 8-character passphrase policy verified")
+    if not re.search(r"passphrase\.length\s*<\s*8", vault_text):
+        raise SystemExit("Blee 2.4: createVault does not enforce an 8-character minimum")
+    if not re.search(r"passphrase\.length\s*<\s*8", recovery_text):
+        raise SystemExit("Blee 2.4: wallet import/encryption path does not enforce an 8-character minimum")
+
+    print("Blee 2.4: functional 8-character passphrase policy verified in create + import paths")
     if touched:
         print("Blee 2.4 passphrase updates:", ", ".join(touched))
 
@@ -138,16 +142,16 @@ def enforce_passphrase_functionally() -> None:
 def lock_product_to_arc_usdc() -> None:
     network = ROOT / "src/lib/networkConfig.ts"
     text = network.read_text()
-    required = (
-        'id: "arc-testnet"',
-        'name: "Arc Testnet"',
-        "chainId: 5042002",
-        'tokenSymbol: "USDC"',
-        'tokenAddress: "0x3600000000000000000000000000000000000000"',
-        "return [ARC_TESTNET]",
-        "return ARC_TESTNET",
+    regexes = (
+        r"id\s*:\s*['\"]arc-testnet['\"]",
+        r"name\s*:\s*['\"]Arc Testnet['\"]",
+        r"chainId\s*:\s*5042002\b",
+        r"tokenSymbol\s*:\s*['\"]USDC['\"]",
+        r"tokenAddress\s*:\s*['\"]0x3600000000000000000000000000000000000000['\"]",
+        r"return\s*\[\s*ARC_TESTNET\s*\]",
+        r"return\s+ARC_TESTNET",
     )
-    missing = [marker for marker in required if marker not in text]
+    missing = [pattern for pattern in regexes if not re.search(pattern, text)]
     if missing:
         raise SystemExit(f"Blee 2.4: Arc-only network contract incomplete: {missing}")
     if "Custom settlement networks are not available in Blee" not in text:
@@ -178,6 +182,7 @@ def verify_ui_source() -> None:
 
     required_app = (
         "useBlee",
+        "BottomNav",
         "Home",
         "Nearby",
         "Activity",
@@ -209,14 +214,14 @@ def verify_ui_source() -> None:
     if found:
         raise SystemExit(f"Blee 2.4: legacy UI/copy survived: {found}")
 
-    # The new stylesheet is a replacement, not another layer appended to the old UI.
+    # The 2.4 stylesheet replaces globals.css; it is not appended to legacy styles.
     if not css.lstrip().startswith("/* BLEE_UI_2_4"):
         raise SystemExit("Blee 2.4: globals.css is not the ground-up 2.4 stylesheet")
     for marker in (
         "grid-template-columns: repeat(4, 1fr)",
         ".blee-phone.with-nav",
         ".screen-transition",
-        "env(safe-area-inset-bottom",
+        "safe-area-inset-bottom",
     ):
         if marker not in css:
             raise SystemExit(f"Blee 2.4: production layout invariant missing: {marker}")
@@ -224,8 +229,8 @@ def verify_ui_source() -> None:
     if "Custom settlement networks are not available in Blee" not in network:
         raise SystemExit("Blee 2.4: custom network support is still mutable")
     if "saveNetwork" not in network or "throw new Error" not in network:
-        raise SystemExit("Blee 2.4: legacy network API is not safely locked")
-    if "saveNetwork" in advanced or "deleteNetwork" in advanced or "setActiveNetwork" in advanced:
+        raise SystemExit("Blee 2.4: legacy network compatibility API is not safely locked")
+    if any(term in advanced for term in ("saveNetwork", "deleteNetwork", "setActiveNetwork", "Custom network")):
         raise SystemExit("Blee 2.4: custom network controls survived in AdvancedSettings")
 
     combined_passphrase = app + "\n" + vault + "\n" + recovery
@@ -250,13 +255,13 @@ def verify_ui_source() -> None:
 
     print("============================================================")
     print("VERIFIED: ground-up Blee 2.4 product UI")
-    print("- fresh BleeApp + fresh globals.css (not legacy CSS layering)")
+    print("- fresh BleeApp + fresh globals.css replace legacy presentation")
     print("- Home / Nearby / Activity / Profile single navigation system")
     print("- Send -> Confirm -> queued/success flow wired")
     print("- Receive QR, activity detail, profile/edit, settings, backup/recovery")
     print("- Arc Testnet + USDC only; custom network mutation disabled")
     print("- functional 8-character minimum in create + import encryption paths")
-    print("- no orbit/radar/halo decorative UI and no keep-screen-open BLE copy")
+    print("- no orbit/radar/halo decoration and no keep-screen-open BLE copy")
     print("============================================================")
 
 
