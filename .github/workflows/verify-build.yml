@@ -1,0 +1,53 @@
+name: Verify Blee
+
+on:
+  push:
+    branches: [blee-2.4-ui-rebuild]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install build utilities
+        run: sudo apt-get update && sudo apt-get install -y rsync
+
+      - name: Build canonical APK
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
+        run: bash build-blee.command
+
+      - name: Verify artifact contract
+        run: |
+          test -f dist/Blee.apk
+          unzip -t dist/Blee.apk >/dev/null
+          test -f dist/Blee.apk.sha256
+          ! find dist -maxdepth 1 -type f -name 'Blee-*.apk' | grep .
+
+      - name: Upload Blee.apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blee
+          path: |
+            dist/Blee.apk
+            dist/Blee.apk.sha256
+          if-no-files-found: error
