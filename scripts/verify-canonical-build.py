@@ -63,6 +63,8 @@ if "fingerprint hardware" not in ui.lower() or "enrolled" not in ui.lower():
     raise SystemExit("UI contract is missing fingerprint capability gating")
 if "dist/Blee.apk" not in ui:
     raise SystemExit("UI contract does not pin the canonical APK name")
+if "standalone Blee logo" not in ui or "cold-launch" not in ui:
+    raise SystemExit("UI contract does not pin the standalone Blee launch identity")
 
 # The standalone logo is a canonical product asset. Pin its bytes so source
 # materialization or later patches cannot silently replace it with a generated
