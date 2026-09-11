@@ -10,6 +10,7 @@ required = {
         'apply-blee-final-hardening.py --web',
         'apply-blee-final-hardening.py --android',
         'verify-blee-mesh-v2.py',
+        'verify-canonical-build.py',
         'rm -f "$ROOT/dist"/*.apk',
     ),
     "ARCHITECTURE.md": (
