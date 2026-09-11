@@ -52,20 +52,33 @@ with tempfile.TemporaryDirectory() as tmp:
 print('Professional source snapshot verified:', digest)
 PYVERIFY
 
-java_major() {
+java_major_for() {
+  local java_bin="$1"
   local version
-  version="$(java -version 2>&1 | awk -F'[\".]' '/version/ {print $2; exit}' || true)"
+  version="$("$java_bin" -version 2>&1 | awk -F'[\".]' '/version/ {print $2; exit}' || true)"
   printf '%s' "${version:-0}"
+}
+
+java_major() {
+  if ! command -v java >/dev/null 2>&1; then
+    printf '0'
+    return
+  fi
+  java_major_for "$(command -v java)"
 }
 
 activate_java_home() {
   local home="$1"
-  if [ -x "$home/bin/java" ]; then
-    export JAVA_HOME="$home"
-    export PATH="$JAVA_HOME/bin:$PATH"
-    return 0
+  local java_bin="$home/bin/java"
+  local major
+  [ -x "$java_bin" ] || return 1
+  major="$(java_major_for "$java_bin")"
+  if ! [ "$major" -ge 21 ] 2>/dev/null; then
+    return 1
   fi
-  return 1
+  export JAVA_HOME="$home"
+  export PATH="$JAVA_HOME/bin:$PATH"
+  return 0
 }
 
 ensure_java21() {
@@ -81,6 +94,7 @@ ensure_java21() {
     system_java="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
     if [ -n "$system_java" ] && activate_java_home "$system_java"; then
       echo "Using Java from $JAVA_HOME"
+      echo "Java: $(java -version 2>&1 | head -n 1)"
       return 0
     fi
   fi
@@ -93,6 +107,7 @@ ensure_java21() {
     "/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home"; do
     if activate_java_home "$candidate"; then
       echo "Using Java from $JAVA_HOME"
+      echo "Java: $(java -version 2>&1 | head -n 1)"
       return 0
     fi
   done
@@ -132,7 +147,7 @@ unzip -t "$APK" >/dev/null
 SHA="$(shasum -a 256 "$APK" | awk '{print $1}')"
 
 grep -Eq 'versionCode[[:space:]]+5' android/app/build.gradle || { echo "ERROR: Android versionCode 5 was not applied."; exit 1; }
-grep -Eq 'versionName[[:space:]]+"1\.2\.0"' android/app/build.gradle || { echo "ERROR: Android versionName 1.2.0 was not applied."; exit 1; }
+grep -Eq 'versionName[[:space:]]+\"1\.2\.0\"' android/app/build.gradle || { echo "ERROR: Android versionName 1.2.0 was not applied."; exit 1; }
 grep -q '@drawable/blee_launcher' android/app/src/main/AndroidManifest.xml || { echo "ERROR: Blee launcher icon is not wired into AndroidManifest.xml."; exit 1; }
 grep -q 'BleeAdvancedSettings' src/components/BleeApp.tsx || { echo "ERROR: Settings UI was not wired into BleeApp."; exit 1; }
 grep -q 'sendQueueRef' src/hooks/useBlee.ts || { echo "ERROR: Professional send serialization was overwritten."; exit 1; }
