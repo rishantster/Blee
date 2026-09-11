@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import hashlib
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +30,8 @@ build = require_all(
         "--exclude 'UI_ARCHITECTURE.md'",
         "--exclude 'scripts/apply-blee-*.py'",
         "--exclude 'scripts/verify-*.py'",
+        'apply-blee-original-brand.py',
+        'apply-blee-launcher-1.4.py',
         'apply-blee-final-hardening.py --web',
         'apply-blee-final-hardening.py --android',
         'apply-blee-final-hardening-2.py',
@@ -61,6 +64,42 @@ if "fingerprint hardware" not in ui.lower() or "enrolled" not in ui.lower():
 if "dist/Blee.apk" not in ui:
     raise SystemExit("UI contract does not pin the canonical APK name")
 
+# The standalone logo is a canonical product asset. Pin its bytes so source
+# materialization or later patches cannot silently replace it with a generated
+# placeholder, wordmark, or old icon.
+logo = ROOT / "brand-assets/blee-logo.svg"
+if not logo.is_file():
+    raise SystemExit("Canonical standalone Blee logo is missing")
+logo_hash = hashlib.sha256(logo.read_bytes()).hexdigest()
+if logo_hash != "87812e386ba533b4e4dc6ea52c0fda6c60dee996d2428eaa13203a99b7b313e6":
+    raise SystemExit(f"Canonical standalone Blee logo changed unexpectedly: {logo_hash}")
+
+require_all(
+    "scripts/apply-blee-original-brand.py",
+    (
+        'LOGO = ROOT / "brand-assets" / "blee-logo.svg"',
+        '/brand/blee-logo.svg',
+        'splash-logo',
+        'animation: blee-launch-logo 680ms',
+    ),
+)
+require_all(
+    "scripts/apply-blee-launcher-1.4.py",
+    (
+        'LOGO_SVG = ROOT / "brand-assets" / "blee-logo.svg"',
+        'android:icon="@drawable/blee_launcher"',
+        'android:roundIcon="@drawable/blee_launcher"',
+    ),
+)
+require_all(
+    "scripts/apply-blee-2.5-android.py",
+    (
+        "bleeLaunchChimeLastPlayedAt",
+        "protected void onStart()",
+        "R.raw.blee_open_chime",
+        "player.setVolume(0.24f, 0.24f)",
+    ),
+)
 require_all(
     "scripts/apply-blee-final-hardening.py",
     (
