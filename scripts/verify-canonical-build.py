@@ -109,7 +109,8 @@ require_all(
     "scripts/apply-blee-2.5-android.py",
     (
         "bleeLaunchChimeLastPlayedAt",
-        "protected void onStart()",
+        "public void onStart()",
+        "Blee 2.5 Android compile guard: onStart must remain public for Capacitor BridgeActivity",
         "R.raw.blee_open_chime",
         "player.setVolume(0.24f, 0.24f)",
     ),
