@@ -1,0 +1,36 @@
+name: Build Blee 1.3 Android
+
+on:
+  push:
+    branches: [blee-professional]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build and verify Blee 1.3 APK
+        shell: bash
+        run: bash build-blee-professional.command
+
+      - name: Upload APK and checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blee-1.3.0-professional-debug
+          path: |
+            dist/Blee-1.3.0-professional-debug.apk
+            dist/Blee-1.3.0-professional-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
