@@ -100,9 +100,14 @@ def patch_passphrase() -> None:
         if text != before:
             path.write_text(text)
             changed += 1
-    if changed == 0:
-        raise SystemExit("Blee 2.2: could not locate passphrase minimum")
-    print(f"Blee 2.2: passphrase minimum reduced to 8 characters in {changed} file(s)")
+
+    wallet = ROOT / "src/lib/walletRecovery.ts"
+    final = wallet.read_text() if wallet.exists() else ""
+    if "passphrase.length < 8" not in final or "at least 8 characters" not in final:
+        raise SystemExit("Blee 2.2: 8-character wallet passphrase rule was not established")
+    if "passphrase.length < 12" in final or "at least 12 characters" in final:
+        raise SystemExit("Blee 2.2: old 12-character wallet passphrase rule remains")
+    print(f"Blee 2.2: passphrase minimum is 8 characters (updated {changed} generated file(s))")
 
 
 def patch_persistent_session() -> None:
@@ -146,7 +151,6 @@ def patch_persistent_session() -> None:
         return "void 0 /* BLEE_PERSISTENT_SESSION */"
     text = interval_pattern.sub(replace_interval, text)
 
-    # Direct callback forms such as setTimeout(lockWallet, IDLE_MS).
     direct_pattern = re.compile(
         r"(?P<prefix>(?:[A-Za-z_$][\w$]*(?:\.current)?\s*=\s*)?)setTimeout\(\s*(?:logout|logOut|lockWallet|lockSession|clearSession|clearWalletSession)\s*,\s*[^\)]+\)",
     )
@@ -160,8 +164,6 @@ def patch_persistent_session() -> None:
         return "void 0 /* BLEE_PERSISTENT_SESSION */"
     text = direct_pattern.sub(replace_direct, text)
 
-    # Backgrounding the app may still trigger refresh/reconciliation. Only a
-    # same-line explicit lock/logout action is removed.
     visibility_pattern = re.compile(
         rf"(?P<line>[^\n]*(?:visibilityState|document\.hidden|window\.blur|addEventListener\(['\"]blur['\"])[^\n]*{lock_union}[^\n]*\n)",
         re.I,
