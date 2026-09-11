@@ -4,9 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-EXPECTED_BRANCH="blee-v1-sqlite"
-EXPECTED_APK="Blee-1.1.1-storage-fixed-debug.apk"
-OLD_APK_SHA256="d5d4f8177535064568205bc757bc679109b185e9ec03c90de715b1143d427eea"
+EXPECTED_BRANCH="blee-professional"
+EXPECTED_APK="Blee-1.2.0-professional-debug.apk"
 
 CURRENT_BRANCH="$(git branch --show-current)"
 if [ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]; then
@@ -15,72 +14,66 @@ if [ "$CURRENT_BRANCH" != "$EXPECTED_BRANCH" ]; then
   exit 1
 fi
 
-echo "Fetching latest Blee storage-fixed source..."
+echo "Fetching latest Blee Professional source..."
 git fetch origin "$EXPECTED_BRANCH"
 LOCAL="$(git rev-parse HEAD)"
 REMOTE="$(git rev-parse "origin/$EXPECTED_BRANCH")"
 if [ "$LOCAL" != "$REMOTE" ]; then
-  echo "Updating local branch to latest Blee..."
+  echo "Updating local branch to latest Blee Professional..."
   git pull --ff-only origin "$EXPECTED_BRANCH"
 fi
 
 echo "Building from commit: $(git rev-parse --short HEAD)"
 
-grep -q 'APP_NAME="Blee-1.1.1-storage-fixed-debug.apk"' build-blee-macos.command || {
-  echo "ERROR: Local build script is not the storage-fixed Blee builder."
-  exit 1
-}
-
-test -f scripts/apply-blee-1.1.py || { echo "ERROR: Missing Blee overlay script."; exit 1; }
+test -f build-blee-professional.command || { echo "ERROR: Missing professional builder."; exit 1; }
+test -f scripts/apply-blee-professional.py || { echo "ERROR: Missing professional overlay script."; exit 1; }
+test -f professional/parts/part00 || { echo "ERROR: Missing professional source snapshot."; exit 1; }
 test -f overrides/src/lib/networkConfig.ts || { echo "ERROR: Missing configurable network support."; exit 1; }
 test -f overrides/src/lib/walletRecovery.ts || { echo "ERROR: Missing wallet recovery support."; exit 1; }
 test -f overrides/src/components/BleeAdvancedSettings.tsx || { echo "ERROR: Missing Blee Settings UI."; exit 1; }
-test -f overrides/native/BleeStorePlugin.java || { echo "ERROR: Missing hardened native SQLite store."; exit 1; }
-grep -q 'BLEE_STORE_SAFE_V2' overrides/native/BleeStorePlugin.java || { echo "ERROR: Hardened SQLite store marker missing."; exit 1; }
-if grep -q 'PRAGMA journal_mode=WAL' overrides/native/BleeStorePlugin.java; then
-  echo "ERROR: Unsafe forced journal-mode PRAGMA is present in hardened store."
-  exit 1
-fi
 
-echo "Removing stale APK/build outputs..."
+python3 - <<'PYVERIFY'
+import base64, hashlib, pathlib, tarfile, tempfile
+parts = sorted(pathlib.Path('professional/parts').glob('part*'))
+raw = base64.b64decode(b''.join(p.read_bytes() for p in parts), validate=True)
+digest = hashlib.sha256(raw).hexdigest()
+want = 'ecec910512330005d630bea85951169b3e221b9f7caf4180d029c3c42435a29b'
+if digest != want:
+    raise SystemExit(f'Professional source checksum mismatch: {digest}')
+with tempfile.TemporaryDirectory() as tmp:
+    archive = pathlib.Path(tmp) / 'overlay.tar.gz'
+    archive.write_bytes(raw)
+    with tarfile.open(archive, 'r:gz') as tar:
+        names = set(tar.getnames())
+    required = {'src/components/BleeApp.tsx', 'src/hooks/useBlee.ts', 'app/globals.css', 'app/layout.tsx', 'native/BleeStorePlugin.java'}
+    missing = required - names
+    if missing:
+        raise SystemExit(f'Professional snapshot is missing: {sorted(missing)}')
+print('Professional source snapshot verified:', digest)
+PYVERIFY
+
+echo "Removing stale build outputs..."
 rm -rf dist android .next out
 mkdir -p dist
 
-bash build-blee-macos.command
+bash build-blee-professional.command
 
 APK="$ROOT/dist/$EXPECTED_APK"
-if [ ! -f "$APK" ]; then
-  echo "ERROR: Expected storage-fixed Blee APK was not produced: $APK"
-  exit 1
-fi
-
+[ -f "$APK" ] || { echo "ERROR: Expected Blee Professional APK was not produced: $APK"; exit 1; }
+unzip -t "$APK" >/dev/null
 SHA="$(shasum -a 256 "$APK" | awk '{print $1}')"
-if [ "$SHA" = "$OLD_APK_SHA256" ]; then
-  echo "ERROR: Build produced the exact SHA-256 of the previous Blee APK."
-  exit 1
-fi
 
-grep -Eq 'versionCode[[:space:]]+4' android/app/build.gradle || {
-  echo "ERROR: Android versionCode 4 was not applied."
-  exit 1
-}
-grep -Eq 'versionName[[:space:]]+"1\.1\.1"' android/app/build.gradle || {
-  echo "ERROR: Android versionName 1.1.1 was not applied."
-  exit 1
-}
-grep -q '@drawable/blee_launcher' android/app/src/main/AndroidManifest.xml || {
-  echo "ERROR: Blee launcher icon is not wired into AndroidManifest.xml."
-  exit 1
-}
+grep -Eq 'versionCode[[:space:]]+5' android/app/build.gradle || { echo "ERROR: Android versionCode 5 was not applied."; exit 1; }
+grep -Eq 'versionName[[:space:]]+"1\.2\.0"' android/app/build.gradle || { echo "ERROR: Android versionName 1.2.0 was not applied."; exit 1; }
+grep -q '@drawable/blee_launcher' android/app/src/main/AndroidManifest.xml || { echo "ERROR: Blee launcher icon is not wired into AndroidManifest.xml."; exit 1; }
 grep -q 'BleeAdvancedSettings' src/components/BleeApp.tsx || { echo "ERROR: Settings UI was not wired into BleeApp."; exit 1; }
+grep -q 'sendQueueRef' src/hooks/useBlee.ts || { echo "ERROR: Professional send serialization was overwritten."; exit 1; }
+grep -q 'authenticatedRecipient' src/hooks/useBlee.ts || { echo "ERROR: Professional ACK authentication was overwritten."; exit 1; }
 grep -q 'BLEE_NETWORK_STARTUP_PROFILE' src/lib/arc.ts || { echo "ERROR: Startup network profile was not wired into settlement."; exit 1; }
 grep -q 'getActiveNetwork' src/lib/arc.ts || { echo "ERROR: Active network lookup is missing from settlement runtime."; exit 1; }
-grep -q 'BLEE_STORE_SAFE_V2' plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java || {
-  echo "ERROR: Hardened SQLite implementation was overwritten before Android generation."
-  exit 1
-}
+grep -q 'BLEE_STORE_PRO_V3' plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java || { echo "ERROR: Professional SQLite implementation was overwritten."; exit 1; }
 
-echo "Verifying Blee features inside compiled APK..."
+echo "Verifying Blee Professional features inside compiled APK..."
 VERIFY_DIR="$(mktemp -d)"
 trap 'rm -rf "$VERIFY_DIR"' EXIT
 unzip -q "$APK" -d "$VERIFY_DIR"
@@ -90,29 +83,33 @@ grep -R -q 'Wallet recovery' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missi
 grep -R -q 'Add network' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing Add network UI."; exit 1; }
 grep -R -q 'blee.networks.v1' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing persistent network profiles."; exit 1; }
 grep -R -q 'blee.active-network.v1' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing active-network persistence."; exit 1; }
-grep -R -q 'wallet.vault.v2' "$WEB_ROOT" || { echo "ERROR: Compiled APK wallet recovery is not using the existing encrypted Blee vault."; exit 1; }
+grep -R -q 'wallet.vault.v2' "$WEB_ROOT" || { echo "ERROR: Compiled APK wallet recovery is not using the encrypted Blee vault."; exit 1; }
 grep -R -q 'Mainnet status' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing mainnet/testnet disclosure."; exit 1; }
-grep -R -q 'Blee 1.1' "$WEB_ROOT" || { echo "ERROR: Compiled APK does not identify itself as Blee 1.1."; exit 1; }
+grep -R -q 'Blee 1.2' "$WEB_ROOT" || { echo "ERROR: Compiled APK does not identify itself as Blee 1.2."; exit 1; }
+grep -R -q 'CONFIRMED SPENDABLE' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing confirmed-spendable balance UX."; exit 1; }
+grep -R -q 'Nearby delivery is not final settlement' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing nearby-vs-settlement disclosure."; exit 1; }
+grep -R -q 'Recipient acknowledgement is authenticated' "$WEB_ROOT" || { echo "ERROR: Compiled APK is missing authenticated ACK disclosure."; exit 1; }
 grep -R -q 'Network transaction reverted' "$WEB_ROOT" || { echo "ERROR: Configurable settlement runtime was not compiled into the APK."; exit 1; }
 grep -R -q 'Blee SQLite initialization failed' "$WEB_ROOT" || { echo "ERROR: SQLite error handling was not compiled into the APK."; exit 1; }
 if grep -R -q 'ARC DROP' "$WEB_ROOT"; then
   echo "ERROR: Old ARC DROP branding still exists in packaged web assets."
   exit 1
 fi
-
-grep -q 'com.blee.store.BleeStorePlugin' "$VERIFY_DIR/assets/capacitor.plugins.json" || {
-  echo "ERROR: Capacitor did not register BleeStorePlugin in the APK."
+if grep -R -q 'INTERNET OPTIONAL' "$WEB_ROOT"; then
+  echo "ERROR: Prototype connectivity copy still exists in packaged web assets."
   exit 1
-}
+fi
+
+grep -q 'com.blee.store.BleeStorePlugin' "$VERIFY_DIR/assets/capacitor.plugins.json" || { echo "ERROR: Capacitor did not register BleeStorePlugin in the APK."; exit 1; }
 
 DEX_STRINGS="$VERIFY_DIR/blee-dex-strings.txt"
 find "$VERIFY_DIR" -maxdepth 1 -name 'classes*.dex' -print0 | xargs -0 strings > "$DEX_STRINGS"
 grep -q 'BleeStorePlugin' "$DEX_STRINGS" || { echo "ERROR: Native BleeStorePlugin missing from APK."; exit 1; }
 grep -q 'BleeNearbyPlugin' "$DEX_STRINGS" || { echo "ERROR: Native BleeNearbyPlugin missing from APK."; exit 1; }
 grep -q 'SQLiteOpenHelper' "$DEX_STRINGS" || { echo "ERROR: SQLite implementation missing from APK."; exit 1; }
-grep -q 'BLEE_STORE_SAFE_V2' "$DEX_STRINGS" || { echo "ERROR: APK contains the old SQLite plugin, not the hardened store."; exit 1; }
+grep -q 'BLEE_STORE_PRO_V3' "$DEX_STRINGS" || { echo "ERROR: APK contains an older SQLite plugin, not the professional store."; exit 1; }
 if grep -q 'PRAGMA journal_mode=WAL' "$DEX_STRINGS"; then
-  echo "ERROR: APK still contains the old forced WAL initialization path."
+  echo "ERROR: APK contains the unsafe forced WAL initialization path."
   exit 1
 fi
 
@@ -121,11 +118,11 @@ trap - EXIT
 
 echo
 echo "============================================================"
-echo "✅ VERIFIED BLEE 1.1.1 STORAGE-FIXED APK"
+echo "✅ VERIFIED BLEE 1.2.0 PROFESSIONAL APK"
 echo "File: $APK"
 echo "SHA-256: $SHA"
-echo "Version: 1.1.1 (Android versionCode 4)"
-echo "Verified: hardened SQLite read/write probe + native registration + BLE/LAN + wallet recovery + custom networks + Blee launcher"
+echo "Version: 1.2.0 (Android versionCode 5)"
+echo "Verified: SQLite/WAL + durable journal + BLE/LAN + authenticated ACKs + serialized sends + expiry reconciliation + wallet recovery + custom networks + professional UX"
 echo "============================================================"
 echo
 open "$ROOT/dist" 2>/dev/null || true
