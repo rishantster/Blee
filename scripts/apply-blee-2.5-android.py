@@ -35,11 +35,7 @@ def install_biometric(activity: Path, package: str) -> None:
 
 
 def harden_capacitor_reject_types(activity: Path) -> None:
-    """Capacitor PluginCall.reject accepts Exception, not arbitrary Throwable.
-
-    Newer templates are already narrowed. Older templates are normalized here so
-    a reconstructed source snapshot cannot reintroduce the javac failure.
-    """
+    """Capacitor PluginCall.reject accepts Exception, not arbitrary Throwable."""
     target = activity.parent / "BleeBiometricPlugin.java"
     text = target.read_text()
     hits = text.count("catch (Throwable error)")
@@ -90,6 +86,7 @@ def patch_activity(activity: Path) -> None:
         'import android.content.pm.PackageManager;',
         'import android.media.MediaPlayer;',
         'import android.os.Build;',
+        'import android.os.SystemClock;',
         'import java.util.ArrayList;',
         'import java.util.List;',
     )
@@ -120,7 +117,7 @@ def patch_activity(activity: Path) -> None:
         method = '''
 
     private static final int BLEE_NEARBY_PERMISSION_REQUEST = 24003;
-    private static boolean bleeLaunchChimePlayed = false;
+    private static long bleeLaunchChimeLastPlayedAt = 0L;
 
     private void ensureBleeNearbyPermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -144,6 +141,15 @@ def patch_activity(activity: Path) -> None:
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        // Replay the Blee sonic identity when the user genuinely brings the app
+        // to the foreground. A short cooldown prevents duplicate playback from
+        // onCreate -> onStart or fast Android lifecycle churn.
+        playBleeLaunchChime();
+    }
+
+    @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode != BLEE_NEARBY_PERMISSION_REQUEST) return;
@@ -161,14 +167,21 @@ def patch_activity(activity: Path) -> None:
     }
 
     private void playBleeLaunchChime() {
-        if (bleeLaunchChimePlayed) return;
-        bleeLaunchChimePlayed = true;
+        final long now = SystemClock.elapsedRealtime();
+        if (now - bleeLaunchChimeLastPlayedAt < 1400L) return;
+        bleeLaunchChimeLastPlayedAt = now;
         try {
             final MediaPlayer player = MediaPlayer.create(this, R.raw.blee_open_chime);
             if (player == null) return;
-            player.setVolume(0.16f, 0.16f);
+            // Low-volume media playback intentionally respects the user's media
+            // volume while remaining audible even when the ringer is silenced.
+            player.setVolume(0.24f, 0.24f);
             player.setOnCompletionListener(done -> {
                 try { done.release(); } catch (Throwable ignored) {}
+            });
+            player.setOnErrorListener((failed, what, extra) -> {
+                try { failed.release(); } catch (Throwable ignored) {}
+                return true;
             });
             player.start();
         } catch (Throwable ignored) {}
@@ -220,7 +233,8 @@ def verify(activity: Path) -> None:
     for marker in (
         'BleeBiometricPlugin.class', 'POST_NOTIFICATIONS', 'playBleeLaunchChime()', 'R.raw.blee_open_chime',
         'BLEE_NEARBY_PERMISSION_REQUEST', 'BLUETOOTH_SCAN', 'BLUETOOTH_CONNECT', 'BLUETOOTH_ADVERTISE',
-        'ensureBleeNearbyPermissions();', 'recreate();'
+        'ensureBleeNearbyPermissions();', 'recreate();', 'protected void onStart()', 'SystemClock.elapsedRealtime()',
+        'bleeLaunchChimeLastPlayedAt', 'player.setVolume(0.24f, 0.24f)'
     ):
         if marker not in text:
             raise SystemExit(f"Blee 2.5 Android activity feature missing: {marker}")
@@ -245,7 +259,7 @@ def verify(activity: Path) -> None:
     db = (activity.parent / 'BleeMeshDb.java').read_text()
     if 'Payment delivered' not in db:
         raise SystemExit("Blee 2.5 delivery notification missing")
-    print("Blee 2.5 Android verified: fingerprint-only biometric + notifications + startup chime + runtime nearby permissions/rearm")
+    print("Blee 2.5 Android verified: fingerprint-only biometric + notifications + reliable foreground launch chime + runtime nearby permissions/rearm")
 
 
 def main() -> None:
