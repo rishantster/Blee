@@ -9,6 +9,7 @@ required = {
         'FINAL_APK="$ROOT/dist/Blee.apk"',
         'apply-blee-final-hardening.py --web',
         'apply-blee-final-hardening.py --android',
+        'apply-blee-final-hardening-2.py',
         'verify-blee-mesh-v2.py',
         'verify-canonical-build.py',
         'rm -f "$ROOT/dist"/*.apk',
@@ -27,6 +28,15 @@ required = {
         "BLEE_MONOTONIC_PAYMENT_STATE_V1",
         "BLEE_NATIVE_LIFECYCLE_HARDENING_V1",
         "BLEE_CANONICAL_SETTLEMENT_VERIFY_V1",
+    ),
+    "scripts/apply-blee-final-hardening-2.py": (
+        "BLEE_OFFLINE_SETTLEMENT_PROFILE_REQUIRED_V1",
+        "BLEE_BACKUP_V1_COMPAT_V1",
+        "BLEE_ACK_NON_DESTRUCTIVE_V1",
+        "BLEE_MESH_STATE_MACHINE_HARDENING_V2",
+        "BLEE_ADVERTISER_RECOVERY_V1",
+        "duePacketsForPeer",
+        "recordPeerDelivery",
     ),
 }
 
