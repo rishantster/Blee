@@ -1,0 +1,62 @@
+name: Blee 2.4 UI integrity
+
+on:
+  push:
+    branches: [blee-2.4-ui-rebuild]
+  workflow_dispatch:
+
+jobs:
+  verify-ui-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify UI bundle and frozen product rules
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, io, re, tarfile
+          from pathlib import Path
+
+          parts = sorted(Path('ui-v4/parts').glob('part*'))
+          assert [p.name for p in parts] == [f'part{i:02d}' for i in range(11)], [p.name for p in parts]
+          encoded = b''.join(b''.join(p.read_bytes().split()) for p in parts)
+          archive = base64.b64decode(encoded, validate=True)
+          digest = hashlib.sha256(archive).hexdigest()
+          expected = 'e7a3ab0867ae73f2d81bb23d828ec8589900e1ac86be9be67fa6f057bf3de0d2'
+          assert digest == expected, (digest, expected)
+
+          with tarfile.open(fileobj=io.BytesIO(archive), mode='r:gz') as tar:
+              names = set(tar.getnames())
+              required = {
+                  'src/components/BleeApp.tsx',
+                  'src/components/BleeAdvancedSettings.tsx',
+                  'src/lib/networkConfig.ts',
+                  'app/globals.css',
+              }
+              assert required <= names, sorted(required - names)
+              blobs = {}
+              for name in required:
+                  f = tar.extractfile(name)
+                  assert f is not None
+                  blobs[name] = f.read().decode('utf-8')
+
+          app = blobs['src/components/BleeApp.tsx']
+          css = blobs['app/globals.css']
+          network = blobs['src/lib/networkConfig.ts']
+          advanced = blobs['src/components/BleeAdvancedSettings.tsx']
+
+          for marker in ('useBlee', 'BottomNav', 'Review & send', 'Confirm and send', 'QRCodeSVG', 'Backup & recovery', 'Network & Security', 'Blee 2.4'):
+              assert marker in app, marker
+          for banned in ('Keep this screen open', 'MetaMask-style', 'Add network', 'Relay valid payments', 'Payments that keep moving', 'brand-orbit', 'hero-ring', 'radar-ring'):
+              assert banned.lower() not in app.lower(), banned
+          assert css.lstrip().startswith('/* BLEE_UI_2_4')
+          assert 'grid-template-columns: repeat(4, 1fr)' in css
+          assert '.blee-phone.with-nav' in css
+          assert 'chainId: 5042002' in network
+          assert 'tokenSymbol: "USDC"' in network
+          assert 'Custom settlement networks are not available in Blee' in network
+          assert not any(x in advanced for x in ('saveNetwork', 'deleteNetwork', 'setActiveNetwork'))
+          print('Blee 2.4 UI bundle verified:', digest)
+          PY
