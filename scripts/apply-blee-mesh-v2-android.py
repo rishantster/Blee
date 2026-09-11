@@ -30,6 +30,7 @@ def install_templates(activity: Path, package: str) -> None:
         "BleeMeshDb.java.in",
         "BleeMeshService.java.in",
         "BleeMeshPlugin.java.in",
+        "BleeBootReceiver.java.in",
     )
     for name in required:
         source = TEMPLATES / name
@@ -56,8 +57,6 @@ def patch_main_activity(activity: Path) -> None:
                 raise SystemExit("Existing MainActivity onCreate has no super.onCreate")
             absolute = body_start + super_match.start()
             text = text[:absolute] + "registerPlugin(BleeMeshPlugin.class);\n        " + text[absolute:]
-            super_end = body_start + super_match.end() + len("registerPlugin(BleeMeshPlugin.class);\n        ")
-            # Insert service start after super. Exact placement is intentionally simple and deterministic.
             needle = "super.onCreate(savedInstanceState);"
             pos = text.find(needle, absolute)
             text = text[: pos + len(needle)] + "\n        BleeMeshService.start(this);" + text[pos + len(needle) :]
@@ -96,6 +95,7 @@ def patch_manifest(package: str) -> None:
     permissions = (
         ("android.permission.INTERNET", ""),
         ("android.permission.ACCESS_NETWORK_STATE", ""),
+        ("android.permission.RECEIVE_BOOT_COMPLETED", ""),
         ("android.permission.BLUETOOTH", ' android:maxSdkVersion="30"'),
         ("android.permission.BLUETOOTH_ADMIN", ' android:maxSdkVersion="30"'),
         ("android.permission.ACCESS_FINE_LOCATION", ' android:maxSdkVersion="30"'),
@@ -105,22 +105,35 @@ def patch_manifest(package: str) -> None:
         ("android.permission.POST_NOTIFICATIONS", ""),
         ("android.permission.FOREGROUND_SERVICE", ""),
         ("android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE", ""),
-        ("android.permission.FOREGROUND_SERVICE_DATA_SYNC", ""),
     )
     for permission, extra in permissions:
         xml = add_permission(xml, permission, extra)
 
+    close = xml.rfind("</application>")
+    if close < 0:
+        raise SystemExit("AndroidManifest.xml has no </application>")
+
+    additions = ""
     if "BleeMeshService" not in xml:
-        close = xml.rfind("</application>")
-        if close < 0:
-            raise SystemExit("AndroidManifest.xml has no </application>")
-        service = f'''        <service
+        additions += f'''        <service
             android:name="{package}.BleeMeshService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice|dataSync" />
+            android:foregroundServiceType="connectedDevice" />
 '''
-        xml = xml[:close] + service + xml[close:]
+    if "BleeBootReceiver" not in xml:
+        additions += f'''        <receiver
+            android:name="{package}.BleeBootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+'''
+    if additions:
+        xml = xml[:close] + additions + xml[close:]
     manifest.write_text(xml)
 
 
@@ -131,11 +144,24 @@ def verify(activity: Path, package: str) -> None:
             raise SystemExit(f"MainActivity Mesh v2 registration missing: {marker}")
 
     manifest = (ANDROID / "AndroidManifest.xml").read_text()
-    for marker in ("BLUETOOTH_SCAN", "POST_NOTIFICATIONS", "FOREGROUND_SERVICE_CONNECTED_DEVICE", "BleeMeshService"):
+    for marker in (
+        "BLUETOOTH_SCAN",
+        "POST_NOTIFICATIONS",
+        "FOREGROUND_SERVICE_CONNECTED_DEVICE",
+        "RECEIVE_BOOT_COMPLETED",
+        "BleeMeshService",
+        "BleeBootReceiver",
+    ):
         if marker not in manifest:
             raise SystemExit(f"AndroidManifest Mesh v2 marker missing: {marker}")
 
-    for name in ("BleeDeviceIdentity.java", "BleeMeshDb.java", "BleeMeshService.java", "BleeMeshPlugin.java"):
+    for name in (
+        "BleeDeviceIdentity.java",
+        "BleeMeshDb.java",
+        "BleeMeshService.java",
+        "BleeMeshPlugin.java",
+        "BleeBootReceiver.java",
+    ):
         path = activity.parent / name
         if not path.exists() or f"package {package};" not in path.read_text():
             raise SystemExit(f"Mesh v2 Android source invalid: {name}")
