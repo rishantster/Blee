@@ -10,6 +10,8 @@ TOOLS_ROOT="$ROOT/.blee-tools"
 CLI_VERSION="15859902"
 mkdir -p "$TOOLS_ROOT"
 
+python3 scripts/verify-canonical-build.py
+
 case "$(uname -m)" in
   arm64)
     CLI_ARCHIVE="commandlinetools-mac_arm64-${CLI_VERSION}_latest.zip"
@@ -160,8 +162,6 @@ s=s[:start]+replacement+s[end:]
 p.write_text(s)
 PY
 
-# This order is the canonical implementation recipe. Historical builders are
-# unsupported and are not called from this entrypoint.
 python3 scripts/apply-blee-1.1.py
 python3 scripts/apply-blee-professional.py
 python3 scripts/apply-blee-1.4.py
@@ -200,6 +200,7 @@ python3 scripts/apply-blee-2.2-android.py
 python3 scripts/apply-blee-2.5-android.py
 python3 scripts/apply-blee-final-hardening.py --android
 python3 scripts/verify-blee-mesh-v2.py
+python3 scripts/verify-canonical-build.py
 
 (
   cd android
