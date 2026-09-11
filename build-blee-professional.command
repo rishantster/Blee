@@ -6,7 +6,7 @@ cd "$ROOT"
 
 BASE_BUILDER="$ROOT/build-blee-macos.command"
 INNER_BUILDER="$ROOT/.blee-professional-inner.command"
-EXPECTED_APK="Blee-2.2.0-mesh-v2-debug.apk"
+EXPECTED_APK="Blee-2.3.0-mesh-v2-debug.apk"
 
 if command -v brew >/dev/null 2>&1; then
   BREW_JDK="$(brew --prefix openjdk@21 2>/dev/null || true)"
@@ -16,21 +16,23 @@ if command -v brew >/dev/null 2>&1; then
   fi
 fi
 
-[ -f "$BASE_BUILDER" ] || { echo "ERROR: Missing build-blee-macos.command"; exit 1; }
-[ -f "$ROOT/scripts/apply-blee-professional.py" ] || { echo "ERROR: Missing scripts/apply-blee-professional.py"; exit 1; }
-[ -f "$ROOT/scripts/apply-blee-1.4.py" ] || { echo "ERROR: Missing scripts/apply-blee-1.4.py"; exit 1; }
-[ -f "$ROOT/scripts/apply-blee-1.4-finalize.py" ] || { echo "ERROR: Missing scripts/apply-blee-1.4-finalize.py"; exit 1; }
-[ -f "$ROOT/scripts/apply-blee-launcher-1.4.py" ] || { echo "ERROR: Missing scripts/apply-blee-launcher-1.4.py"; exit 1; }
-[ -f "$ROOT/scripts/apply-blee-mesh-v2.py" ] || { echo "ERROR: Missing scripts/apply-blee-mesh-v2.py"; exit 1; }
-[ -f "$ROOT/scripts/apply-blee-mesh-v2-android.py" ] || { echo "ERROR: Missing scripts/apply-blee-mesh-v2-android.py"; exit 1; }
-[ -f "$ROOT/scripts/apply-blee-2.2.py" ] || { echo "ERROR: Missing scripts/apply-blee-2.2.py"; exit 1; }
-[ -f "$ROOT/scripts/apply-blee-2.2-android.py" ] || { echo "ERROR: Missing scripts/apply-blee-2.2-android.py"; exit 1; }
-[ -f "$ROOT/scripts/verify-blee-mesh-v2.py" ] || { echo "ERROR: Missing scripts/verify-blee-mesh-v2.py"; exit 1; }
-[ -f "$ROOT/mesh-v2/web/payments.ts.in" ] || { echo "ERROR: Missing sender-funded payments template"; exit 1; }
-[ -f "$ROOT/mesh-v2/web/atomicSigning.ts.in" ] || { echo "ERROR: Missing crash-atomic signing template"; exit 1; }
-[ -f "$ROOT/mesh-v2/web/premium-monochrome.css" ] || { echo "ERROR: Missing premium monochrome design system"; exit 1; }
-[ -d "$ROOT/professional" ] || { echo "ERROR: Missing professional/ source overlay"; exit 1; }
-[ -d "$ROOT/mesh-v2" ] || { echo "ERROR: Missing mesh-v2/ implementation"; exit 1; }
+for required in \
+  "$BASE_BUILDER" \
+  "$ROOT/scripts/apply-blee-professional.py" \
+  "$ROOT/scripts/apply-blee-1.4.py" \
+  "$ROOT/scripts/apply-blee-1.4-finalize.py" \
+  "$ROOT/scripts/apply-blee-launcher-1.4.py" \
+  "$ROOT/scripts/apply-blee-mesh-v2.py" \
+  "$ROOT/scripts/apply-blee-mesh-v2-android.py" \
+  "$ROOT/scripts/apply-blee-2.2.py" \
+  "$ROOT/scripts/apply-blee-2.2-android.py" \
+  "$ROOT/scripts/apply-blee-2.3.py" \
+  "$ROOT/scripts/verify-blee-mesh-v2.py" \
+  "$ROOT/mesh-v2/web/payments.ts.in" \
+  "$ROOT/mesh-v2/web/atomicSigning.ts.in" \
+  "$ROOT/mesh-v2/web/premium-monochrome-2.3.css"; do
+  [ -e "$required" ] || { echo "ERROR: Missing $required"; exit 1; }
+done
 
 cp "$BASE_BUILDER" "$INNER_BUILDER"
 trap 'rm -f "$INNER_BUILDER"' EXIT
@@ -42,26 +44,26 @@ path = Path('.blee-professional-inner.command')
 text = path.read_text()
 
 replacements = {
-    'APP_NAME="Blee-1.1.1-storage-fixed-debug.apk"': 'APP_NAME="Blee-2.2.0-mesh-v2-debug.apk"',
-    "g=re.sub(r'versionCode\\s+\\d+', 'versionCode 4', g)": "g=re.sub(r'versionCode\\s+\\d+', 'versionCode 11', g)",
-    "g=re.sub(r'versionName\\s+\"[^\"]+\"', 'versionName \"1.1.1\"', g)": "g=re.sub(r'versionName\\s+\"[^\"]+\"', 'versionName \"2.2.0\"', g)",
-    "print('Blee 1.1.1 launcher identity and version verified.')": "print('Blee 2.2.0 launcher identity and version verified.')",
+    'APP_NAME="Blee-1.1.1-storage-fixed-debug.apk"': 'APP_NAME="Blee-2.3.0-mesh-v2-debug.apk"',
+    "g=re.sub(r'versionCode\\s+\\d+', 'versionCode 4', g)": "g=re.sub(r'versionCode\\s+\\d+', 'versionCode 12', g)",
+    "g=re.sub(r'versionName\\s+\"[^\"]+\"', 'versionName \"1.1.1\"', g)": "g=re.sub(r'versionName\\s+\"[^\"]+\"', 'versionName \"2.3.0\"', g)",
+    "print('Blee 1.1.1 launcher identity and version verified.')": "print('Blee 2.3.0 launcher identity and version verified.')",
 }
 for old, new in replacements.items():
     if old not in text:
-        raise SystemExit(f'Blee 2.2 builder could not locate expected base-build marker: {old}')
+        raise SystemExit(f'Blee 2.3 builder could not locate expected base-build marker: {old}')
     text = text.replace(old, new, 1)
 
 anchor = '''echo "Applying Blee 1.1 wallet recovery + custom network support..."\npython3 scripts/apply-blee-1.1.py\n'''
-addition = anchor + '''\necho "Applying Blee 1.3 identity, QR, discovery and profile UX..."\npython3 scripts/apply-blee-professional.py\n\necho "Applying Blee 1.4 brand and ledger timestamp patch..."\npython3 scripts/apply-blee-1.4.py\npython3 scripts/apply-blee-1.4-finalize.py\n\necho "Applying Blee Mesh v2 + crash-atomic sender-funded settlement..."\npython3 scripts/apply-blee-mesh-v2.py\n\necho "Applying Blee 2.2 atomic bridge, persistent session, passphrase and premium monochrome UI..."\npython3 scripts/apply-blee-2.2.py\n'''
+addition = anchor + '''\necho "Applying Blee 1.3 identity, QR, discovery and profile UX..."\npython3 scripts/apply-blee-professional.py\n\necho "Applying Blee 1.4 brand and ledger timestamp patch..."\npython3 scripts/apply-blee-1.4.py\npython3 scripts/apply-blee-1.4-finalize.py\n\necho "Applying Blee Mesh v2 + crash-atomic sender-funded settlement..."\npython3 scripts/apply-blee-mesh-v2.py\n\necho "Applying Blee 2.2 functional hardening..."\npython3 scripts/apply-blee-2.2.py\n\necho "Applying Blee 2.3 structural wallet UI + interaction hardening..."\npython3 scripts/apply-blee-2.3.py\n'''
 if anchor not in text:
-    raise SystemExit('Blee 2.2 builder could not locate Blee 1.1 overlay stage')
+    raise SystemExit('Blee 2.3 builder could not locate Blee 1.1 overlay stage')
 text = text.replace(anchor, addition, 1)
 
 compile_anchor = 'echo "Compiling APK..."'
-compile_addition = '''echo "Applying supplied Blee launcher mark..."\npython3 scripts/apply-blee-launcher-1.4.py\n\necho "Installing Blee Mesh v2 native Android service..."\npython3 scripts/apply-blee-mesh-v2-android.py\n\necho "Hardening Blee 2.2 Bluetooth discovery..."\npython3 scripts/apply-blee-2.2-android.py\n\necho "Verifying Blee 2.2 source wiring..."\npython3 scripts/verify-blee-mesh-v2.py\n\necho "Compiling APK..."'''
+compile_addition = '''echo "Applying supplied Blee launcher mark..."\npython3 scripts/apply-blee-launcher-1.4.py\n\necho "Installing Blee Mesh v2 native Android service..."\npython3 scripts/apply-blee-mesh-v2-android.py\n\necho "Hardening Bluetooth discovery..."\npython3 scripts/apply-blee-2.2-android.py\n\necho "Verifying Blee 2.3 source wiring..."\npython3 scripts/verify-blee-mesh-v2.py\n\necho "Compiling APK..."'''
 if compile_anchor not in text:
-    raise SystemExit('Blee 2.2 builder could not locate Android compile stage')
+    raise SystemExit('Blee 2.3 builder could not locate Android compile stage')
 text = text.replace(compile_anchor, compile_addition, 1)
 
 path.write_text(text)
@@ -70,13 +72,13 @@ PY
 chmod +x "$INNER_BUILDER"
 
 echo "============================================================"
-echo "Building Blee 2.2 — premium Mesh v2 / atomic sender-funded settlement"
+echo "Building Blee 2.3 — premium wallet UI / Mesh v2"
 echo "============================================================"
 echo "Architecture: ARCHITECTURE.md"
 bash "$INNER_BUILDER"
 
 APK="$ROOT/dist/$EXPECTED_APK"
-[ -f "$APK" ] || { echo "ERROR: Blee 2.2 APK was not produced: $APK"; exit 1; }
+[ -f "$APK" ] || { echo "ERROR: Blee 2.3 APK was not produced: $APK"; exit 1; }
 unzip -t "$APK" >/dev/null
 
 if command -v shasum >/dev/null 2>&1; then
@@ -84,5 +86,5 @@ if command -v shasum >/dev/null 2>&1; then
 fi
 
 echo
-echo "Blee 2.2 Mesh v2 build complete:"
+echo "Blee 2.3 Mesh v2 build complete:"
 echo "$APK"
