@@ -1,0 +1,75 @@
+name: Blee generated source audit
+
+on:
+  push:
+    branches: [blee-professional]
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct base source
+        shell: bash
+        run: |
+          cat bootstrap/parts/part* > /tmp/blee-source.b64
+          python3 - <<'PY'
+          import base64, hashlib, pathlib, tarfile
+          src = pathlib.Path('/tmp/blee-source.b64').read_bytes()
+          out = base64.b64decode(src)
+          want = 'c28e106c9bbfb1687e061c33ec3bc3fb0ad9623fc8c320876611f390ddfc104d'
+          got = hashlib.sha256(out).hexdigest()
+          assert got == want, (got, want)
+          pathlib.Path('/tmp/blee-source.tar.gz').write_bytes(out)
+          with tarfile.open('/tmp/blee-source.tar.gz', 'r:gz') as tar:
+              tar.extractall('.')
+          PY
+          python3 - <<'PY'
+          import base64, pathlib, tarfile
+          p = pathlib.Path('bootstrap/blee-native-plugins.tar.gz.b64')
+          if p.exists():
+              out = base64.b64decode(p.read_bytes())
+              pathlib.Path('/tmp/blee-native.tar.gz').write_bytes(out)
+              with tarfile.open('/tmp/blee-native.tar.gz', 'r:gz') as tar:
+                  tar.extractall('.')
+          PY
+      - name: Apply generated overlays
+        shell: bash
+        run: |
+          python3 scripts/apply-blee-1.1.py
+          python3 scripts/apply-blee-professional.py
+          python3 scripts/apply-blee-1.4.py
+          python3 scripts/apply-blee-1.4-finalize.py
+          python3 scripts/apply-blee-mesh-v2.py
+          python3 scripts/apply-blee-2.2.py
+      - name: Audit generated product source
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          app = Path('src/components/BleeApp.tsx').read_text()
+          hook = Path('src/hooks/useBlee.ts').read_text()
+          print('BLEEAPP_BYTES', len(app))
+          for term in [
+              'Your wallet for nearby and online payments.',
+              'At least 12 characters',
+              'At least 8 characters',
+              'Payments, even when the internet is not there',
+              'Create Blee wallet',
+              'Blee 2.2',
+          ]:
+              print('TERM', repr(term), term in app)
+              if term in app:
+                  i = app.index(term)
+                  print(app[max(0, i-1400):i+1800])
+          print('CLASSES')
+          classes = sorted(set(re.findall(r'className=[\"\']([^\"\']+)', app)))
+          print('\n'.join(classes))
+          print('SESSION_TERMS')
+          for line in hook.splitlines():
+              low = line.lower()
+              if any(x in low for x in ['timeout', 'inactiv', 'idle', 'lock', 'logout', 'visibility', 'blur']):
+                  print(line)
+          PY
