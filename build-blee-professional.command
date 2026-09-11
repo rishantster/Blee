@@ -25,6 +25,7 @@ fi
 [ -f "$ROOT/scripts/apply-blee-launcher-1.4.py" ] || { echo "ERROR: Missing scripts/apply-blee-launcher-1.4.py"; exit 1; }
 [ -f "$ROOT/scripts/apply-blee-mesh-v2.py" ] || { echo "ERROR: Missing scripts/apply-blee-mesh-v2.py"; exit 1; }
 [ -f "$ROOT/scripts/apply-blee-mesh-v2-android.py" ] || { echo "ERROR: Missing scripts/apply-blee-mesh-v2-android.py"; exit 1; }
+[ -f "$ROOT/scripts/verify-blee-mesh-v2.py" ] || { echo "ERROR: Missing scripts/verify-blee-mesh-v2.py"; exit 1; }
 [ -d "$ROOT/professional" ] || { echo "ERROR: Missing professional/ source overlay"; exit 1; }
 [ -d "$ROOT/mesh-v2" ] || { echo "ERROR: Missing mesh-v2/ implementation"; exit 1; }
 
@@ -55,7 +56,7 @@ if anchor not in text:
 text = text.replace(anchor, addition, 1)
 
 compile_anchor = 'echo "Compiling APK..."'
-compile_addition = '''echo "Applying supplied Blee launcher mark..."\npython3 scripts/apply-blee-launcher-1.4.py\n\necho "Installing Blee Mesh v2 native Android service..."\npython3 scripts/apply-blee-mesh-v2-android.py\n\necho "Compiling APK..."'''
+compile_addition = '''echo "Applying supplied Blee launcher mark..."\npython3 scripts/apply-blee-launcher-1.4.py\n\necho "Installing Blee Mesh v2 native Android service..."\npython3 scripts/apply-blee-mesh-v2-android.py\n\necho "Verifying Blee Mesh v2 source wiring..."\npython3 scripts/verify-blee-mesh-v2.py\n\necho "Compiling APK..."'''
 if compile_anchor not in text:
     raise SystemExit('Blee 2.0 builder could not locate Android compile stage')
 text = text.replace(compile_anchor, compile_addition, 1)
