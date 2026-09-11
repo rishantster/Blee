@@ -27,6 +27,7 @@ for required in \
   "$ROOT/scripts/apply-blee-2.2.py" \
   "$ROOT/scripts/apply-blee-2.2-android.py" \
   "$ROOT/scripts/apply-blee-2.3.py" \
+  "$ROOT/scripts/apply-blee-2.3-ringfix.py" \
   "$ROOT/scripts/verify-blee-mesh-v2.py" \
   "$ROOT/mesh-v2/web/payments.ts.in" \
   "$ROOT/mesh-v2/web/atomicSigning.ts.in" \
@@ -55,7 +56,7 @@ for old, new in replacements.items():
     text = text.replace(old, new, 1)
 
 anchor = '''echo "Applying Blee 1.1 wallet recovery + custom network support..."\npython3 scripts/apply-blee-1.1.py\n'''
-addition = anchor + '''\necho "Applying Blee 1.3 identity, QR, discovery and profile UX..."\npython3 scripts/apply-blee-professional.py\n\necho "Applying Blee 1.4 brand and ledger timestamp patch..."\npython3 scripts/apply-blee-1.4.py\npython3 scripts/apply-blee-1.4-finalize.py\n\necho "Applying Blee Mesh v2 + crash-atomic sender-funded settlement..."\npython3 scripts/apply-blee-mesh-v2.py\n\necho "Applying Blee 2.2 functional hardening..."\npython3 scripts/apply-blee-2.2.py\n\necho "Applying Blee 2.3 structural wallet UI + interaction hardening..."\npython3 scripts/apply-blee-2.3.py\n'''
+addition = anchor + '''\necho "Applying Blee 1.3 identity, QR, discovery and profile UX..."\npython3 scripts/apply-blee-professional.py\n\necho "Applying Blee 1.4 brand and ledger timestamp patch..."\npython3 scripts/apply-blee-1.4.py\npython3 scripts/apply-blee-1.4-finalize.py\n\necho "Applying Blee Mesh v2 + crash-atomic sender-funded settlement..."\npython3 scripts/apply-blee-mesh-v2.py\n\necho "Applying Blee 2.2 functional hardening..."\npython3 scripts/apply-blee-2.2.py\n\necho "Applying Blee 2.3 structural wallet UI + interaction hardening..."\npython3 scripts/apply-blee-2.3.py\n\necho "Removing obsolete onboarding ring/orbit..."\npython3 scripts/apply-blee-2.3-ringfix.py\n'''
 if anchor not in text:
     raise SystemExit('Blee 2.3 builder could not locate Blee 1.1 overlay stage')
 text = text.replace(anchor, addition, 1)
