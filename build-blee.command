@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# CANONICAL_BLEE_BUILDER_V2
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
@@ -8,7 +9,10 @@ FINAL_APK="$ROOT/dist/Blee.apk"
 SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 TOOLS_ROOT="$ROOT/.blee-tools"
 CLI_VERSION="15859902"
-mkdir -p "$TOOLS_ROOT"
+mkdir -p "$TOOLS_ROOT" "$ROOT/dist"
+
+# Never let a stale/versioned artifact survive and look like the result of this build.
+rm -f "$ROOT/dist"/*.apk "$ROOT/dist"/*.apk.sha256 2>/dev/null || true
 
 python3 scripts/verify-canonical-build.py
 
@@ -119,10 +123,19 @@ PY
   rsync -a \
     --exclude 'README.md' \
     --exclude '.github/' \
+    --exclude 'dist/' \
+    --exclude 'build-blee.command' \
     --exclude 'build-blee-macos.command' \
+    --exclude 'build-blee-professional.command' \
     --exclude 'build-blee-final.command' \
     "$SOURCE_TMP/" "$ROOT/"
   rm -rf "$SOURCE_TMP"
+
+  # Fail immediately if reconstruction somehow replaced the canonical entrypoint.
+  grep -q 'CANONICAL_BLEE_BUILDER_V2' "$ROOT/build-blee.command" || {
+    echo "ERROR: canonical build entrypoint was replaced during source materialization"
+    exit 1
+  }
 fi
 
 NATIVE_B64="$ROOT/bootstrap/blee-native-plugins.tar.gz.b64"
@@ -224,6 +237,14 @@ unzip -t "$APK" >/dev/null
 mkdir -p "$ROOT/dist"
 rm -f "$ROOT/dist"/*.apk "$ROOT/dist"/*.apk.sha256 2>/dev/null || true
 cp "$APK" "$FINAL_APK"
+
+# Enforce the public artifact contract. Any versioned Blee APK is a build failure.
+if find "$ROOT/dist" -maxdepth 1 -type f -name 'Blee-*.apk' | grep -q .; then
+  echo "ERROR: versioned APK survived canonical build"
+  find "$ROOT/dist" -maxdepth 1 -type f -name '*.apk' -print
+  exit 1
+fi
+[ -f "$FINAL_APK" ] || { echo "ERROR: canonical Blee.apk was not produced"; exit 1; }
 
 if command -v shasum >/dev/null 2>&1; then
   shasum -a 256 "$FINAL_APK" > "$FINAL_APK.sha256"
