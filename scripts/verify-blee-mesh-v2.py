@@ -8,13 +8,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def require(path: Path, markers: tuple[str, ...]) -> None:
+def require(path: Path, markers: tuple[str, ...]) -> str:
     if not path.exists():
         raise SystemExit(f"VERIFY ERROR: missing {path.relative_to(ROOT)}")
     text = path.read_text(errors="replace")
     missing = [marker for marker in markers if marker not in text]
     if missing:
         raise SystemExit(f"VERIFY ERROR: {path.relative_to(ROOT)} missing {missing}")
+    return text
 
 
 def main() -> None:
@@ -22,7 +23,7 @@ def main() -> None:
     if package.get("version") != "2.4.0":
         raise SystemExit(f"VERIFY ERROR: package version is {package.get('version')}, expected 2.4.0")
 
-    require(
+    store = require(
         ROOT / "plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java",
         (
             "BLEE_STORE_MESH_V2_ATOMIC_SIGNING_V2",
@@ -38,7 +39,7 @@ def main() -> None:
             "setWriteAheadLoggingEnabled(true)",
         ),
     )
-    require(
+    atomic = require(
         ROOT / "src/lib/atomicSigning.ts",
         (
             "createAtomicAuthorization",
@@ -55,7 +56,7 @@ def main() -> None:
             "chainId: String(arcTestnet.id)",
         ),
     )
-    require(
+    payments = require(
         ROOT / "src/lib/payments.ts",
         (
             "createAtomicAuthorization",
@@ -64,26 +65,69 @@ def main() -> None:
             "verifyAuthorization",
         ),
     )
-    require(
+    recovery = require(
         ROOT / "src/lib/walletRecovery.ts",
         (
             "passphrase.length < 8",
             "at least 8 characters",
+            "PBKDF2",
+            "AES-GCM",
         ),
     )
-    require(ROOT / "src/hooks/useBlee.ts", ("BLEE_EXPLICIT_LOGOUT_ONLY",))
-    require(
+    vault = require(
+        ROOT / "src/lib/vault.ts",
+        (
+            "createVault",
+            "passphrase.length < 8",
+            "at least 8 characters",
+        ),
+    )
+    hook = require(ROOT / "src/hooks/useBlee.ts", ("BLEE_EXPLICIT_LOGOUT_ONLY",))
+
+    app = require(
+        ROOT / "src/components/BleeApp.tsx",
+        (
+            "useBlee",
+            "BottomNav",
+            "Home",
+            "Nearby",
+            "Activity",
+            "Profile",
+            "Review & send",
+            "Confirm and send",
+            "QRCodeSVG",
+            "Backup & recovery",
+            "Network & Security",
+            "Blee 2.4",
+        ),
+    )
+    css = require(
         ROOT / "app/globals.css",
         (
-            "BLEE_PRODUCTION_WALLET_2_4",
-            "--b-bg",
-            "blee-brand-lockup",
-            "[data-blee-action=\"send\"]",
-            "[class*=\"orbit\" i]",
-            "blee-screen-in",
+            "BLEE_UI_2_4",
+            "grid-template-columns: repeat(4, 1fr)",
+            ".blee-phone.with-nav",
+            ".screen-transition",
+            "safe-area-inset-bottom",
         ),
     )
-    require(
+    network = require(
+        ROOT / "src/lib/networkConfig.ts",
+        (
+            'id: "arc-testnet"',
+            'name: "Arc Testnet"',
+            "chainId: 5042002",
+            'tokenSymbol: "USDC"',
+            'tokenAddress: "0x3600000000000000000000000000000000000000"',
+            "return [ARC_TESTNET]",
+            "Custom settlement networks are not available in Blee",
+        ),
+    )
+    advanced = require(
+        ROOT / "src/components/BleeAdvancedSettings.tsx",
+        ("getActiveNetwork", "Settlement network"),
+    )
+    runtime = require(
         ROOT / "src/components/BleeRuntime.tsx",
         (
             "registerPlugin<MeshPlugin>('BleeMesh')",
@@ -94,32 +138,57 @@ def main() -> None:
             "refreshSenderFundedSettlementProfile",
         ),
     )
-    require(
-        ROOT / "src/components/BleeApp.tsx",
-        (
-            "BLEE_UI_2_4",
-            "BLEE_NO_DECORATIVE_HERO",
-            "Blee 2.4",
-            "blee-brand-lockup",
-            'data-blee-action="send"',
-            'data-blee-action="receive"',
-            "formatLedgerTimestamp",
-        ),
-    )
 
-    app = (ROOT / "src/components/BleeApp.tsx").read_text(errors="replace")
-    wallet = (ROOT / "src/lib/walletRecovery.ts").read_text(errors="replace")
-    hook = (ROOT / "src/hooks/useBlee.ts").read_text(errors="replace")
-
-    if re.search(r"(?i)at\s+least\s+12\s+characters|passphrase\.length\s*<\s*12", app + "\n" + wallet):
+    # Passphrase policy must be functional, not only presentation copy.
+    combined_passphrase = app + "\n" + vault + "\n" + recovery
+    if re.search(r"(?i)12\s*(?:\+|characters)|passphrase\.length\s*<\s*12", combined_passphrase):
         raise SystemExit("VERIFY ERROR: old 12-character passphrase rule/copy remains")
-    if not re.search(r"passphrase\.length\s*<\s*8", wallet):
-        raise SystemExit("VERIFY ERROR: wallet crypto path is not enforcing 8-character minimum")
-    if 'data-blee-action="send"' not in app or 'data-blee-action="receive"' not in app:
-        raise SystemExit("VERIFY ERROR: Send/Receive actions are not explicitly wired in generated UI")
-    if "Payments that keep moving" in app:
-        raise SystemExit("VERIFY ERROR: obsolete marketing tagline remains in generated UI")
+    if not re.search(r"passphrase\.length\s*<\s*8", vault):
+        raise SystemExit("VERIFY ERROR: createVault path is not enforcing 8-character minimum")
+    if not re.search(r"passphrase\.length\s*<\s*8", recovery):
+        raise SystemExit("VERIFY ERROR: wallet import/encryption path is not enforcing 8-character minimum")
 
+    # Fresh presentation only. Old 2.3 visual/copy layers must not survive.
+    banned_ui = (
+        "Keep this screen open",
+        "MetaMask-style",
+        "Add network",
+        "Relay valid payments",
+        "Payments that keep moving",
+        "brand-orbit",
+        "hero-ring",
+        "signal-ring",
+        "radar-ring",
+        "brand-monument",
+        "People around you",  # 2.4 uses compact Nearby preview, not the oversized legacy section title.
+    )
+    found = [term for term in banned_ui if term.lower() in app.lower()]
+    if found:
+        raise SystemExit(f"VERIFY ERROR: legacy presentation survived ground-up rebuild: {found}")
+    if not css.lstrip().startswith("/* BLEE_UI_2_4"):
+        raise SystemExit("VERIFY ERROR: globals.css is still layered legacy CSS instead of the 2.4 replacement")
+
+    # Single-network / single-asset product contract.
+    if "saveNetwork" not in network or "throw new Error" not in network:
+        raise SystemExit("VERIFY ERROR: legacy network compatibility API is not locked")
+    if any(term in advanced for term in ("saveNetwork", "deleteNetwork", "setActiveNetwork", "Custom network")):
+        raise SystemExit("VERIFY ERROR: custom-network controls survived in settings")
+    if "Arc Testnet" not in app or "USDC" not in app:
+        raise SystemExit("VERIFY ERROR: Arc Testnet / USDC product identity missing from UI")
+
+    # One authoritative bottom navigation: Home, Nearby, Activity, Profile.
+    nav_match = re.search(r"function\s+BottomNav\b(?P<body>.*?)(?:\n}\n|\n}\r?\n)", app, re.S)
+    if not nav_match:
+        raise SystemExit("VERIFY ERROR: BottomNav component missing")
+    nav = nav_match.group("body")
+    for label in ("Home", "Nearby", "Activity", "Profile"):
+        if label not in nav:
+            raise SystemExit(f"VERIFY ERROR: BottomNav missing {label}")
+    for label in ("Send", "Receive", "Settings"):
+        if re.search(rf"[\"'>]\s*{label}\s*[\"'<]", nav):
+            raise SystemExit(f"VERIFY ERROR: {label} incorrectly appears as permanent bottom navigation")
+
+    # Session policy: no inactivity/background timer may lock the wallet.
     for timer in re.finditer(r"set(?:Timeout|Interval)\((.{0,3500}?)\)", hook, re.S):
         if re.search(r"logout|lockWallet|lockSession|clearWalletSession|setUnlocked\(false\)|setLocked\(true\)", timer.group(1)):
             raise SystemExit("VERIFY ERROR: inactivity/background wallet-lock timer remains")
@@ -187,40 +256,33 @@ def main() -> None:
     )
 
     generated = "\n".join(path.read_text(errors="replace") for path in activity.parent.glob("Blee*.java"))
-    web = "\n".join(
-        (ROOT / rel).read_text(errors="replace")
-        for rel in (
-            "src/components/BleeRuntime.tsx",
-            "src/lib/payments.ts",
-            "src/lib/atomicSigning.ts",
-            "src/hooks/useBlee.ts",
-        )
-    )
+    web = "\n".join((atomic, payments, hook, runtime))
     if "__BLEE_APP_PACKAGE__" in generated:
         raise SystemExit("VERIFY ERROR: unresolved Android package placeholder")
 
-    banned = (
+    banned_backend = (
         "attemptSponsoredSettlement",
         "SPONSORED_AUTO_RELAY",
         "mesh.relay.endpoint",
         "configureRelay",
         "NEXT_PUBLIC_BLEE_RELAY_ENDPOINT",
     )
-    found = [marker for marker in banned if marker in generated or marker in web]
-    if found:
-        raise SystemExit(f"VERIFY ERROR: obsolete sponsored-relay implementation remains: {found}")
+    found_backend = [marker for marker in banned_backend if marker in generated or marker in web]
+    if found_backend:
+        raise SystemExit(f"VERIFY ERROR: obsolete sponsored-relay implementation remains: {found_backend}")
 
     print("============================================================")
-    print("VERIFIED: Blee 2.4 production wallet + Mesh v2")
-    print("- crash-atomic signing + native nonce reservation")
-    print("- sender-funded raw transaction relay path")
+    print("VERIFIED: Blee 2.4 ground-up production UI + Mesh v2")
+    print("- fresh app structure and stylesheet replace legacy presentation")
+    print("- Home / Nearby / Activity / Profile single bottom navigation")
+    print("- Send -> Confirm -> state-aware completion flow")
+    print("- Receive QR + Activity detail + Profile/Edit + Settings + Recovery")
+    print("- Arc Testnet + USDC only; custom network mutation disabled")
+    print("- functional 8-character minimum in create + import crypto paths")
     print("- explicit logout-only in-process session policy")
-    print("- 8-character wallet passphrase in UI + crypto path")
-    print("- wired Send and Receive actions preserved")
-    print("- duplicate home navigation suppressed; bottom nav remains authoritative")
-    print("- legacy orbit/radar/halo onboarding art removed")
+    print("- crash-atomic signing + native nonce reservation")
+    print("- sender-funded raw transaction relay; courier never pays gas")
     print("- BLE low-latency scan/high-power advertise + supported LE PHY preference")
-    print("- Blee 2.4 monochrome production design system + transitions")
     print("============================================================")
 
 
