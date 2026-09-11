@@ -2,45 +2,66 @@
 
 **Payments that keep moving, with or without the internet.**
 
-Blee is an Android-first, self-custodial payment app designed to keep payment intent moving across normal internet, local Wi-Fi and Bluetooth. The current hackathon build settles an EIP-3009 compatible payment token on an EVM network, with Arc Testnet included as the tested default.
+Blee is an Android-first, self-custodial payment app designed to move signed payment intent across normal internet, local Wi-Fi and Bluetooth. The current professional test build settles an EIP-3009 compatible payment token on an EVM network, with Arc Testnet included as the validated default.
 
-## What is working
+## Blee 1.3
+
+The 1.3 professional build focuses on reliable two-phone payment behavior and production-quality wallet UX:
 
 - Native Android APK
 - Self-custodial EVM wallet
-- Wallet import, encrypted backup and private-key export
 - Native SQLite + WAL payment journal
 - Durable offline inbox/outbox state
-- Nearby discovery and packet transport over Bluetooth + local Wi-Fi
+- Authenticated recipient acknowledgement
+- Serialized sends and authorization expiry handling
+- Nearby identity synchronization so Activity can resolve a known sender/recipient by display name instead of falling back to a raw address
+- Profile-photo support with nearby identity relay
+- Automatic nearby mesh startup while the signed-in app session is active
+- Bluetooth + local Wi-Fi nearby transport
 - Signed offline payment authorizations
 - Pending vs confirmed/spendable balance separation
 - Store-and-forward settlement when connectivity returns
-- User-managed EVM network profiles, similar to MetaMask's **Add network** flow
-- Arc Testnet configuration included out of the box
+- Receive screen with wallet QR and copy action
+- Clean settlement-network UI with Arc Testnet included
+- Wallet import, encrypted backup and private-key export
+
+## Identity and Activity
+
+Blee maintains a local address-to-identity mapping for peers it has authenticated/discovered. A nearby identity includes the user's display name and optional profile photo reference. Incoming and outgoing Activity should use the known identity for that wallet address and fall back to a shortened address only when Blee has never learned that peer's identity.
+
+Identity is presentation metadata; the wallet address remains the payment identity used for signing and settlement.
+
+## Nearby discovery
+
+Blee starts the nearby mesh automatically for an active signed-in session and advertises/scans for peers over the supported local transports.
+
+Modern Android does not allow an app to silently force Bluetooth or Wi-Fi on. Blee therefore treats required radio/nearby permissions and adapter state as prerequisites: the app can request permission, detect that Bluetooth/Wi-Fi is unavailable, and guide the user to enable it. Discovery is re-armed by the app rather than relying on the user repeatedly toggling the Nearby screen.
+
+For reliable two-phone testing, grant the requested Nearby/Bluetooth permissions on both devices and keep Bluetooth enabled. Local Wi-Fi is used as an additional transport when available; internet access is not required for nearby delivery, but network access is required for final on-chain settlement.
 
 ## Payment semantics
 
-Blee deliberately does **not** pretend that an offline payment is already final on-chain.
+Blee deliberately does **not** treat an offline delivery as final on-chain settlement.
 
 1. The sender signs a payment authorization.
 2. Blee writes the outgoing payment and authorization to durable local storage.
 3. The authorization can move to the recipient over Bluetooth or local Wi-Fi.
-4. The recipient validates it and persists it to SQLite **before** acknowledging delivery.
-5. While both devices are offline, the recipient sees the payment as **Pending received**.
+4. The recipient validates it and persists it to SQLite before acknowledging delivery.
+5. While settlement is unavailable, the recipient sees the payment as pending received.
 6. Once the active network is reachable, a valid authorization can be submitted.
 7. The payment becomes confirmed/spendable only after network settlement is verified.
 
-This avoids the common failure mode where an app shows a received payment in Activity while the actual spendable balance never changed.
+This avoids the failure mode where Activity says money was received while the spendable balance never actually changed.
 
 ## Storage model
 
 Payment state is stored locally in native Android SQLite with write-ahead logging. It survives wallet lock/logout, app restart, phone restart and normal cache cleanup.
 
-Android **Clear storage / Clear data** or uninstall intentionally removes the app database. Wallet recovery is therefore separate: Blee can export an encrypted wallet backup or reveal/import the private key under explicit user control. Private keys are never uploaded by Blee.
+Android **Clear storage / Clear data** or uninstall intentionally removes the app database. Wallet recovery is separate: Blee can export an encrypted wallet backup or reveal/import the private key under explicit user control. Private keys are never uploaded by Blee.
 
-## Networks
+## Settlement network
 
-The bundled and tested network is **Arc Testnet**:
+The bundled and tested settlement network is **Arc Testnet**:
 
 - Chain ID: `5042002`
 - RPC: `https://rpc.testnet.arc.network`
@@ -49,64 +70,27 @@ The bundled and tested network is **Arc Testnet**:
 - EIP-712 token name: `USDC`
 - EIP-712 version: `2`
 
-Blee 1.1 also lets a user add and activate another EVM network from inside the app by entering:
+Blee also supports user-supplied EVM settlement profiles. A payment token must implement the EIP-3009 authorization methods Blee uses (`transferWithAuthorization` and `authorizationState`) with the matching EIP-712 domain. Adding an arbitrary EVM network does not make every ERC-20 suitable for offline settlement.
 
-- Network name
-- Chain ID
-- RPC URL
-- Block explorer URL
-- Native currency symbol
-- Payment token symbol + contract
-- Token decimals
-- EIP-712 token name + version
-
-The RPC is checked against the supplied Chain ID before the profile is saved.
-
-**Important:** adding a network does not magically make every ERC-20 compatible with offline settlement. The configured payment token must implement the EIP-3009 authorization methods Blee uses (`transferWithAuthorization` and `authorizationState`) with the matching EIP-712 domain. Arc mainnet has not been validated in this hackathon build; official mainnet parameters can be added in-app when available and should be tested with small value first.
+Arc mainnet has not been validated in this test build. Official mainnet parameters should be verified before value is moved.
 
 ## Build the Android APK
 
-### macOS
+On macOS with Node 22+:
 
 ```bash
-git clone -b blee-v1-sqlite https://github.com/rishantster/Blee.git
+git clone -b blee-professional https://github.com/rishantster/Blee.git
 cd Blee
-bash build-blee-macos.command
+bash build-blee-professional.command
 ```
 
-The build script is intentionally reproducible. It:
-
-1. verifies Node 22+
-2. provides a private Java 21 runtime when needed
-3. installs/verifies the Android command-line SDK
-4. reconstructs the versioned Blee source snapshot
-5. restores the native SQLite and nearby-transport plugins
-6. applies the visible Blee 1.1 source overlays in `overrides/`
-7. runs TypeScript checks
-8. creates the production web bundle used by Capacitor
-9. generates the native Android project
-10. compiles a debug APK with Gradle
-11. verifies the APK archive and emits its SHA-256
+The professional builder reconstructs the versioned source snapshot, restores the native SQLite/nearby plugins, applies the wallet/network layer, applies the Blee 1.3 identity/QR/discovery/profile overlay, runs TypeScript checks, builds the Capacitor UI, generates the Android project and compiles/verifies the debug APK.
 
 Output:
 
 ```text
-dist/Blee-1.1.0-hackathon-debug.apk
+dist/Blee-1.3.0-professional-debug.apk
 ```
-
-No GitHub Actions runner is required to reproduce the submitted APK.
-
-## Repository layout
-
-```text
-bootstrap/                 immutable source/native snapshots used by the reproducible builder
-overrides/src/             human-readable Blee 1.1 product additions
-scripts/apply-blee-1.1.py  deterministic source overlay step
-build-blee-macos.command   one-command Android build
-README.md                  architecture, safety and build instructions
-```
-
-The source snapshot exists because Blee was migrated from an earlier prototype during the hackathon. Current submission changes are kept as normal human-readable source under `overrides/` and applied deterministically before compilation.
 
 ## Security notes
 
@@ -116,8 +100,9 @@ The source snapshot exists because Blee was migrated from an earlier prototype d
 - Encrypted backup export does not upload the wallet anywhere.
 - Payment history and wallet recovery are separate concerns.
 - Offline incoming funds are not treated as spendable until settlement is confirmed.
-- Custom networks are user-supplied and should be verified before value is moved.
+- Peer names/photos are UI identity metadata; signed wallet addresses remain authoritative for payments.
+- User-supplied networks and token contracts must be independently verified.
 
 ## Current status
 
-This is a **hackathon/test build**, not a production release. Arc Testnet is the validated settlement environment. Mainnet use requires verification of the official network, payment-token contract and EIP-712 parameters, plus additional production security review and release signing.
+Blee 1.3 is a professional **test build**, not a production mainnet release. Arc Testnet is the validated settlement environment. Mainnet use requires verification of official network/token parameters, release signing, device-matrix testing and a production security review.
