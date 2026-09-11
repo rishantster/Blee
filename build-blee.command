@@ -199,6 +199,16 @@ python3 scripts/apply-blee-mesh-v2-android.py
 python3 scripts/apply-blee-2.2-android.py
 python3 scripts/apply-blee-2.5-android.py
 python3 scripts/apply-blee-final-hardening.py --android
+
+# Final hardening v2 closes the remaining cross-layer invariants: non-destructive
+# ACKs, sender/outbox auto-settlement, native monotonic state and peer-specific
+# bounded copy budgets. It patches both generated Android and web source, so the
+# web bundle is rebuilt and synced without regenerating the Android project.
+python3 scripts/apply-blee-final-hardening-2.py
+npm run check
+npm run build
+npx cap sync android
+
 python3 scripts/verify-blee-mesh-v2.py
 python3 scripts/verify-canonical-build.py
 
