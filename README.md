@@ -4,14 +4,17 @@
 
 Blee is an Android-first, self-custodial payment app designed to move signed payment intent across normal internet, local Wi-Fi and Bluetooth. The current professional test build settles an EIP-3009 compatible payment token on an EVM network, with Arc Testnet included as the validated default.
 
-## Blee 1.3
+## Blee 1.4
 
-The 1.3 professional build focuses on reliable two-phone payment behavior and production-quality wallet UX:
+The 1.4 professional build combines the two-phone reliability work from 1.3 with the supplied Blee brand system and a proper timestamped payment ledger:
 
 - Native Android APK
+- Supplied Blee mark used as the app/launcher identity
+- Supplied Blee wordmark used in the in-app brand header
 - Self-custodial EVM wallet
 - Native SQLite + WAL payment journal
 - Durable offline inbox/outbox state
+- Activity entries rendered with local date **and exact time including seconds**
 - Authenticated recipient acknowledgement
 - Serialized sends and authorization expiry handling
 - Nearby identity synchronization so Activity can resolve a known sender/recipient by display name instead of falling back to a raw address
@@ -27,7 +30,9 @@ The 1.3 professional build focuses on reliable two-phone payment behavior and pr
 
 ## Identity and Activity
 
-Blee maintains a local address-to-identity mapping for peers it has authenticated/discovered. A nearby identity includes the user's display name and optional profile photo reference. Incoming and outgoing Activity should use the known identity for that wallet address and fall back to a shortened address only when Blee has never learned that peer's identity.
+Blee maintains a local address-to-identity mapping for peers it has authenticated/discovered. A nearby identity includes the user's display name and optional profile photo reference. Incoming and outgoing Activity uses the known identity for that wallet address and falls back to a shortened address only when Blee has never learned that peer's identity.
+
+Activity is treated as a ledger rather than a date-only feed. The underlying stored event time remains the source value; the UI renders it in the device's local timezone with date, hour, minute and second. This makes two payments on the same date independently auditable in the interface.
 
 Identity is presentation metadata; the wallet address remains the payment identity used for signing and settlement.
 
@@ -84,12 +89,12 @@ cd Blee
 bash build-blee-professional.command
 ```
 
-The professional builder reconstructs the versioned source snapshot, restores the native SQLite/nearby plugins, applies the wallet/network layer, applies the Blee 1.3 identity/QR/discovery/profile overlay, runs TypeScript checks, builds the Capacitor UI, generates the Android project and compiles/verifies the debug APK.
+The professional builder reconstructs the versioned source snapshot, restores the native SQLite/nearby plugins, applies the wallet/network layer, applies the Blee 1.3 identity/QR/discovery/profile overlay, then applies the Blee 1.4 supplied-brand and ledger-timestamp overlay. It runs TypeScript checks, builds the Capacitor UI, generates the Android project, installs the supplied Blee launcher mark and compiles/verifies the debug APK.
 
 Output:
 
 ```text
-dist/Blee-1.3.0-professional-debug.apk
+dist/Blee-1.4.0-professional-debug.apk
 ```
 
 ## Security notes
@@ -105,4 +110,4 @@ dist/Blee-1.3.0-professional-debug.apk
 
 ## Current status
 
-Blee 1.3 is a professional **test build**, not a production mainnet release. Arc Testnet is the validated settlement environment. Mainnet use requires verification of official network/token parameters, release signing, device-matrix testing and a production security review.
+Blee 1.4 is a professional **test build**, not a production mainnet release. Arc Testnet is the validated settlement environment. Mainnet use requires verification of official network/token parameters, release signing, device-matrix testing and a production security review.
