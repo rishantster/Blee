@@ -1,0 +1,102 @@
+package __BLEE_APP_PACKAGE__;
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.Build;
+
+import com.getcapacitor.JSObject;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+
+@CapacitorPlugin(name = "BleeMesh")
+public class BleeMeshPlugin extends Plugin {
+    private BroadcastReceiver receiver;
+
+    @Override
+    public void load() {
+        receiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                if (!BleeMeshService.ACTION_LEDGER_CHANGED.equals(intent.getAction())) return;
+                JSObject event = new JSObject();
+                event.put("paymentId", intent.getStringExtra(BleeMeshService.EXTRA_PAYMENT_ID));
+                event.put("eventType", intent.getStringExtra(BleeMeshService.EXTRA_EVENT_TYPE));
+                notifyListeners("ledgerChanged", event, true);
+            }
+        };
+        IntentFilter filter = new IntentFilter(BleeMeshService.ACTION_LEDGER_CHANGED);
+        if (Build.VERSION.SDK_INT >= 33) getContext().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        else getContext().registerReceiver(receiver, filter);
+        BleeMeshService.start(getContext());
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        if (receiver != null) {
+            try { getContext().unregisterReceiver(receiver); } catch (Throwable ignored) {}
+            receiver = null;
+        }
+        super.handleOnDestroy();
+    }
+
+    @PluginMethod
+    public void start(PluginCall call) {
+        try {
+            BleeMeshService.start(getContext());
+            JSObject result = new JSObject();
+            result.put("running", true);
+            result.put("protocol", "blee-mesh-v2");
+            call.resolve(result);
+        } catch (Throwable error) {
+            call.reject("Unable to start Blee Mesh v2: " + error.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void status(PluginCall call) {
+        try {
+            BleeMeshDb db = new BleeMeshDb(getContext());
+            JSObject result = new JSObject();
+            result.put("running", BleeMeshService.running);
+            result.put("protocol", "blee-mesh-v2");
+            result.put("wallet", db.activeWallet());
+            String mode = db.getKv("mesh.relay.mode");
+            String endpoint = db.getKv("mesh.relay.endpoint");
+            result.put("relayMode", mode == null ? "SPONSORED_AUTO_RELAY" : mode);
+            result.put("relayConfigured", endpoint != null && endpoint.startsWith("https://"));
+            db.close();
+            call.resolve(result);
+        } catch (Throwable error) {
+            call.reject("Unable to read Blee Mesh status: " + error.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void configureRelay(PluginCall call) {
+        String mode = call.getString("mode", "SPONSORED_AUTO_RELAY");
+        String endpoint = call.getString("endpoint", "");
+        if (!("SPONSORED_AUTO_RELAY".equals(mode) || "TESTNET_AUTO_RELAY".equals(mode) || "USER_OPT_IN_RELAY".equals(mode))) {
+            call.reject("Unsupported relay mode");
+            return;
+        }
+        if (!endpoint.isEmpty() && !endpoint.startsWith("https://")) {
+            call.reject("Relay endpoint must use HTTPS");
+            return;
+        }
+        try {
+            BleeMeshDb db = new BleeMeshDb(getContext());
+            db.setKv("mesh.relay.mode", mode);
+            db.setKv("mesh.relay.endpoint", endpoint);
+            db.close();
+            JSObject result = new JSObject();
+            result.put("mode", mode);
+            result.put("configured", !endpoint.isEmpty());
+            call.resolve(result);
+        } catch (Throwable error) {
+            call.reject("Unable to configure relay: " + error.getMessage());
+        }
+    }
+}
