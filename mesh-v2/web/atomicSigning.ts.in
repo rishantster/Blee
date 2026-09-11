@@ -1,0 +1,371 @@
+import { Capacitor, registerPlugin } from '@capacitor/core';
+import {
+  createPublicClient,
+  encodeFunctionData,
+  http,
+  keccak256,
+  parseUnits,
+  stringToHex,
+  type Address,
+  type Hex,
+} from 'viem';
+import type { PrivateKeyAccount } from 'viem/accounts';
+import {
+  ARC_RPC,
+  ARC_USDC,
+  ARC_USDC_DECIMALS,
+  USDC_EIP712_NAME,
+  USDC_EIP712_VERSION,
+  arcTestnet,
+  transferAuthorizationTypes,
+  usdcAbi,
+} from './arc';
+import type { TransferAuthorization } from '../types/domain';
+
+const CLOCK_SKEW_SECONDS = 60;
+const AUTH_TTL_SECONDS = 24 * 60 * 60;
+const OFFLINE_GAS_LIMIT = 250_000n;
+const PROFILE_VERSION = 2;
+const FRESH_FEE_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+export type SenderFundedBroadcast = {
+  mode: 'SENDER_FUNDED_RAW_TX';
+  chainId: number;
+  txNonce: number;
+  rawTransaction: Hex;
+  txHash: Hex;
+  gasLimit: string;
+  maxFeePerGas: string;
+  maxPriorityFeePerGas: string;
+  maxGasCostNative: string;
+  profileSyncedAt: number;
+};
+
+export type AtomicAuthorization = TransferAuthorization & {
+  broadcast: SenderFundedBroadcast | { mode: 'AUTH_ONLY'; reason: string };
+  atomicSigning: {
+    version: 1;
+    signingId: string;
+    sessionId: string;
+    state: 'READY';
+    bundleHash: Hex;
+  };
+};
+
+type SettlementProfile = {
+  version: number;
+  chainId: number;
+  address: string;
+  chainNonce: number;
+  nextNonce: number;
+  maxFeePerGas: string;
+  maxPriorityFeePerGas: string;
+  syncedAt: number;
+};
+
+type StorePlugin = {
+  init(): Promise<{ ready: boolean }>;
+  getValue(options: { key: string }): Promise<{ value?: string | null }>;
+  setValue(options: { key: string; value: string }): Promise<void>;
+  reserveSigningIntent(options: {
+    signingId: string;
+    sessionId: string;
+    chainId: number;
+    sender: string;
+    recipient: string;
+    value: string;
+    authorizationNonce: string;
+    expiresAt: number;
+    minTxNonce?: number;
+  }): Promise<{ reserved: boolean; txNonce?: number | null }>;
+  finalizeSigningIntent(options: {
+    signingId: string;
+    sessionId: string;
+    authorization: string;
+    broadcast: string;
+    bundleHash: string;
+  }): Promise<{ ready: boolean }>;
+  abortSigningIntent(options: { signingId: string; sessionId: string; reason?: string }): Promise<void>;
+};
+
+const BleeStore = registerPlugin<StorePlugin>('BleeStore');
+const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) });
+const SIGNING_SESSION_ID = makeSessionId();
+let signingQueue: Promise<unknown> = Promise.resolve();
+
+function makeSessionId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes).map((value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+function randomAuthorizationNonce(): Hex {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return (`0x${Array.from(bytes).map((value) => value.toString(16).padStart(2, '0')).join('')}`) as Hex;
+}
+
+function profileKey(address: Address) {
+  return `settlement.profile.v2:${arcTestnet.id}:${address.toLowerCase()}`;
+}
+
+function signingId(address: Address, authorizationNonce: Hex) {
+  return `sign:${arcTestnet.id}:${address.toLowerCase()}:${authorizationNonce.toLowerCase()}`;
+}
+
+function domain() {
+  return {
+    name: USDC_EIP712_NAME,
+    version: USDC_EIP712_VERSION,
+    chainId: arcTestnet.id,
+    verifyingContract: ARC_USDC,
+  } as const;
+}
+
+async function ensureNativeStore() {
+  if (!Capacitor.isNativePlatform()) return false;
+  try {
+    const result = await BleeStore.init();
+    return Boolean(result.ready);
+  } catch {
+    return false;
+  }
+}
+
+async function loadProfile(address: Address): Promise<SettlementProfile | null> {
+  if (!(await ensureNativeStore())) return null;
+  try {
+    const { value } = await BleeStore.getValue({ key: profileKey(address) });
+    if (!value) return null;
+    const profile = JSON.parse(value) as SettlementProfile;
+    if (
+      profile.version !== PROFILE_VERSION
+      || profile.chainId !== arcTestnet.id
+      || profile.address.toLowerCase() !== address.toLowerCase()
+      || !Number.isSafeInteger(profile.chainNonce)
+      || !Number.isSafeInteger(profile.nextNonce)
+      || !profile.maxFeePerGas
+      || !profile.maxPriorityFeePerGas
+    ) return null;
+    return profile;
+  } catch {
+    return null;
+  }
+}
+
+async function saveProfile(profile: SettlementProfile) {
+  if (!(await ensureNativeStore())) return;
+  await BleeStore.setValue({ key: profileKey(profile.address as Address), value: JSON.stringify(profile) });
+}
+
+export async function refreshAtomicSigningProfile(address: Address): Promise<boolean> {
+  if (!(await ensureNativeStore())) return false;
+  try {
+    const [chainNonce, fees] = await Promise.all([
+      publicClient.getTransactionCount({ address, blockTag: 'pending' }),
+      publicClient.estimateFeesPerGas().catch(async () => {
+        const gasPrice = await publicClient.getGasPrice();
+        return { maxFeePerGas: gasPrice, maxPriorityFeePerGas: 1n };
+      }),
+    ]);
+    const existing = await loadProfile(address);
+    const profile: SettlementProfile = {
+      version: PROFILE_VERSION,
+      chainId: arcTestnet.id,
+      address: address.toLowerCase(),
+      chainNonce,
+      // Never move the cache backwards locally. The native signing-intent table
+      // remains the authoritative nonce reservation source across crashes.
+      nextNonce: Math.max(chainNonce, existing?.nextNonce ?? chainNonce),
+      maxFeePerGas: (fees.maxFeePerGas ?? await publicClient.getGasPrice()).toString(),
+      maxPriorityFeePerGas: (fees.maxPriorityFeePerGas ?? 1n).toString(),
+      syncedAt: Date.now(),
+    };
+    await saveProfile(profile);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function serialize<T>(work: () => Promise<T>): Promise<T> {
+  const next = signingQueue.then(work, work);
+  signingQueue = next.then(() => undefined, () => undefined);
+  return next;
+}
+
+async function signAuthorization(
+  account: PrivateKeyAccount,
+  to: Address,
+  value: bigint,
+  validAfter: bigint,
+  validBefore: bigint,
+  nonce: Hex,
+): Promise<TransferAuthorization> {
+  const signature = await account.signTypedData({
+    domain: domain(),
+    types: transferAuthorizationTypes,
+    primaryType: 'TransferWithAuthorization',
+    message: { from: account.address, to, value, validAfter, validBefore, nonce },
+  });
+  return {
+    from: account.address,
+    to,
+    value: value.toString(),
+    validAfter: validAfter.toString(),
+    validBefore: validBefore.toString(),
+    nonce,
+    signature,
+  };
+}
+
+async function createAtomicAuthorizationInner(
+  account: PrivateKeyAccount,
+  to: Address,
+  amount: string,
+): Promise<AtomicAuthorization> {
+  const nowSeconds = BigInt(Math.floor(Date.now() / 1000));
+  const validAfter = nowSeconds - BigInt(CLOCK_SKEW_SECONDS);
+  const validBefore = nowSeconds + BigInt(AUTH_TTL_SECONDS);
+  const authorizationNonce = randomAuthorizationNonce();
+  const value = parseUnits(amount, ARC_USDC_DECIMALS);
+  if (value <= 0n) throw new Error('Amount must be greater than zero');
+
+  const id = signingId(account.address, authorizationNonce);
+  const nativeReady = await ensureNativeStore();
+
+  // Browser/dev fallback cannot make SQLite guarantees. Native Android is the
+  // production path and must reserve before either signature is returned.
+  if (!nativeReady) {
+    const auth = await signAuthorization(account, to, value, validAfter, validBefore, authorizationNonce);
+    const broadcast = { mode: 'AUTH_ONLY' as const, reason: 'NATIVE_STORE_UNAVAILABLE' };
+    const bundleHash = keccak256(stringToHex(JSON.stringify({ auth, broadcast })));
+    return {
+      ...auth,
+      broadcast,
+      atomicSigning: { version: 1, signingId: id, sessionId: SIGNING_SESSION_ID, state: 'READY', bundleHash },
+    };
+  }
+
+  let profile = await loadProfile(account.address);
+  if (!profile) {
+    await refreshAtomicSigningProfile(account.address);
+    profile = await loadProfile(account.address);
+  }
+
+  let reserved = false;
+  try {
+    const reservation = await BleeStore.reserveSigningIntent({
+      signingId: id,
+      sessionId: SIGNING_SESSION_ID,
+      chainId: arcTestnet.id,
+      sender: account.address,
+      recipient: to,
+      value: value.toString(),
+      authorizationNonce,
+      expiresAt: Number(validBefore) * 1000,
+      ...(profile ? { minTxNonce: Math.max(profile.chainNonce, profile.nextNonce) } : {}),
+    });
+    if (!reservation.reserved) throw new Error('Unable to reserve signing intent');
+    reserved = true;
+
+    const auth = await signAuthorization(account, to, value, validAfter, validBefore, authorizationNonce);
+    let broadcast: AtomicAuthorization['broadcast'];
+
+    if (profile && Number.isSafeInteger(reservation.txNonce)) {
+      const txNonce = reservation.txNonce as number;
+      const age = Math.max(0, Date.now() - profile.syncedAt);
+      const feeMultiplier = age <= FRESH_FEE_WINDOW_MS ? 2n : 4n;
+      const maxFeePerGas = BigInt(profile.maxFeePerGas) * feeMultiplier;
+      const maxPriorityFeePerGas = BigInt(profile.maxPriorityFeePerGas || '1') * 2n;
+      const data = encodeFunctionData({
+        abi: usdcAbi,
+        functionName: 'transferWithAuthorization',
+        args: [
+          auth.from,
+          auth.to,
+          BigInt(auth.value),
+          BigInt(auth.validAfter),
+          BigInt(auth.validBefore),
+          auth.nonce,
+          auth.signature,
+        ],
+      });
+      const rawTransaction = await account.signTransaction({
+        type: 'eip1559',
+        chainId: arcTestnet.id,
+        nonce: txNonce,
+        to: ARC_USDC,
+        value: 0n,
+        data,
+        gas: OFFLINE_GAS_LIMIT,
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+      });
+      broadcast = {
+        mode: 'SENDER_FUNDED_RAW_TX',
+        chainId: arcTestnet.id,
+        txNonce,
+        rawTransaction,
+        txHash: keccak256(rawTransaction),
+        gasLimit: OFFLINE_GAS_LIMIT.toString(),
+        maxFeePerGas: maxFeePerGas.toString(),
+        maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
+        maxGasCostNative: (OFFLINE_GAS_LIMIT * maxFeePerGas).toString(),
+        profileSyncedAt: profile.syncedAt,
+      };
+    } else {
+      broadcast = { mode: 'AUTH_ONLY', reason: 'NO_SYNCED_NONCE_OR_FEE_PROFILE' };
+    }
+
+    const unsignedMarker = {
+      version: 1 as const,
+      signingId: id,
+      sessionId: SIGNING_SESSION_ID,
+      state: 'READY' as const,
+      bundleHash: '0x' as Hex,
+    };
+    const preHash = { ...auth, broadcast, atomicSigning: unsignedMarker };
+    const bundleHash = keccak256(stringToHex(JSON.stringify(preHash)));
+    const atomicSigning = { ...unsignedMarker, bundleHash };
+    const complete: AtomicAuthorization = { ...auth, broadcast, atomicSigning };
+
+    // This native transaction is the second atomic boundary. If it does not
+    // commit, no signed bundle is returned to the caller and therefore nothing
+    // can enter the payment journal or mesh outbox.
+    const finalized = await BleeStore.finalizeSigningIntent({
+      signingId: id,
+      sessionId: SIGNING_SESSION_ID,
+      authorization: JSON.stringify(complete),
+      broadcast: JSON.stringify(broadcast),
+      bundleHash,
+    });
+    if (!finalized.ready) throw new Error('Signed payment bundle was not durably committed');
+
+    if (profile && broadcast.mode === 'SENDER_FUNDED_RAW_TX') {
+      profile.nextNonce = Math.max(profile.nextNonce, broadcast.txNonce + 1);
+      try { await saveProfile(profile); } catch {}
+    }
+
+    return complete;
+  } catch (error) {
+    if (reserved) {
+      // abortSigningIntent only changes rows still in SIGNING. If finalize
+      // committed but the bridge response was lost, READY cannot be rolled back.
+      try {
+        await BleeStore.abortSigningIntent({
+          signingId: id,
+          sessionId: SIGNING_SESSION_ID,
+          reason: error instanceof Error ? error.message : 'signing failed',
+        });
+      } catch {}
+    }
+    throw error;
+  }
+}
+
+export function createAtomicAuthorization(
+  account: PrivateKeyAccount,
+  to: Address,
+  amount: string,
+): Promise<AtomicAuthorization> {
+  return serialize(() => createAtomicAuthorizationInner(account, to, amount));
+}
