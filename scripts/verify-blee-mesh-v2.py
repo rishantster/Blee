@@ -18,34 +18,46 @@ def require(path: Path, markers: tuple[str, ...]) -> None:
 
 def main() -> None:
     package = json.loads((ROOT / "package.json").read_text())
-    if package.get("version") != "2.1.0":
-        raise SystemExit(f"VERIFY ERROR: package version is {package.get('version')}, expected 2.1.0")
+    if package.get("version") != "2.1.1":
+        raise SystemExit(f"VERIFY ERROR: package version is {package.get('version')}, expected 2.1.1")
 
     require(
         ROOT / "plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java",
         (
-            "BLEE_STORE_MESH_V2",
-            "payment_events",
-            "mesh_inbox",
-            "mesh_outbox",
-            "mesh_seen_packets",
-            "courier_envelopes",
-            "settlement_jobs",
-            "settlement_receipts",
+            "BLEE_STORE_MESH_V2_ATOMIC_SIGNING_V1",
+            "signing_intents",
+            "reserveSigningIntent",
+            "finalizeSigningIntent",
+            "abortSigningIntent",
+            "SIGNATURE_BUNDLE_PERSISTED",
+            "database.beginTransaction()",
+            "state='SIGNING'",
+            "state", "PERSISTED",
             "setWriteAheadLoggingEnabled(true)",
+        ),
+    )
+    require(
+        ROOT / "src/lib/atomicSigning.ts",
+        (
+            "createAtomicAuthorization",
+            "refreshAtomicSigningProfile",
+            "reserveSigningIntent",
+            "finalizeSigningIntent",
+            "abortSigningIntent",
+            "SIGNING_SESSION_ID",
+            "SENDER_FUNDED_RAW_TX",
+            "bundleHash",
+            "signTypedData",
+            "signTransaction",
         ),
     )
     require(
         ROOT / "src/lib/payments.ts",
         (
-            "SENDER_FUNDED_RAW_TX",
-            "signTransaction",
+            "createAtomicAuthorization",
+            "refreshAtomicSigningProfile",
             "sendRawTransaction",
-            "refreshSenderFundedSettlementProfile",
-            "profile.nextNonce",
-            "txNonce",
-            "rawTransaction",
-            "maxGasCostNative",
+            "verifyAuthorization",
         ),
     )
     require(
@@ -59,7 +71,7 @@ def main() -> None:
             "refreshSenderFundedSettlementProfile",
         ),
     )
-    require(ROOT / "src/components/BleeApp.tsx", ("Blee 2.1", "formatLedgerTimestamp"))
+    require(ROOT / "src/components/BleeApp.tsx", ("Blee 2.1.1", "formatLedgerTimestamp"))
 
     activities = list((ROOT / "android/app/src/main/java").rglob("MainActivity.java"))
     if len(activities) != 1:
@@ -69,7 +81,13 @@ def main() -> None:
 
     for name, markers in {
         "BleeDeviceIdentity.java": ("AndroidKeyStore", "SHA256withECDSA"),
-        "BleeMeshDb.java": ("PAYMENT_ENVELOPE", "DELIVERY_ACK", "SETTLEMENT_RECEIPT", "pendingEnvelopes", "acceptVerifiedEnvelope"),
+        "BleeMeshDb.java": (
+            "PAYMENT_ENVELOPE",
+            "DELIVERY_ACK",
+            "SETTLEMENT_RECEIPT",
+            "pendingEnvelopes",
+            "acceptVerifiedEnvelope",
+        ),
         "BleeMeshService.java": (
             "START_STICKY",
             "BluetoothLeScanner",
@@ -110,7 +128,14 @@ def main() -> None:
     )
 
     generated = "\n".join(path.read_text(errors="replace") for path in activity.parent.glob("Blee*.java"))
-    web = (ROOT / "src/components/BleeRuntime.tsx").read_text(errors="replace") + "\n" + (ROOT / "src/lib/payments.ts").read_text(errors="replace")
+    web = "\n".join(
+        (ROOT / rel).read_text(errors="replace")
+        for rel in (
+            "src/components/BleeRuntime.tsx",
+            "src/lib/payments.ts",
+            "src/lib/atomicSigning.ts",
+        )
+    )
     if "__BLEE_APP_PACKAGE__" in generated:
         raise SystemExit("VERIFY ERROR: unresolved Android package placeholder")
 
@@ -126,15 +151,16 @@ def main() -> None:
         raise SystemExit(f"VERIFY ERROR: obsolete sponsored-relay implementation remains: {found}")
 
     print("============================================================")
-    print("VERIFIED: Blee 2.1 Mesh v2 source wiring")
+    print("VERIFIED: Blee 2.1.1 Mesh v2 source wiring")
     print("- SQLite/WAL immutable event ledger + durable mesh queues")
     print("- Native foreground BLE mesh service + reboot recovery")
     print("- Persistent dedup + bounded store-and-forward courier path")
     print("- Offline notification + viem-verified financial acceptance")
-    print("- Crash-safe local EOA nonce reservation")
-    print("- Sender-funded EIP-1559 raw transaction prepared by Phone A")
-    print("- Any online mesh phone can broadcast; relay phone pays zero gas")
-    print("- Arc receipt is gossiped back through the BLE mesh")
+    print("- DB-backed authorization + EOA nonce reservation before signing")
+    print("- Exact authorization/raw-tx bundle committed before caller receives it")
+    print("- Payment journal + signing state committed in one SQLite transaction")
+    print("- Previous-process SIGNING intents are safely abandoned, never transmitted")
+    print("- Sender-funded raw transaction can be broadcast by any online mesh phone")
     print("============================================================")
 
 
