@@ -32,6 +32,7 @@ build = require_all(
         "--exclude 'scripts/verify-*.py'",
         'apply-blee-original-brand.py',
         'apply-blee-launcher-1.4.py',
+        'verify-blee-original-brand.py',
         'apply-blee-final-hardening.py --web',
         'apply-blee-final-hardening.py --android',
         'apply-blee-final-hardening-2.py',
@@ -82,6 +83,7 @@ require_all(
         'LOGO = ROOT / "brand-assets" / "blee-logo.svg"',
         '/brand/blee-logo.svg',
         'splash-logo',
+        'BLEE_STANDALONE_LAUNCH_LOGO_V2',
         'animation: blee-launch-logo 680ms',
     ),
 )
@@ -91,6 +93,16 @@ require_all(
         'LOGO_SVG = ROOT / "brand-assets" / "blee-logo.svg"',
         'android:icon="@drawable/blee_launcher"',
         'android:roundIcon="@drawable/blee_launcher"',
+    ),
+)
+require_all(
+    "scripts/verify-blee-original-brand.py",
+    (
+        'source_logo = ROOT / "brand-assets" / "blee-logo.svg"',
+        'BLEE_STANDALONE_LAUNCH_LOGO_V2',
+        'android:icon="@drawable/blee_launcher"',
+        'android:roundIcon="@drawable/blee_launcher"',
+        'cold launch uses the supplied standalone Blee logo',
     ),
 )
 require_all(
