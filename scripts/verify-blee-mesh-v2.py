@@ -45,12 +45,12 @@ def main() -> None:
     app = require(ROOT / "src/components/BleeApp.tsx", (
         "useBlee", "BottomNav", "Home", "Nearby", "Activity", "Profile", "QRCodeSVG", "Backup & recovery",
         "PasswordField", "Show passphrase", "Hide passphrase", "Fingerprint unlock", "BleeBiometric.unlock",
-        "BleeBiometric.enroll", "splash-logo", "/brand/blee-wordmark.svg",
+        "BleeBiometric.enroll", "splash-logo", "/brand/blee-wordmark.svg", "/brand/blee-logo.svg",
     ))
     css = require(ROOT / "app/globals.css", (
         "BLEE_UI_2_4", "grid-template-columns: repeat(4, 1fr)", ".blee-phone.with-nav",
         ".blee-wordmark", "height: auto", ".password-input", ".biometric-opt-in",
-        "@keyframes blee-launch-logo", "safe-area-inset-bottom", "BLEE_BIOMETRIC_CAPABILITY_CSS_V1",
+        "@keyframes blee-launch-logo", "animation: blee-launch-logo 680ms", "safe-area-inset-bottom", "BLEE_BIOMETRIC_CAPABILITY_CSS_V1",
     ))
     biometric = require(ROOT / "src/lib/biometric.ts", (
         "registerPlugin<NativeBleeBiometric>('BleeBiometric')", "enroll(passphrase", "unlock():", "disable()",
@@ -70,6 +70,21 @@ def main() -> None:
         raise SystemExit("VERIFY ERROR: Blee wordmark natural aspect-ratio rule missing")
     if "logs.slice(0, 100)" in payments:
         raise SystemExit("VERIFY ERROR: settlement history is still silently truncated at 100 transfers")
+
+    # Brand contract: normal headers may use the wordmark, but the cold-launch
+    # animation must use the user's standalone Blee logo—not a wordmark or a
+    # generated placeholder icon.
+    splash_tags = re.findall(r'<img\b[^>]*splash-logo[^>]*>', app, flags=re.I)
+    if len(splash_tags) != 1:
+        raise SystemExit(f"VERIFY ERROR: expected exactly one splash logo image, found {len(splash_tags)}")
+    if "/brand/blee-logo.svg" not in splash_tags[0]:
+        raise SystemExit("VERIFY ERROR: cold launch is not using the standalone Blee logo")
+    if "/brand/blee-wordmark.svg" in splash_tags[0]:
+        raise SystemExit("VERIFY ERROR: cold launch regressed to the Blee wordmark")
+    canonical_logo = ROOT / "brand-assets/blee-logo.svg"
+    public_logo = ROOT / "public/brand/blee-logo.svg"
+    if not canonical_logo.is_file() or not public_logo.is_file() or canonical_logo.read_bytes() != public_logo.read_bytes():
+        raise SystemExit("VERIFY ERROR: standalone Blee logo asset is missing or was altered during build")
 
     activities = list((ROOT / "android/app/src/main/java").rglob("MainActivity.java"))
     if len(activities) != 1:
@@ -102,10 +117,18 @@ def main() -> None:
     require(native_dir / "BleeMeshPlugin.java", ("BleeMesh", "ledgerChanged", "pendingEnvelopes", "acceptEnvelope", "senderPaysGas"))
     require(native_dir / "BleeBootReceiver.java", ("BOOT_COMPLETED", "BleeMeshService.start"))
 
-    require(ROOT / "android/app/src/main/AndroidManifest.xml", (
+    manifest = require(ROOT / "android/app/src/main/AndroidManifest.xml", (
         "BLUETOOTH_SCAN", "BLUETOOTH_CONNECT", "BLUETOOTH_ADVERTISE", "POST_NOTIFICATIONS", "USE_BIOMETRIC",
         "FOREGROUND_SERVICE_CONNECTED_DEVICE", "RECEIVE_BOOT_COMPLETED", "BleeMeshService", "BleeBootReceiver",
+        'android:icon="@drawable/blee_launcher"', 'android:roundIcon="@drawable/blee_launcher"',
     ))
+    launcher = ROOT / "android/app/src/main/res/drawable/blee_launcher.xml"
+    if not launcher.is_file():
+        raise SystemExit("VERIFY ERROR: standalone Blee Android launcher icon is missing")
+    launcher_text = launcher.read_text(errors="replace")
+    if 'android:scaleX' not in launcher_text or 'android:scaleY' not in launcher_text or '#0A0A0A' not in launcher_text:
+        raise SystemExit("VERIFY ERROR: Blee launcher no longer preserves standalone logo geometry")
+
     chime = ROOT / "android/app/src/main/res/raw/blee_open_chime.wav"
     if not chime.is_file() or chime.stat().st_size < 1000:
         raise SystemExit("VERIFY ERROR: launch chime is missing or invalid")
@@ -124,6 +147,8 @@ def main() -> None:
 
     print("============================================================")
     print("VERIFIED: Blee production test build invariants")
+    print("- standalone Blee logo drives cold launch + Android launcher identity")
+    print("- subtle cold-launch animation + native chime remain wired")
     print("- 8-character passphrase enforced in UI + crypto paths")
     print("- fingerprint UI/native unlock gated by real hardware capability")
     print("- wallet backup import is size/format/KDF bounded")
