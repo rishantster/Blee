@@ -1,0 +1,87 @@
+package __BLEE_APP_PACKAGE__;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.Base64;
+
+import java.nio.charset.StandardCharsets;
+import java.security.KeyFactory;
+import java.security.KeyPairGenerator;
+import java.security.KeyStore;
+import java.security.PublicKey;
+import java.security.Signature;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.UUID;
+
+final class BleeDeviceIdentity {
+    private static final String PREFS = "blee_mesh_v2";
+    private static final String DEVICE_ID = "device_id";
+    private static final String KEY_ALIAS = "blee_mesh_device_identity_v2";
+
+    private BleeDeviceIdentity() {}
+
+    static String deviceId(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        String id = prefs.getString(DEVICE_ID, null);
+        if (id == null || id.isEmpty()) {
+            id = UUID.randomUUID().toString();
+            prefs.edit().putString(DEVICE_ID, id).apply();
+        }
+        ensureKey();
+        return id;
+    }
+
+    static String publicKey() throws Exception {
+        ensureKey();
+        KeyStore store = KeyStore.getInstance("AndroidKeyStore");
+        store.load(null);
+        PublicKey key = store.getCertificate(KEY_ALIAS).getPublicKey();
+        return Base64.encodeToString(key.getEncoded(), Base64.NO_WRAP);
+    }
+
+    static String sign(String value) throws Exception {
+        ensureKey();
+        KeyStore store = KeyStore.getInstance("AndroidKeyStore");
+        store.load(null);
+        java.security.PrivateKey key = (java.security.PrivateKey) store.getKey(KEY_ALIAS, null);
+        Signature signature = Signature.getInstance("SHA256withECDSA");
+        signature.initSign(key);
+        signature.update(value.getBytes(StandardCharsets.UTF_8));
+        return Base64.encodeToString(signature.sign(), Base64.NO_WRAP);
+    }
+
+    static boolean verify(String publicKeyB64, String value, String signatureB64) {
+        try {
+            byte[] encoded = Base64.decode(publicKeyB64, Base64.NO_WRAP);
+            PublicKey key = KeyFactory.getInstance("EC").generatePublic(new X509EncodedKeySpec(encoded));
+            Signature signature = Signature.getInstance("SHA256withECDSA");
+            signature.initVerify(key);
+            signature.update(value.getBytes(StandardCharsets.UTF_8));
+            return signature.verify(Base64.decode(signatureB64, Base64.NO_WRAP));
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static synchronized void ensureKey() {
+        try {
+            KeyStore store = KeyStore.getInstance("AndroidKeyStore");
+            store.load(null);
+            if (store.containsAlias(KEY_ALIAS)) return;
+
+            KeyPairGenerator generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore");
+            KeyGenParameterSpec spec = new KeyGenParameterSpec.Builder(
+                KEY_ALIAS,
+                KeyProperties.PURPOSE_SIGN | KeyProperties.PURPOSE_VERIFY
+            )
+                .setDigests(KeyProperties.DIGEST_SHA256)
+                .build();
+            generator.initialize(spec);
+            generator.generateKeyPair();
+        } catch (Throwable error) {
+            throw new IllegalStateException("Unable to initialise Blee device identity", error);
+        }
+    }
+}
