@@ -52,6 +52,74 @@ with tempfile.TemporaryDirectory() as tmp:
 print('Professional source snapshot verified:', digest)
 PYVERIFY
 
+java_major() {
+  local version
+  version="$(java -version 2>&1 | awk -F'[\".]' '/version/ {print $2; exit}' || true)"
+  printf '%s' "${version:-0}"
+}
+
+activate_java_home() {
+  local home="$1"
+  if [ -x "$home/bin/java" ]; then
+    export JAVA_HOME="$home"
+    export PATH="$JAVA_HOME/bin:$PATH"
+    return 0
+  fi
+  return 1
+}
+
+ensure_java21() {
+  if command -v java >/dev/null 2>&1 && [ "$(java_major)" -ge 21 ] 2>/dev/null; then
+    echo "Java 21+ detected: $(java -version 2>&1 | head -n 1)"
+    return 0
+  fi
+
+  echo "Java 21+ is required. Looking for an existing JDK..."
+
+  if [ -x /usr/libexec/java_home ]; then
+    local system_java
+    system_java="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
+    if [ -n "$system_java" ] && activate_java_home "$system_java"; then
+      echo "Using Java from $JAVA_HOME"
+      return 0
+    fi
+  fi
+
+  local candidate
+  for candidate in \
+    "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
+    "/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
+    "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home" \
+    "/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home"; do
+    if activate_java_home "$candidate"; then
+      echo "Using Java from $JAVA_HOME"
+      return 0
+    fi
+  done
+
+  if command -v brew >/dev/null 2>&1; then
+    echo "Java 21 not found. Installing Homebrew openjdk@21..."
+    brew install openjdk@21
+    local brew_prefix
+    brew_prefix="$(brew --prefix openjdk@21)"
+    if activate_java_home "$brew_prefix/libexec/openjdk.jdk/Contents/Home" || activate_java_home "$brew_prefix"; then
+      echo "Java installed successfully: $(java -version 2>&1 | head -n 1)"
+      return 0
+    fi
+    echo "ERROR: Homebrew installed openjdk@21 but Blee could not locate its Java binary."
+    exit 1
+  fi
+
+  echo
+  echo "ERROR: Java 21 is not installed and Homebrew was not found."
+  echo "Install Homebrew from https://brew.sh, then run:"
+  echo "  brew install openjdk@21"
+  echo "Then rerun: bash build-blee-final.command"
+  exit 1
+}
+
+ensure_java21
+
 echo "Removing stale build outputs..."
 rm -rf dist android .next out
 mkdir -p dist
