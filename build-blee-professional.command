@@ -11,6 +11,7 @@ EXPECTED_APK="Blee-1.4.0-professional-debug.apk"
 [ -f "$BASE_BUILDER" ] || { echo "ERROR: Missing build-blee-macos.command"; exit 1; }
 [ -f "$ROOT/scripts/apply-blee-professional.py" ] || { echo "ERROR: Missing scripts/apply-blee-professional.py"; exit 1; }
 [ -f "$ROOT/scripts/apply-blee-1.4.py" ] || { echo "ERROR: Missing scripts/apply-blee-1.4.py"; exit 1; }
+[ -f "$ROOT/scripts/apply-blee-1.4-finalize.py" ] || { echo "ERROR: Missing scripts/apply-blee-1.4-finalize.py"; exit 1; }
 [ -f "$ROOT/scripts/apply-blee-launcher-1.4.py" ] || { echo "ERROR: Missing scripts/apply-blee-launcher-1.4.py"; exit 1; }
 [ -d "$ROOT/professional" ] || { echo "ERROR: Missing professional/ source overlay"; exit 1; }
 
@@ -35,7 +36,7 @@ for old, new in replacements.items():
     text = text.replace(old, new, 1)
 
 anchor = '''echo "Applying Blee 1.1 wallet recovery + custom network support..."\npython3 scripts/apply-blee-1.1.py\n'''
-addition = anchor + '''\necho "Applying Blee 1.3 identity, QR, discovery and profile UX..."\npython3 scripts/apply-blee-professional.py\n\necho "Applying Blee 1.4 brand and ledger timestamp patch..."\npython3 scripts/apply-blee-1.4.py\n'''
+addition = anchor + '''\necho "Applying Blee 1.3 identity, QR, discovery and profile UX..."\npython3 scripts/apply-blee-professional.py\n\necho "Applying Blee 1.4 brand and ledger timestamp patch..."\npython3 scripts/apply-blee-1.4.py\npython3 scripts/apply-blee-1.4-finalize.py\n'''
 if anchor not in text:
     raise SystemExit('Professional builder could not locate Blee 1.1 overlay stage')
 text = text.replace(anchor, addition, 1)
