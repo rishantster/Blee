@@ -53,8 +53,6 @@ def patch_mesh_db(native_dir: Path) -> None:
             if (candidate != null) return candidate;
         }
 
-        // Older Blee builds used different profile-key names. Read only short
-        // profile-ish KV values and never expose vault/private-key material.
         try (Cursor c = db().rawQuery(
             "SELECT key,value FROM kv WHERE lower(key) LIKE '%alias%' OR lower(key) LIKE '%display%' OR lower(key) LIKE '%profile%' ORDER BY updated_at DESC LIMIT 16",
             null
@@ -100,6 +98,8 @@ def patch_mesh_service(native_dir: Path) -> None:
     if marker in text:
         return
 
+    if "import java.util.Locale;" not in text:
+        text = text.replace("import java.util.List;", "import java.util.List;\nimport java.util.Locale;", 1)
     if "import java.util.concurrent.ConcurrentHashMap;" not in text:
         text = text.replace(
             "import java.util.concurrent.ExecutorService;",
@@ -112,7 +112,7 @@ def patch_mesh_service(native_dir: Path) -> None:
         '    static final String EXTRA_EVENT_TYPE = "eventType";',
         '''    static final String EXTRA_EVENT_TYPE = "eventType";
     // BLEE_NATIVE_BLE_DISCOVERY_V3
-    static final String ACTION_PEER_CHANGED = "__BLEE_APP_PACKAGE__.BLEE_PEER_CHANGED";
+    static final String ACTION_PEER_CHANGED = ACTION_LEDGER_CHANGED.replace("BLEE_LEDGER_CHANGED", "BLEE_PEER_CHANGED");
     static final String EXTRA_PEER_TRANSPORT_ID = "transportId";
     static final String EXTRA_PEER_WALLET = "wallet";
     static final String EXTRA_PEER_DISPLAY_NAME = "displayName";
@@ -224,7 +224,6 @@ def patch_mesh_service(native_dir: Path) -> None:
             if (wallet != null) identity.put("wallet", wallet);
             String name = db == null ? null : db.localDisplayName();
             if (name != null && !name.isEmpty()) identity.put("displayName", name);
-            identity.put("deviceId", deviceId == null ? "" : deviceId);
             return identity.toString().getBytes(StandardCharsets.UTF_8);
         } catch (Throwable ignored) {
             return "{}".getBytes(StandardCharsets.UTF_8);
@@ -285,7 +284,7 @@ def patch_mesh_service(native_dir: Path) -> None:
             try {
                 byte[] identity = localIdentityPayload();
                 if (offset < 0 || offset > identity.length) {
-                    gattServer.sendResponse(device, requestId, BluetoothGatt.GATT_INVALID_OFFSET, offset, null);
+                    gattServer.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null);
                     return;
                 }
                 byte[] slice = Arrays.copyOfRange(identity, offset, identity.length);
@@ -313,9 +312,10 @@ def patch_mesh_service(native_dir: Path) -> None:
             maybeConnect(device);'''
     text = replace_once(text, scan_old, scan_new, "scan result publication")
 
-    maybe_pattern = re.compile(
-        r'''    private void maybeConnect\(BluetoothDevice device\) \{\n        if \(!bluetoothPermissionsGranted\(\)\) return;\n        long now = System\.currentTimeMillis\(\);\n        Long previous = lastConnect\.get\(device\.getAddress\(\)\);\n        if \(previous != null && now - previous < PEER_RETRY_MS\) return;\n        if \(db\.duePackets\(now, 1\)\.isEmpty\(\)\) return;\n        lastConnect\.put\(device\.getAddress\(\), now\);\n        try \{ device\.connectGatt\(this, false, clientCallback, BluetoothDevice\.TRANSPORT_LE\); \}\n        catch \(Throwable error\) \{ Log\.d\(TAG, "connect failed: " \+ error\.getMessage\(\)\); \}\n    \}'''
-    )
+    start = text.find("    private void maybeConnect(BluetoothDevice device) {")
+    end = text.find("\n    private final BluetoothGattCallback clientCallback", start)
+    if start < 0 or end < 0:
+        raise SystemExit("Blee reliability: maybeConnect method anchor not found")
     maybe_new = '''    private void maybeConnect(BluetoothDevice device) {
         if (!bluetoothPermissionsGranted() || device == null) return;
         long now = System.currentTimeMillis();
@@ -332,15 +332,9 @@ def patch_mesh_service(native_dir: Path) -> None:
         lastConnect.put(address, now);
         try { device.connectGatt(this, false, clientCallback, BluetoothDevice.TRANSPORT_LE); }
         catch (Throwable error) { Log.d(TAG, "connect failed: " + error.getMessage()); }
-    }'''
-    text, count = maybe_pattern.subn(maybe_new, text, count=1)
-    if count != 1:
-        # Hardening may already have changed duePackets() to duePacketsForPeer().
-        start = text.find("    private void maybeConnect(BluetoothDevice device) {")
-        end = text.find("\n    private final BluetoothGattCallback clientCallback", start)
-        if start < 0 or end < 0:
-            raise SystemExit("Blee reliability: maybeConnect method anchor not found")
-        text = text[:start] + maybe_new + "\n" + text[end:]
+    }
+'''
+    text = text[:start] + maybe_new + text[end:]
 
     service_discovery_pattern = re.compile(
         r'''        @Override public void onServicesDiscovered\(final BluetoothGatt gatt, int status\) \{.*?\n        \}\n\n        @Override public void onCharacteristicWrite''',
@@ -358,6 +352,15 @@ def patch_mesh_service(native_dir: Path) -> None:
             try {
                 if (status == BluetoothGatt.GATT_SUCCESS && characteristic != null && IDENTITY_UUID.equals(characteristic.getUuid())) {
                     handleIdentityRead(gatt, characteristic.getValue());
+                }
+            } catch (Throwable ignored) {}
+            sendOnePacket(gatt);
+        }
+
+        @Override public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
+            try {
+                if (status == BluetoothGatt.GATT_SUCCESS && characteristic != null && IDENTITY_UUID.equals(characteristic.getUuid())) {
+                    handleIdentityRead(gatt, value);
                 }
             } catch (Throwable ignored) {}
             sendOnePacket(gatt);
@@ -454,7 +457,7 @@ def patch_use_blee() -> None:
         return
 
     pattern = re.compile(
-        r'''(?P<decl>\s*const\s+\[\s*peers\s*,\s*setPeers\s*\]\s*=\s*useState(?:<[^;\n]+>)?\(\s*\[\s*\]\s*\)\s*;)'''
+        r'''(?P<decl>\s*const\s+\[\s*peers\s*,\s*setPeers\s*\]\s*=\s*useState[\s\S]{0,120}?\(\s*\[\s*\]\s*\)\s*;)'''
     )
     match = pattern.search(text)
     if not match:
@@ -534,9 +537,6 @@ def patch_activity(activity: Path) -> None:
     if marker in text:
         return
 
-    # Permission completion must not recreate the Activity/WebView. Recreate was
-    # wiping the in-memory unlocked session and made first-run permission flow feel
-    # like a logout.
     text = text.replace("            BleeMeshService.start(this);\n            recreate();", "            BleeMeshService.start(this);")
 
     onstart_anchor = "        super.onStart();"
@@ -544,7 +544,7 @@ def patch_activity(activity: Path) -> None:
         raise SystemExit("Blee reliability: MainActivity.onStart anchor not found")
     text = text.replace(
         onstart_anchor,
-        onstart_anchor + "\n        // BLEE_SESSION_BACKGROUND_SAFE_V1\n        ensureBleeNearbyPermissions();\n        BleeMeshService.start(this);",
+        onstart_anchor + "\n        // BLEE_SESSION_BACKGROUND_SAFE_V1\n        BleeMeshService.start(this);",
         1,
     )
     if "recreate();" in text:
@@ -562,9 +562,7 @@ def verify(activity: Path) -> None:
     db = (native_dir / "BleeMeshDb.java").read_text()
     activity_text = activity.read_text()
 
-    for marker in (
-        "BLEE_RUNTIME_NO_REMOUNT_V1", "blee:native-nearby", "nearbyPeers()", "peerChanged",
-    ):
+    for marker in ("BLEE_RUNTIME_NO_REMOUNT_V1", "blee:native-nearby", "nearbyPeers()", "peerChanged"):
         if marker not in runtime:
             raise SystemExit(f"Blee reliability verification: runtime missing {marker}")
     if "<BleeApp key=" in runtime:
