@@ -15,15 +15,25 @@ type MeshStatus = {
   relayPaysGas?: boolean;
 };
 
+type MeshPeerSnapshot = {
+  transportId: string;
+  wallet?: string | null;
+  displayName?: string | null;
+  rssi?: number;
+  lastSeen?: number;
+  transport?: 'ble';
+};
+
 type MeshPlugin = {
   start(): Promise<{ running: boolean; protocol: string }>;
   status(): Promise<MeshStatus>;
   ensureNotificationPermission(): Promise<{ granted?: boolean } | void>;
   pendingEnvelopes(): Promise<{ packets: string[] }>;
+  nearbyPeers(): Promise<{ peers: MeshPeerSnapshot[] }>;
   acceptEnvelope(options: { messageId: string }): Promise<{ accepted: boolean; paymentId?: string }>;
   addListener(
-    eventName: 'ledgerChanged',
-    listener: (event: { paymentId?: string; eventType?: string }) => void,
+    eventName: 'ledgerChanged' | 'peerChanged',
+    listener: (event: Record<string, unknown>) => void,
   ): Promise<PluginListenerHandle>;
 };
 
@@ -38,21 +48,42 @@ function authorizationFromPayment(payment: Record<string, unknown>) {
 }
 
 export default function BleeRuntime() {
-  const [revision, setRevision] = useState(0);
+  // BLEE_RUNTIME_NO_REMOUNT_V1
+  // This revision intentionally re-renders the parent without changing the
+  // BleeApp element identity. The old key={`ledger-${revision}`} forced a full
+  // unmount/remount on focus/visibility/native-ledger events and wiped the
+  // unlocked in-memory wallet session whenever the user left and returned.
+  const [, setRevision] = useState(0);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const processing = useRef(false);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     let active = true;
-    let listener: PluginListenerHandle | null = null;
+    let ledgerListener: PluginListenerHandle | null = null;
+    let peerListener: PluginListenerHandle | null = null;
 
     const refreshLedger = () => {
       if (!active) return;
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
       refreshTimer.current = setTimeout(() => {
-        if (active) setRevision((value) => value + 1);
+        if (!active) return;
+        setRevision((value) => value + 1);
+        window.dispatchEvent(new CustomEvent('blee:ledger-changed'));
       }, 180);
+    };
+
+    const publishNativePeers = async () => {
+      if (!active) return;
+      try {
+        const { peers } = await BleeMesh.nearbyPeers();
+        const snapshots = Array.isArray(peers) ? peers : [];
+        (window as any).__bleeMeshPeers = snapshots;
+        window.dispatchEvent(new CustomEvent('blee:native-nearby', { detail: { peers: snapshots } }));
+      } catch {
+        // Native peer discovery is best-effort; the foreground service keeps
+        // scanning and will emit peerChanged when Bluetooth recovers.
+      }
     };
 
     const refreshSettlementProfile = async () => {
@@ -96,11 +127,18 @@ export default function BleeRuntime() {
       try {
         await BleeMesh.start();
         await BleeMesh.ensureNotificationPermission();
-        listener = await BleeMesh.addListener('ledgerChanged', () => {
+        ledgerListener = await BleeMesh.addListener('ledgerChanged', () => {
           void verifyPendingOfflinePayments();
           refreshLedger();
         });
-        await Promise.allSettled([verifyPendingOfflinePayments(), refreshSettlementProfile()]);
+        peerListener = await BleeMesh.addListener('peerChanged', () => {
+          void publishNativePeers();
+        });
+        await Promise.allSettled([
+          verifyPendingOfflinePayments(),
+          refreshSettlementProfile(),
+          publishNativePeers(),
+        ]);
       } catch (error) {
         console.warn('Blee Mesh v2 native runtime is unavailable', error);
       }
@@ -108,14 +146,18 @@ export default function BleeRuntime() {
 
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
+        void BleeMesh.start().catch(() => undefined);
         void verifyPendingOfflinePayments();
         void refreshSettlementProfile();
+        void publishNativePeers();
         refreshLedger();
       }
     };
     const onFocus = () => {
+      void BleeMesh.start().catch(() => undefined);
       void verifyPendingOfflinePayments();
       void refreshSettlementProfile();
+      void publishNativePeers();
       refreshLedger();
     };
     document.addEventListener('visibilitychange', onVisible);
@@ -126,9 +168,10 @@ export default function BleeRuntime() {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onFocus);
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
-      listener?.remove().catch(() => undefined);
+      ledgerListener?.remove().catch(() => undefined);
+      peerListener?.remove().catch(() => undefined);
     };
   }, []);
 
-  return <BleeApp key={`ledger-${revision}`} />;
+  return <BleeApp />;
 }
