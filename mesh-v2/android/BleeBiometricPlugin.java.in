@@ -31,10 +31,10 @@ import javax.crypto.spec.GCMParameterSpec;
 
 @CapacitorPlugin(name = "BleeBiometric")
 public class BleeBiometricPlugin extends Plugin {
-    private static final String KEY_ALIAS = "blee_biometric_wrap_v1";
-    private static final String PREFS = "blee_biometric_v1";
+    private static final String PREFS = "blee.biometric.v1";
     private static final String PREF_CIPHER = "ciphertext";
     private static final String PREF_IV = "iv";
+    private static final String KEY_ALIAS = "blee.biometric.passphrase.v1";
     private static final String TRANSFORMATION = "AES/GCM/NoPadding";
 
     @PluginMethod
@@ -44,6 +44,7 @@ public class BleeBiometricPlugin extends Plugin {
         result.put("available", availability.available);
         result.put("enrolled", availability.enrolled);
         result.put("enabled", hasCredential());
+        result.put("kind", availability.available ? "fingerprint" : "none");
         if (availability.reason != null) result.put("reason", availability.reason);
         call.resolve(result);
     }
@@ -84,12 +85,12 @@ public class BleeBiometricPlugin extends Plugin {
                         JSObject result = new JSObject();
                         result.put("enabled", true);
                         call.resolve(result);
-                    } catch (Throwable error) {
+                    } catch (Exception error) {
                         call.reject("Could not enable fingerprint unlock", error);
                     }
                 }
             );
-        } catch (Throwable error) {
+        } catch (Exception error) {
             call.reject("Could not prepare fingerprint unlock", error);
         }
     }
@@ -119,13 +120,11 @@ public class BleeBiometricPlugin extends Plugin {
             SecretKey key = getExistingKey();
             if (key == null) {
                 clearCredential();
-                call.reject("Fingerprint key is unavailable. Use your passphrase and set it up again.");
+                call.reject("Fingerprint unlock must be enabled again");
                 return;
             }
-            byte[] iv = Base64.decode(ivText, Base64.NO_WRAP);
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-            cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, iv));
-            byte[] encrypted = Base64.decode(cipherText, Base64.NO_WRAP);
+            cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(128, Base64.decode(ivText, Base64.NO_WRAP)));
             authenticate(
                 call,
                 "Unlock Blee",
@@ -133,21 +132,19 @@ public class BleeBiometricPlugin extends Plugin {
                 cipher,
                 authenticatedCipher -> {
                     try {
-                        byte[] plaintext = authenticatedCipher.doFinal(encrypted);
+                        byte[] plaintext = authenticatedCipher.doFinal(Base64.decode(cipherText, Base64.NO_WRAP));
                         String passphrase = new String(plaintext, StandardCharsets.UTF_8);
                         JSObject result = new JSObject();
                         result.put("passphrase", passphrase);
                         call.resolve(result);
-                        java.util.Arrays.fill(plaintext, (byte) 0);
-                    } catch (Throwable error) {
+                    } catch (Exception error) {
+                        clearCredential();
                         call.reject("Fingerprint unlock failed. Use your passphrase.", error);
                     }
                 }
             );
-        } catch (android.security.keystore.KeyPermanentlyInvalidatedException invalidated) {
+        } catch (Exception error) {
             clearCredential();
-            call.reject("Fingerprint settings changed. Use your passphrase and enable fingerprint again.");
-        } catch (Throwable error) {
             call.reject("Fingerprint unlock failed. Use your passphrase.", error);
         }
     }
@@ -218,7 +215,7 @@ public class BleeBiometricPlugin extends Plugin {
                         }
                     }
                 );
-            } catch (Throwable error) {
+            } catch (Exception error) {
                 call.reject("Could not start fingerprint authentication", error);
             }
         });
@@ -271,18 +268,29 @@ public class BleeBiometricPlugin extends Plugin {
             return new Availability(false, false, "Fingerprint unlock requires Android 9 or later");
         }
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Do not use generic BiometricManager as the primary hardware check:
+            // a face-only phone may report BIOMETRIC_SUCCESS even though Blee's UI
+            // explicitly offers fingerprint unlock. FingerprintManager is used as
+            // the hardware/enrollment gate on every supported Android version.
+            FingerprintManager fingerprint = (FingerprintManager) getContext().getSystemService(Context.FINGERPRINT_SERVICE);
+            if (fingerprint == null || !fingerprint.isHardwareDetected()) {
+                return new Availability(false, false, "This phone has no fingerprint sensor");
+            }
+            if (!fingerprint.hasEnrolledFingerprints()) {
+                return new Availability(true, false, "Enroll a fingerprint in Android settings first");
+            }
+
+            // On Android 11+ the key is explicitly strong-biometric gated. Check
+            // that capability too so we never surface a control that cannot unlock
+            // the Android Keystore key used for the wrapped Blee passphrase.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 BiometricManager manager = (BiometricManager) getContext().getSystemService(Context.BIOMETRIC_SERVICE);
                 if (manager == null) return new Availability(false, false, "Biometric service unavailable");
-                int result = manager.canAuthenticate();
-                if (result == BiometricManager.BIOMETRIC_SUCCESS) return new Availability(true, true, null);
-                if (result == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED) return new Availability(true, false, "Enroll a fingerprint in Android settings first");
-                if (result == BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE) return new Availability(false, false, "This phone has no biometric hardware");
-                return new Availability(false, false, "Fingerprint authentication is currently unavailable");
+                int result = manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG);
+                if (result != BiometricManager.BIOMETRIC_SUCCESS) {
+                    return new Availability(false, true, "Strong fingerprint authentication is unavailable on this phone");
+                }
             }
-            FingerprintManager manager = (FingerprintManager) getContext().getSystemService(Context.FINGERPRINT_SERVICE);
-            if (manager == null || !manager.isHardwareDetected()) return new Availability(false, false, "This phone has no fingerprint sensor");
-            if (!manager.hasEnrolledFingerprints()) return new Availability(true, false, "Enroll a fingerprint in Android settings first");
             return new Availability(true, true, null);
         } catch (Throwable error) {
             return new Availability(false, false, "Fingerprint authentication is unavailable");
