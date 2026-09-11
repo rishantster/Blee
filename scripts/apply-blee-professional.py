@@ -33,7 +33,7 @@ def unpack_professional_source() -> Path:
     archive_path = temp / "overlay.tar.gz"
     archive_path.write_bytes(archive)
     with tarfile.open(archive_path, "r:gz") as tar:
-        tar.extractall(temp / "source", filter="data")
+        tar.extractall(temp / "source")
     return temp
 
 
