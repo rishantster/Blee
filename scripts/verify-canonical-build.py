@@ -36,6 +36,7 @@ build = require_all(
         'apply-blee-final-hardening.py --web',
         'apply-blee-final-hardening.py --android',
         'apply-blee-final-hardening-2.py',
+        'apply-blee-runtime-reliability.py',
         'verify-blee-mesh-v2.py',
         'verify-canonical-build.py',
         'rm -f "$ROOT/dist"/*.apk',
@@ -136,6 +137,32 @@ require_all(
         "recordPeerDelivery",
     ),
 )
+require_all(
+    "scripts/apply-blee-runtime-reliability.py",
+    (
+        "BLEE_NATIVE_DISCOVERY_IDENTITY_V1",
+        "BLEE_NATIVE_BLE_DISCOVERY_V3",
+        "BLEE_NATIVE_PEER_BRIDGE_V1",
+        "BLEE_NATIVE_NEARBY_PEER_MERGE_V1",
+        "BLEE_SESSION_BACKGROUND_SAFE_V1",
+        "IDENTITY_UUID",
+        "nearbyPeers",
+        "peerChanged",
+        "blee:native-nearby",
+    ),
+)
+require_all(
+    "mesh-v2/web/BleeRuntime.tsx",
+    (
+        "BLEE_RUNTIME_NO_REMOUNT_V1",
+        "nearbyPeers()",
+        "peerChanged",
+        "blee:native-nearby",
+        "return <BleeApp />;",
+    ),
+)
+if "<BleeApp key=" in require_file("mesh-v2/web/BleeRuntime.tsx"):
+    raise SystemExit("Canonical runtime still force-remounts BleeApp on focus/ledger changes")
 
 for rel in ("build-blee-macos.command", "build-blee-professional.command"):
     path = ROOT / rel
