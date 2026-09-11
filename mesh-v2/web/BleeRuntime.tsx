@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { Address } from 'viem';
-import BleeApp from './BleeApp';
-import { refreshSenderFundedSettlementProfile, verifyAuthorization } from '../lib/payments';
+import { BleeApp } from '../../src/components/BleeApp';
+import { refreshSenderFundedSettlementProfile, verifyAuthorization } from '../../src/lib/payments';
 
 type MeshStatus = {
   running: boolean;
