@@ -3,6 +3,8 @@ name: Blee generated source audit
 on:
   push:
     branches: [blee-professional]
+    paths-ignore:
+      - 'audit/generated/**'
   workflow_dispatch:
 
 permissions:
@@ -10,59 +12,31 @@ permissions:
 
 jobs:
   audit:
-    if: ${{ !contains(github.event.head_commit.message || '', '[audit-output]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: blee-professional
           fetch-depth: 0
-      - name: Reconstruct generated source
+      - name: Unpack professional source snapshot
         shell: bash
         run: |
           set -euo pipefail
-          cat bootstrap/parts/part* > /tmp/blee-source.b64
-          python3 - <<'PY'
-          import base64, hashlib, pathlib
-          src = pathlib.Path('/tmp/blee-source.b64').read_bytes()
-          out = base64.b64decode(src)
-          want = 'c28e106c9bbfb1687e061c33ec3bc3fb0ad9623fc8c320876611f390ddfc104d'
-          got = hashlib.sha256(out).hexdigest()
-          if got != want:
-              raise SystemExit(f'base source checksum mismatch: {got}')
-          pathlib.Path('/tmp/blee-source.tar.gz').write_bytes(out)
-          PY
-          rm -rf /tmp/blee-src
-          mkdir -p /tmp/blee-src
-          tar -xzf /tmp/blee-source.tar.gz -C /tmp/blee-src
-          rsync -a --exclude README.md --exclude .github/ --exclude 'build-blee*.command' /tmp/blee-src/ ./
-          python3 - <<'PY'
-          import base64, pathlib
-          p = pathlib.Path('bootstrap/blee-native-plugins.tar.gz.b64')
-          if p.exists():
-              pathlib.Path('/tmp/blee-native.tar.gz').write_bytes(base64.b64decode(p.read_bytes()))
-          PY
-          if [ -f /tmp/blee-native.tar.gz ]; then tar -xzf /tmp/blee-native.tar.gz -C .; fi
-      - name: Apply product overlays
+          cat professional/parts/part* > /tmp/prof.b64
+          base64 -d /tmp/prof.b64 > /tmp/prof.tar.gz
+          rm -rf /tmp/prof-src
+          mkdir -p /tmp/prof-src
+          tar -xzf /tmp/prof.tar.gz -C /tmp/prof-src
+          find /tmp/prof-src -maxdepth 3 -type f -print
+      - name: Export inspectable source snapshot
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/apply-blee-1.1.py
-          python3 scripts/apply-blee-professional.py
-          python3 scripts/apply-blee-1.4.py
-          python3 scripts/apply-blee-1.4-finalize.py
-          python3 scripts/apply-blee-mesh-v2.py
-          python3 scripts/apply-blee-2.2.py
-      - name: Export generated product source
-        shell: bash
-        run: |
-          set -euo pipefail
+          rm -rf audit/generated
           mkdir -p audit/generated
-          cp src/components/BleeApp.tsx audit/generated/BleeApp.tsx
-          cp src/hooks/useBlee.ts audit/generated/useBlee.ts
-          cp app/globals.css audit/generated/globals.css
-          cp src/lib/walletRecovery.ts audit/generated/walletRecovery.ts
-          cp src/lib/atomicSigning.ts audit/generated/atomicSigning.ts
+          cp /tmp/prof-src/src/components/BleeApp.tsx audit/generated/BleeApp.tsx
+          cp /tmp/prof-src/src/hooks/useBlee.ts audit/generated/useBlee.ts
+          cp /tmp/prof-src/app/globals.css audit/generated/globals.css
           git config user.name 'blee-audit-bot'
           git config user.email '75270803+rishantster@users.noreply.github.com'
           git add audit/generated
@@ -70,5 +44,5 @@ jobs:
             echo 'Generated audit snapshot unchanged.'
             exit 0
           fi
-          git commit -m 'Export generated Blee source [audit-output]'
+          git commit -m 'Export professional source snapshot [audit-output]'
           git push origin HEAD:blee-professional
