@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,8 +19,8 @@ def require(path: Path, markers: tuple[str, ...]) -> None:
 
 def main() -> None:
     package = json.loads((ROOT / "package.json").read_text())
-    if package.get("version") != "2.2.0":
-        raise SystemExit(f"VERIFY ERROR: package version is {package.get('version')}, expected 2.2.0")
+    if package.get("version") != "2.3.0":
+        raise SystemExit(f"VERIFY ERROR: package version is {package.get('version')}, expected 2.3.0")
 
     require(
         ROOT / "plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java",
@@ -70,8 +71,8 @@ def main() -> None:
             "at least 8 characters",
         ),
     )
-    require(ROOT / "src/hooks/useBlee.ts", ("BLEE_PERSISTENT_SESSION",))
-    require(ROOT / "app/globals.css", ("BLEE_PREMIUM_MONOCHROME_2_2", "--blee-bg", "premium monochrome"))
+    require(ROOT / "src/hooks/useBlee.ts", ("BLEE_EXPLICIT_LOGOUT_ONLY",))
+    require(ROOT / "app/globals.css", ("BLEE_PREMIUM_MONOCHROME_2_3", "--blee-bg", "blee-brand-lockup"))
     require(
         ROOT / "src/components/BleeRuntime.tsx",
         (
@@ -83,7 +84,32 @@ def main() -> None:
             "refreshSenderFundedSettlementProfile",
         ),
     )
-    require(ROOT / "src/components/BleeApp.tsx", ("Blee 2.2", "formatLedgerTimestamp"))
+    require(
+        ROOT / "src/components/BleeApp.tsx",
+        (
+            "BLEE_UI_2_3",
+            "Blee 2.3",
+            "blee-brand-lockup",
+            "Pay nearby. Settle when connected.",
+            'data-blee-action="send"',
+            "formatLedgerTimestamp",
+        ),
+    )
+
+    app = (ROOT / "src/components/BleeApp.tsx").read_text(errors="replace")
+    wallet = (ROOT / "src/lib/walletRecovery.ts").read_text(errors="replace")
+    hook = (ROOT / "src/hooks/useBlee.ts").read_text(errors="replace")
+
+    if re.search(r"(?i)at\s+least\s+12\s+characters|passphrase\.length\s*<\s*12", app + "\n" + wallet):
+        raise SystemExit("VERIFY ERROR: old 12-character passphrase rule/copy remains")
+    if 'data-blee-action="send"' not in app:
+        raise SystemExit("VERIFY ERROR: no explicit Send action survives generated UI")
+    if "Payments that keep moving" in app:
+        raise SystemExit("VERIFY ERROR: obsolete header tagline remains in generated UI")
+
+    for timer in re.finditer(r"set(?:Timeout|Interval)\((.{0,3500}?)\)", hook, re.S):
+        if re.search(r"logout|lockWallet|lockSession|clearWalletSession|setUnlocked\(false\)|setLocked\(true\)", timer.group(1)):
+            raise SystemExit("VERIFY ERROR: inactivity/background wallet-lock timer remains")
 
     activities = list((ROOT / "android/app/src/main/java").rglob("MainActivity.java"))
     if len(activities) != 1:
@@ -171,21 +197,16 @@ def main() -> None:
     if found:
         raise SystemExit(f"VERIFY ERROR: obsolete sponsored-relay implementation remains: {found}")
 
-    wallet = (ROOT / "src/lib/walletRecovery.ts").read_text(errors="replace")
-    if "passphrase.length < 12" in wallet or "at least 12 characters" in wallet:
-        raise SystemExit("VERIFY ERROR: old 12-character wallet passphrase rule remains")
-
     print("============================================================")
-    print("VERIFIED: Blee 2.2 Mesh v2 source wiring")
-    print("- SQLite/WAL immutable event ledger + durable mesh queues")
-    print("- DB-backed authorization + EOA nonce reservation before signing")
-    print("- Capacitor numeric bridge hardened for chainId/expiry/nonce")
-    print("- Exact authorization/raw-tx bundle committed before caller receives it")
-    print("- Sender-funded raw transaction can be broadcast by any online mesh phone")
-    print("- Persistent in-process session policy; explicit logout remains authoritative")
-    print("- 8-character minimum wallet passphrase")
-    print("- BLE low-latency scan/high-power advertise + all supported LE PHY preference")
-    print("- Premium monochrome UI design system + centered brand treatment")
+    print("VERIFIED: Blee 2.3 Mesh v2 source wiring")
+    print("- crash-atomic signing + native nonce reservation")
+    print("- sender-funded raw transaction relay path")
+    print("- explicit logout-only in-process session policy")
+    print("- 8-character wallet passphrase in UI + crypto path")
+    print("- explicit Send action present in generated wallet UI")
+    print("- compact centered Blee brand; obsolete header tagline removed")
+    print("- BLE low-latency scan/high-power advertise + supported LE PHY preference")
+    print("- premium monochrome Blee 2.3 design system")
     print("============================================================")
 
 
