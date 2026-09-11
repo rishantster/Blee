@@ -2,79 +2,54 @@ name: Expand Blee professional source
 
 on:
   push:
-    branches: [blee-professional]
+    branches:
+      - blee-professional
 
 permissions:
   contents: write
 
 jobs:
   expand-source:
-    if: ${{ !contains(github.event.head_commit.message, '[expanded-source]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          ref: blee-professional
           fetch-depth: 0
 
-      - name: Expand application source
+      - name: Expand source snapshot
         shell: bash
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           if [ -f package.json ] && [ -f src/components/BleeApp.tsx ]; then
-            echo "Source already expanded."
+            echo "Blee source is already expanded"
             exit 0
           fi
-
+          ls -la
+          ls -la bootstrap/parts
           cat bootstrap/parts/part* > /tmp/blee-source.b64
-          python3 - <<'PY'
-          import base64, hashlib, pathlib
-          src = pathlib.Path('/tmp/blee-source.b64').read_bytes()
-          out = base64.b64decode(src)
-          want = 'c28e106c9bbfb1687e061c33ec3bc3fb0ad9623fc8c320876611f390ddfc104d'
-          got = hashlib.sha256(out).hexdigest()
-          if got != want:
-              raise SystemExit(f'Blee source checksum mismatch: {got}')
-          pathlib.Path('/tmp/blee-source.tar.gz').write_bytes(out)
-          PY
-
-          tmp="$(mktemp -d)"
-          tar -xzf /tmp/blee-source.tar.gz -C "$tmp"
-          rsync -a --exclude '.git/' --exclude '.github/' "$tmp/" ./
-          rm -rf "$tmp"
-
-          python3 - <<'PY'
-          import base64, hashlib, pathlib
-          p = pathlib.Path('bootstrap/blee-native-plugins.tar.gz.b64')
-          out = base64.b64decode(p.read_bytes())
-          want = 'fd7c6ddcc2d076b668986ee86b088220fba98e95989b33a7cfd391be3f83309e'
-          got = hashlib.sha256(out).hexdigest()
-          if got != want:
-              raise SystemExit(f'Blee native plugin checksum mismatch: {got}')
-          pathlib.Path('/tmp/blee-native-plugins.tar.gz').write_bytes(out)
-          PY
-          tar -xzf /tmp/blee-native-plugins.tar.gz -C .
-
+          test "$(wc -c < /tmp/blee-source.b64)" -eq 42120
+          base64 -d /tmp/blee-source.b64 > /tmp/blee-source.tar.gz
+          echo "c28e106c9bbfb1687e061c33ec3bc3fb0ad9623fc8c320876611f390ddfc104d  /tmp/blee-source.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/blee-source.tar.gz -C .
           test -f package.json
           test -f src/components/BleeApp.tsx
           test -f src/hooks/useBlee.ts
           test -f src/lib/persistence.ts
-          test -f plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java
 
       - name: Commit expanded source
         shell: bash
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           if [ ! -f package.json ]; then
-            echo "Nothing to commit."
             exit 0
           fi
           git config user.name "Blee Build Bot"
           git config user.email "actions@users.noreply.github.com"
           git add -A
           if git diff --cached --quiet; then
-            echo "No changes."
+            echo "No source expansion changes"
             exit 0
           fi
           git commit -m "Expand Blee source for professional rebuild [expanded-source]"
