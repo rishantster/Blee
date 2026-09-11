@@ -18,11 +18,6 @@ def patch_service(activity: Path) -> None:
     path = activity.parent / "BleeMeshService.java"
     text = path.read_text()
 
-    # Discovery reliability is more important than power saving while Blee's
-    # foreground nearby-payments service is active. BLE itself is a 2.4 GHz
-    # technology; there are no additional Bluetooth radio bands for an app to
-    # enable. We instead use the most aggressive standard LE discovery modes
-    # and negotiate all supported LE PHYs on a connection.
     text = text.replace(
         ".setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)",
         ".setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)",
@@ -31,20 +26,23 @@ def patch_service(activity: Path) -> None:
         ".setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)",
         ".setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)",
     )
-    text = text.replace(
-        "ScanSettings settings = new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build();",
-        "ScanSettings settings = new ScanSettings.Builder()\n"
-        "                    .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)\n"
-        "                    .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)\n"
-        "                    .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)\n"
-        "                    .setNumOfMatches(ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT)\n"
-        "                    .setReportDelay(0L)\n"
-        "                    .build();",
-    )
 
-    # Retry scanning if the Android Bluetooth stack reports a transient scanner
-    # failure. Previously the service could remain stuck believing it was
-    # scanning until a later lifecycle event.
+    old_settings = "ScanSettings settings = new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build();"
+    new_settings = '''ScanSettings.Builder scanBuilder = new ScanSettings.Builder()
+                    .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                    .setReportDelay(0L);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    scanBuilder
+                        .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+                        .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
+                        .setNumOfMatches(ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT);
+                }
+                ScanSettings settings = scanBuilder.build();'''
+    if old_settings in text:
+        text = text.replace(old_settings, new_settings, 1)
+    elif "ScanSettings.Builder scanBuilder" not in text:
+        raise SystemExit("Blee 2.2: BLE scan settings anchor not found")
+
     old_scan = '''    private final ScanCallback scanCallback = new ScanCallback() {
         @Override public void onScanResult(int callbackType, ScanResult result) {
             if (result == null || result.getDevice() == null) return;
@@ -79,9 +77,6 @@ def patch_service(activity: Path) -> None:
     elif "BLE scan failed:" not in text:
         raise SystemExit("Blee 2.2: scan callback anchor not found")
 
-    # Ask Android for a high-priority link and allow the controller to choose
-    # among 1M, 2M and LE Coded PHY when supported. This improves transfer
-    # robustness/range without excluding older 1M-only phones.
     old_connected = '''            if (newState == BluetoothProfile.STATE_CONNECTED) {
                 try { gatt.discoverServices(); } catch (Throwable ignored) { closeGatt(gatt); }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) closeGatt(gatt);'''
@@ -100,8 +95,6 @@ def patch_service(activity: Path) -> None:
     elif "PHY_LE_CODED_MASK" not in text:
         raise SystemExit("Blee 2.2: connection-state anchor not found")
 
-    # A slightly larger MTU reduces the number of writes for signed payment
-    # envelopes. Android/peer negotiation will fall back automatically.
     text = text.replace("gatt.requestMtu(247);", "gatt.requestMtu(517);")
 
     marker = "BLEE_BLUETOOTH_DISCOVERY_V2_2"
