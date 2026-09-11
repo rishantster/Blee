@@ -2,71 +2,165 @@
 
 **Payments that keep moving, with or without the internet.**
 
-Blee is an Android-first, self-custodial payment app designed to move signed payment intent across normal internet, local Wi-Fi and Bluetooth. The current professional test build settles an EIP-3009 compatible payment token on an EVM network, with Arc Testnet included as the validated default.
+Blee is an Android-first, self-custodial payment app with a native store-and-forward nearby network. Blee Mesh v2 separates local payment delivery from blockchain settlement: devices can create, persist, deliver, acknowledge, notify, carry and reconcile payments without Internet; Internet is needed for final settlement and independent chain verification.
 
-## Blee 1.4
+The frozen architecture is documented in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-The 1.4 professional build combines the two-phone reliability work from 1.3 with the supplied Blee brand system and a proper timestamped payment ledger:
+## Blee 2.0 — Mesh v2
 
-- Native Android APK
-- Supplied Blee mark used as the app/launcher identity
-- Supplied Blee wordmark used in the in-app brand header
-- Self-custodial EVM wallet
-- Native SQLite + WAL payment journal
-- Durable offline inbox/outbox state
-- Activity entries rendered with local date **and exact time including seconds**
-- Authenticated recipient acknowledgement
-- Serialized sends and authorization expiry handling
-- Nearby identity synchronization so Activity can resolve a known sender/recipient by display name instead of falling back to a raw address
-- Profile-photo support with nearby identity relay
-- Automatic nearby mesh startup while the signed-in app session is active
-- Bluetooth + local Wi-Fi nearby transport
-- Signed offline payment authorizations
-- Pending vs confirmed/spendable balance separation
-- Store-and-forward settlement when connectivity returns
-- Receive screen with wallet QR and copy action
-- Clean settlement-network UI with Arc Testnet included
-- Wallet import, encrypted backup and private-key export
+The 2.0 build keeps the existing Blee wallet/payment UX and adds the new protocol foundation:
 
-## Identity and Activity
+- native Android `BleeMeshService` rather than foreground React screens owning mesh reliability;
+- BLE advertising + scanning while the native service is active;
+- native store-and-forward packet transport;
+- persistent mesh inbox/outbox and deduplication;
+- immutable `payment_events` ledger with UTC millisecond timestamps;
+- Android payment notifications;
+- recipient persistence before delivery ACK;
+- sender persistence before transmission;
+- courier envelopes for delay-tolerant forwarding;
+- settlement-receipt propagation back through the mesh;
+- connectivity callbacks that wake settlement work immediately when a route to the Internet appears;
+- distinct confirmed/spendable, pending-received and reserved-outgoing semantics;
+- supplied Blee logo/wordmark, QR receive, identity/profile UX and timestamped Activity from the 1.4 layer;
+- additive SQLite migration: payment history is never dropped as an upgrade strategy.
 
-Blee maintains a local address-to-identity mapping for peers it has authenticated/discovered. A nearby identity includes the user's display name and optional profile photo reference. Incoming and outgoing Activity uses the known identity for that wallet address and falls back to a shortened address only when Blee has never learned that peer's identity.
+## The core rule
 
-Activity is treated as a ledger rather than a date-only feed. The underlying stored event time remains the source value; the UI renders it in the device's local timezone with date, hour, minute and second. This makes two payments on the same date independently auditable in the interface.
+**Blee devices exchange signed events and settlement evidence, never arbitrary balance numbers.**
 
-Identity is presentation metadata; the wallet address remains the payment identity used for signing and settlement.
+Each phone derives its own balance projection from its local ledger.
 
-## Nearby discovery
+Offline receipt is therefore visible immediately but is not falsely represented as chain-confirmed spendable money.
 
-Blee starts the nearby mesh automatically for an active signed-in session and advertises/scans for peers over the supported local transports.
+## Payment state
 
-Modern Android does not allow an app to silently force Bluetooth or Wi-Fi on. Blee therefore treats required radio/nearby permissions and adapter state as prerequisites: the app can request permission, detect that Bluetooth/Wi-Fi is unavailable, and guide the user to enable it. Discovery is re-armed by the app rather than relying on the user repeatedly toggling the Nearby screen.
+```text
+CREATED
+  ↓
+SIGNED
+  ↓
+QUEUED
+  ↓
+DELIVERED_OFFLINE
+  ↓
+ACKNOWLEDGED
+  ↓
+SETTLEMENT_SUBMITTED
+  ↓
+SETTLED_RELAY_REPORTED
+  ↓
+CHAIN_CONFIRMED
+```
 
-For reliable two-phone testing, grant the requested Nearby/Bluetooth permissions on both devices and keep Bluetooth enabled. Local Wi-Fi is used as an additional transport when available; internet access is not required for nearby delivery, but network access is required for final on-chain settlement.
+User-facing labels can remain simpler: `Sending`, `Delivered nearby`, `Received offline`, `Settlement pending`, `Settled`, `Confirmed`.
 
-## Payment semantics
+## Balance semantics
 
-Blee deliberately does **not** treat an offline delivery as final on-chain settlement.
+Blee maintains three separate concepts:
 
-1. The sender signs a payment authorization.
-2. Blee writes the outgoing payment and authorization to durable local storage.
-3. The authorization can move to the recipient over Bluetooth or local Wi-Fi.
-4. The recipient validates it and persists it to SQLite before acknowledging delivery.
-5. While settlement is unavailable, the recipient sees the payment as pending received.
-6. Once the active network is reachable, a valid authorization can be submitted.
-7. The payment becomes confirmed/spendable only after network settlement is verified.
+- **Confirmed / spendable** — independently chain-confirmed funds.
+- **Pending received** — valid incoming payment authorization received locally but not yet chain-confirmed.
+- **Reserved outgoing** — signed outgoing authorizations that should no longer be treated as freely available locally.
 
-This avoids the failure mode where Activity says money was received while the spendable balance never actually changed.
+Example: if Kumar has 10 confirmed USDC and receives 5 USDC while both phones are offline, Blee can show 15 total visible while keeping 10 spendable and 5 pending until settlement.
 
-## Storage model
+## Store-and-forward mesh
 
-Payment state is stored locally in native Android SQLite with write-ahead logging. It survives wallet lock/logout, app restart, phone restart and normal cache cleanup.
+The mesh is not limited to direct A → B delivery.
 
-Android **Clear storage / Clear data** or uninstall intentionally removes the app database. Wallet recovery is separate: Blee can export an encrypted wallet backup or reveal/import the private key under explicit user control. Private keys are never uploaded by Blee.
+```text
+Rishant → Kumar
+
+or
+
+Rishant → Phone C → Phone D → Kumar
+```
+
+Intermediate Blee devices can carry a payment envelope and forward it later. Mesh v2 uses persistent deduplication and bounded routing metadata so receiving the same payment through multiple paths does not create duplicate payment effects.
+
+Initial routing limits are defined in `ARCHITECTURE.md`.
+
+## Three-phone settlement
+
+If A and B are offline while C has Internet:
+
+```text
+A signs payment for B
+       ↓ BLE
+B persists + acknowledges immediately
+       ↓ mesh gossip
+C receives the signed authorization
+       ↓ Internet
+sponsored relay / paymaster
+       ↓
+C receives settlement evidence
+       ↓ BLE mesh
+A and B update automatically
+```
+
+A fully offline phone records the returned evidence as `SETTLED_RELAY_REPORTED`. When that phone later has Internet it independently checks the chain and advances to `CHAIN_CONFIRMED`.
+
+### Important: third-phone gas
+
+Blee does **not** embed a shared relayer private key in the APK and does not silently charge Phone C's owner for other people's gas.
+
+The production-preferred architecture is sponsored auto-relay/paymaster. Mesh v2 already includes the client path for a configured HTTPS relay endpoint. The contract is documented in [`RELAY_API.md`](RELAY_API.md).
+
+Until a relay/paymaster endpoint is configured, offline transport, ACKs, notifications, courier forwarding and settlement-receipt gossip remain available, while autonomous background third-phone settlement is intentionally not faked.
+
+## Native notifications
+
+Once the recipient has durably committed a valid incoming payment to SQLite, Blee can post an Android notification such as:
+
+> Payment received — Rishant sent 5 USDC · settlement pending
+
+Settlement evidence can generate a second notification without requiring the Activity screen to be open.
+
+On Android 13+, the app requests notification permission. Bluetooth/Nearby permissions still need to be granted by the user; modern Android does not allow an app to silently force Bluetooth or Wi-Fi on.
+
+## Ledger and persistence
+
+Blee uses native Android SQLite with write-ahead logging.
+
+Core tables now include:
+
+- `payments`
+- `payment_events`
+- `mesh_inbox`
+- `mesh_outbox`
+- `mesh_seen_packets`
+- `courier_envelopes`
+- `settlement_jobs`
+- `settlement_receipts`
+- `peer_identities`
+- `kv`
+
+Every ledger event records an immutable UTC epoch-millisecond timestamp. Activity renders local date + time down to seconds.
+
+Normal app restart, wallet lock/logout and phone restart must not erase payment history. Android **Clear storage / Clear data** and uninstall intentionally remove the local database.
+
+## Identity and privacy
+
+The wallet key remains the authority for money. Mesh v2 also creates a device identity key in Android Keystore for mesh traffic.
+
+```text
+wallet identity
+   │
+   ▼
+device identity
+   │
+   ▼
+BLE transport identity
+```
+
+The payment authorization remains independently verifiable; mesh device signatures are transport evidence, not permission to move funds.
+
+The frozen protocol requires rotating/non-wallet BLE identifiers and authenticated profile exchange before production mainnet use. The current Mesh v2 native foundation should therefore still be treated as a test build pending the final private peer-session/Noise-style transport layer and production security review.
 
 ## Settlement network
 
-The bundled and tested settlement network is **Arc Testnet**:
+The bundled validated development network remains **Arc Testnet**:
 
 - Chain ID: `5042002`
 - RPC: `https://rpc.testnet.arc.network`
@@ -75,39 +169,79 @@ The bundled and tested settlement network is **Arc Testnet**:
 - EIP-712 token name: `USDC`
 - EIP-712 version: `2`
 
-Blee also supports user-supplied EVM settlement profiles. A payment token must implement the EIP-3009 authorization methods Blee uses (`transferWithAuthorization` and `authorizationState`) with the matching EIP-712 domain. Adding an arbitrary EVM network does not make every ERC-20 suitable for offline settlement.
-
-Arc mainnet has not been validated in this test build. Official mainnet parameters should be verified before value is moved.
+Blee uses EIP-3009-style payment authorizations for the current settlement rail. Adding an arbitrary EVM chain does not make every ERC-20 suitable for offline authorization/settlement.
 
 ## Build the Android APK
 
-On macOS with Node 22+:
+Requirements:
+
+- macOS
+- Node.js 22+
+- Homebrew recommended
+- Android command-line tools are installed automatically if missing
+- Java 21; the build prefers an existing Homebrew `openjdk@21` installation before using the legacy download fallback
+
+Fresh clone:
 
 ```bash
-git clone -b blee-professional https://github.com/rishantster/Blee.git
-cd Blee
-bash build-blee-professional.command
+git clone -b blee-professional --single-branch https://github.com/rishantster/Blee.git ~/Blee
+cd ~/Blee
+bash build-blee.command
 ```
 
-The professional builder reconstructs the versioned source snapshot, restores the native SQLite/nearby plugins, applies the wallet/network layer, applies the Blee 1.3 identity/QR/discovery/profile overlay, then applies the Blee 1.4 supplied-brand and ledger-timestamp overlay. It runs TypeScript checks, builds the Capacitor UI, generates the Android project, installs the supplied Blee launcher mark and compiles/verifies the debug APK.
+Existing clone:
 
-Output:
+```bash
+cd ~/Blee
+git fetch origin
+git checkout blee-professional
+git pull --ff-only origin blee-professional
+bash build-blee.command
+```
+
+Expected output:
 
 ```text
-dist/Blee-1.4.0-professional-debug.apk
+dist/Blee-2.0.0-mesh-v2-debug.apk
 ```
 
-## Security notes
+The builder reconstructs the versioned app source, restores the native plugins, applies wallet/network support, applies the professional identity/QR/profile layer, applies the supplied Blee branding and ledger timestamps, applies Mesh v2, generates Android, installs the native mesh service, compiles the APK and verifies the archive.
 
-- Blee is self-custodial.
-- Private keys are encrypted locally using a passphrase-derived AES-GCM key.
-- Private-key reveal/export is explicit and temporary in the UI.
-- Encrypted backup export does not upload the wallet anywhere.
-- Payment history and wallet recovery are separate concerns.
-- Offline incoming funds are not treated as spendable until settlement is confirmed.
-- Peer names/photos are UI identity metadata; signed wallet addresses remain authoritative for payments.
-- User-supplied networks and token contracts must be independently verified.
+## Repository layout
+
+```text
+ARCHITECTURE.md               frozen Mesh v2 architecture and invariants
+RELAY_API.md                  sponsored auto-relay/paymaster contract
+bootstrap/                    versioned base source/native plugin snapshots
+professional/                 professional UX source snapshot
+mesh-v2/                      Mesh v2 native/web source templates
+  android/                    foreground mesh service + Capacitor bridge
+  native/                     durable SQLite event-ledger store
+  web/                        runtime bridge
+scripts/                      deterministic build overlays/installers
+overrides/                    wallet/network/recovery compatibility layer
+build-blee.command            canonical build entrypoint
+build-blee-professional.command  implementation build orchestrator
+build-blee-macos.command      internal base build used by the orchestrator
+```
+
+Old `build-blee-final.command` and `build-blee-gasfix.command` entrypoints were removed. Use `build-blee.command`.
+
+## Required physical regression
+
+Before treating a build as release-quality, test at least this matrix on real Android phones:
+
+1. both phones online — direct send + settlement;
+2. both phones offline — sender persists, recipient receives/gets notified immediately, ACK returns over BLE;
+3. recipient app backgrounded — native notification still arrives;
+4. sender/recipient process killed and reopened — journal survives;
+5. A + B offline, C online — C carries the authorization toward the configured settlement relay, then settlement receipt gossips back;
+6. duplicate delivery over several routes — exactly one economic payment effect;
+7. Bluetooth loss/re-enable — service re-arms discovery;
+8. Internet loss/return — connectivity callback wakes settlement/reconciliation;
+9. authorization expiry — packet stops forwarding and payment resolves safely;
+10. device reboot/app restart — outbox/inbox and ledger recover from SQLite.
 
 ## Current status
 
-Blee 1.4 is a professional **test build**, not a production mainnet release. Arc Testnet is the validated settlement environment. Mainnet use requires verification of official network/token parameters, release signing, device-matrix testing and a production security review.
+Blee 2.0 Mesh v2 is a **test architecture/build**, not a mainnet release. The repo now contains the native service, durable event-ledger schema, mesh courier path, notifications, settlement-receipt propagation and sponsored-relay client interface. Production deployment still requires a configured relay/paymaster, private authenticated peer-session transport, release signing, device-matrix regression and a dedicated security review.
