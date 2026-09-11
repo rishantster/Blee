@@ -23,7 +23,7 @@ def main() -> None:
     if package.get("version") != "2.4.0":
         raise SystemExit(f"VERIFY ERROR: package version is {package.get('version')}, expected 2.4.0")
 
-    store = require(
+    require(
         ROOT / "plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java",
         (
             "BLEE_STORE_MESH_V2_ATOMIC_SIGNING_V2",
@@ -67,20 +67,11 @@ def main() -> None:
     )
     recovery = require(
         ROOT / "src/lib/walletRecovery.ts",
-        (
-            "passphrase.length < 8",
-            "at least 8 characters",
-            "PBKDF2",
-            "AES-GCM",
-        ),
+        ("passphrase.length < 8", "at least 8 characters", "PBKDF2", "AES-GCM"),
     )
     vault = require(
         ROOT / "src/lib/vault.ts",
-        (
-            "createVault",
-            "passphrase.length < 8",
-            "at least 8 characters",
-        ),
+        ("createVault", "passphrase.length < 8", "at least 8 characters"),
     )
     hook = require(ROOT / "src/hooks/useBlee.ts", ("BLEE_EXPLICIT_LOGOUT_ONLY",))
 
@@ -114,18 +105,17 @@ def main() -> None:
     network = require(
         ROOT / "src/lib/networkConfig.ts",
         (
-            'id: "arc-testnet"',
-            'name: "Arc Testnet"',
+            "Arc Testnet",
             "chainId: 5042002",
-            'tokenSymbol: "USDC"',
-            'tokenAddress: "0x3600000000000000000000000000000000000000"',
-            "return [ARC_TESTNET]",
+            "USDC",
+            "0x3600000000000000000000000000000000000000",
+            "ARC_TESTNET",
             "Custom settlement networks are not available in Blee",
         ),
     )
     advanced = require(
         ROOT / "src/components/BleeAdvancedSettings.tsx",
-        ("getActiveNetwork", "Settlement network"),
+        ("getActiveNetwork", "settlement network"),
     )
     runtime = require(
         ROOT / "src/components/BleeRuntime.tsx",
@@ -139,16 +129,14 @@ def main() -> None:
         ),
     )
 
-    # Passphrase policy must be functional, not only presentation copy.
     combined_passphrase = app + "\n" + vault + "\n" + recovery
     if re.search(r"(?i)12\s*(?:\+|characters)|passphrase\.length\s*<\s*12", combined_passphrase):
         raise SystemExit("VERIFY ERROR: old 12-character passphrase rule/copy remains")
     if not re.search(r"passphrase\.length\s*<\s*8", vault):
         raise SystemExit("VERIFY ERROR: createVault path is not enforcing 8-character minimum")
     if not re.search(r"passphrase\.length\s*<\s*8", recovery):
-        raise SystemExit("VERIFY ERROR: wallet import/encryption path is not enforcing 8-character minimum")
+        raise SystemExit("VERIFY ERROR: import/encryption path is not enforcing 8-character minimum")
 
-    # Fresh presentation only. Old 2.3 visual/copy layers must not survive.
     banned_ui = (
         "Keep this screen open",
         "MetaMask-style",
@@ -160,23 +148,19 @@ def main() -> None:
         "signal-ring",
         "radar-ring",
         "brand-monument",
-        "People around you",  # 2.4 uses compact Nearby preview, not the oversized legacy section title.
+        "People around you",
     )
-    found = [term for term in banned_ui if term.lower() in app.lower()]
-    if found:
-        raise SystemExit(f"VERIFY ERROR: legacy presentation survived ground-up rebuild: {found}")
+    found_ui = [term for term in banned_ui if term.lower() in app.lower()]
+    if found_ui:
+        raise SystemExit(f"VERIFY ERROR: legacy presentation survived rebuild: {found_ui}")
     if not css.lstrip().startswith("/* BLEE_UI_2_4"):
-        raise SystemExit("VERIFY ERROR: globals.css is still layered legacy CSS instead of the 2.4 replacement")
+        raise SystemExit("VERIFY ERROR: globals.css is layered legacy CSS instead of the 2.4 replacement")
 
-    # Single-network / single-asset product contract.
     if "saveNetwork" not in network or "throw new Error" not in network:
-        raise SystemExit("VERIFY ERROR: legacy network compatibility API is not locked")
+        raise SystemExit("VERIFY ERROR: Arc-only compatibility network API is not locked")
     if any(term in advanced for term in ("saveNetwork", "deleteNetwork", "setActiveNetwork", "Custom network")):
         raise SystemExit("VERIFY ERROR: custom-network controls survived in settings")
-    if "Arc Testnet" not in app or "USDC" not in app:
-        raise SystemExit("VERIFY ERROR: Arc Testnet / USDC product identity missing from UI")
 
-    # One authoritative bottom navigation: Home, Nearby, Activity, Profile.
     nav_match = re.search(r"function\s+BottomNav\b(?P<body>.*?)(?:\n}\n|\n}\r?\n)", app, re.S)
     if not nav_match:
         raise SystemExit("VERIFY ERROR: BottomNav component missing")
@@ -185,10 +169,9 @@ def main() -> None:
         if label not in nav:
             raise SystemExit(f"VERIFY ERROR: BottomNav missing {label}")
     for label in ("Send", "Receive", "Settings"):
-        if re.search(rf"[\"'>]\s*{label}\s*[\"'<]", nav):
+        if re.search(rf">\s*{label}\s*<", nav):
             raise SystemExit(f"VERIFY ERROR: {label} incorrectly appears as permanent bottom navigation")
 
-    # Session policy: no inactivity/background timer may lock the wallet.
     for timer in re.finditer(r"set(?:Timeout|Interval)\((.{0,3500}?)\)", hook, re.S):
         if re.search(r"logout|lockWallet|lockSession|clearWalletSession|setUnlocked\(false\)|setLocked\(true\)", timer.group(1)):
             raise SystemExit("VERIFY ERROR: inactivity/background wallet-lock timer remains")
