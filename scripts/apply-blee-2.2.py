@@ -59,7 +59,6 @@ def patch_atomic_signing() -> None:
 
     text = text.replace("chainId: number;\n    sender:", "chainId: number | string;\n    sender:")
     text = text.replace("expiresAt: number;\n    minTxNonce?: number;", "expiresAt: number | string;\n    minTxNonce?: number | string;")
-
     text = text.replace("chainId: arcTestnet.id,\n      sender:", "chainId: String(arcTestnet.id),\n      sender:")
     text = text.replace("expiresAt: Number(validBefore) * 1000,", "expiresAt: String(Number(validBefore) * 1000),")
     text = text.replace(
@@ -96,7 +95,6 @@ def patch_passphrase() -> None:
         before = text
         for old, new in replacements:
             text = text.replace(old, new)
-        # Common direct JSX validation forms.
         text = re.sub(r"(passphrase\.length\s*<\s*)12\b", r"\g<1>8", text)
         text = re.sub(r"(newPassphrase\.length\s*<\s*)12\b", r"\g<1>8", text)
         if text != before:
@@ -110,27 +108,18 @@ def patch_passphrase() -> None:
 def patch_persistent_session() -> None:
     path = ROOT / "src/hooks/useBlee.ts"
     text = path.read_text()
-    before = text
 
-    # Blee should remain unlocked for the lifetime of the app process unless the
-    # user explicitly logs out. Disable named idle/auto-lock timers without
-    # changing the explicit logout path.
-    constant_pattern = re.compile(
-        r"(?m)^(\s*(?:const|let)\s+([A-Z0-9_]*(?:INACTIVITY|IDLE|AUTO_LOCK|AUTOLOCK|SESSION_TIMEOUT|LOCK_TIMEOUT)[A-Z0-9_]*)\s*=\s*)([^;]+)(;)",
+    # Remove only timers whose callback clearly performs wallet/session locking.
+    # Retry, networking, reconciliation and UI timers are deliberately untouched.
+    lock_terms = (
+        r"logout", r"logOut", r"lockWallet", r"lockSession", r"clearSession",
+        r"clearWalletSession", r"setAccount\(null\)", r"setWallet\(null\)",
+        r"setPrivateKey\(null\)", r"setUnlocked\(false\)", r"setLocked\(true\)",
     )
-    named = []
-    def replace_constant(match: re.Match[str]) -> str:
-        named.append(match.group(2))
-        # null is intentionally used as the disabled sentinel; below we also
-        # neutralize timer scheduling expressions that reference the constant.
-        return f"{match.group(1)}null{match.group(4)} // BLEE_PERSISTENT_SESSION"
-    text = constant_pattern.sub(replace_constant, text)
+    lock_union = "(?:" + "|".join(lock_terms) + ")"
 
-    # Neutralize explicit auto-lock timeout assignments while leaving unrelated
-    # retry/reconciliation timers alone. Only callbacks containing lock/logout
-    # semantics are touched.
     timer_pattern = re.compile(
-        r"(?P<prefix>(?:[A-Za-z_$][\w$]*(?:\.current)?\s*=\s*)?)setTimeout\(\s*\(\)\s*=>\s*\{(?P<body>.{0,1200}?(?:logout|logOut|lockWallet|lockSession|setAccount\(null\)|setWallet\(null\)).{0,1200}?)\}\s*,\s*(?P<delay>[^\)]+)\)",
+        rf"(?P<prefix>(?:[A-Za-z_$][\w$]*(?:\.current)?\s*=\s*)?)setTimeout\(\s*\(\)\s*=>\s*\{{(?P<body>.{{0,1600}}?{lock_union}.{{0,1600}}?)\}}\s*,\s*(?P<delay>[^\)]+)\)",
         re.S,
     )
     timer_hits = 0
@@ -143,9 +132,8 @@ def patch_persistent_session() -> None:
         return "void 0 /* BLEE_PERSISTENT_SESSION */"
     text = timer_pattern.sub(replace_timer, text)
 
-    # Some implementations use setInterval for the same idle check.
     interval_pattern = re.compile(
-        r"(?P<prefix>(?:[A-Za-z_$][\w$]*(?:\.current)?\s*=\s*)?)setInterval\(\s*\(\)\s*=>\s*\{(?P<body>.{0,1200}?(?:logout|logOut|lockWallet|lockSession|setAccount\(null\)|setWallet\(null\)).{0,1200}?)\}\s*,\s*(?P<delay>[^\)]+)\)",
+        rf"(?P<prefix>(?:[A-Za-z_$][\w$]*(?:\.current)?\s*=\s*)?)setInterval\(\s*\(\)\s*=>\s*\{{(?P<body>.{{0,1600}}?{lock_union}.{{0,1600}}?)\}}\s*,\s*(?P<delay>[^\)]+)\)",
         re.S,
     )
     interval_hits = 0
@@ -158,10 +146,24 @@ def patch_persistent_session() -> None:
         return "void 0 /* BLEE_PERSISTENT_SESSION */"
     text = interval_pattern.sub(replace_interval, text)
 
-    # Visibility/background events must not clear the unlocked wallet. Preserve
-    # all other visibility behavior such as balance refresh and reconciliation.
+    # Direct callback forms such as setTimeout(lockWallet, IDLE_MS).
+    direct_pattern = re.compile(
+        r"(?P<prefix>(?:[A-Za-z_$][\w$]*(?:\.current)?\s*=\s*)?)setTimeout\(\s*(?:logout|logOut|lockWallet|lockSession|clearSession|clearWalletSession)\s*,\s*[^\)]+\)",
+    )
+    direct_hits = 0
+    def replace_direct(match: re.Match[str]) -> str:
+        nonlocal direct_hits
+        direct_hits += 1
+        prefix = match.group("prefix")
+        if prefix:
+            return prefix + "undefined as unknown as ReturnType<typeof setTimeout> /* BLEE_PERSISTENT_SESSION */"
+        return "void 0 /* BLEE_PERSISTENT_SESSION */"
+    text = direct_pattern.sub(replace_direct, text)
+
+    # Backgrounding the app may still trigger refresh/reconciliation. Only a
+    # same-line explicit lock/logout action is removed.
     visibility_pattern = re.compile(
-        r"(?P<line>[^\n]*(?:visibilityState|document\.hidden|blur)[^\n]*(?:logout\(|logOut\(|lockWallet\(|lockSession\(|setAccount\(null\)|setWallet\(null\))[^\n]*\n)",
+        rf"(?P<line>[^\n]*(?:visibilityState|document\.hidden|window\.blur|addEventListener\(['\"]blur['\"])[^\n]*{lock_union}[^\n]*\n)",
         re.I,
     )
     visibility_hits = 0
@@ -172,15 +174,14 @@ def patch_persistent_session() -> None:
         return indent + "// BLEE_PERSISTENT_SESSION: backgrounding does not log the user out.\n"
     text = visibility_pattern.sub(neutralize_visibility, text)
 
-    if "BLEE_PERSISTENT_SESSION" not in text:
-        # The current hook may not have an explicit timer. Add a durable marker
-        # so verification can distinguish intentional persistent-session policy.
-        text = "// BLEE_PERSISTENT_SESSION: no inactivity logout; explicit logout only.\n" + text
+    marker = "BLEE_PERSISTENT_SESSION: explicit logout only; no inactivity auto-lock."
+    if marker not in text:
+        text = f"// {marker}\n" + text
 
     path.write_text(text)
     print(
         "Blee 2.2: persistent session policy applied",
-        f"namedTimers={len(named)}, timeouts={timer_hits}, intervals={interval_hits}, visibilityLocks={visibility_hits}",
+        f"timeouts={timer_hits}, intervals={interval_hits}, directTimers={direct_hits}, visibilityLocks={visibility_hits}",
     )
 
 
@@ -199,8 +200,6 @@ def patch_premium_ui() -> None:
     app_text = app.read_text()
     for old in ("Blee 2.1.1", "Blee 2.1", "Blee 2.0", "Blee 1.4", "Blee 1.3"):
         app_text = app_text.replace(old, "Blee 2.2")
-    # Strip coloured inline error/success accents where present. The CSS system
-    # owns states and keeps them monochrome.
     app_text = app_text.replace("#dc2626", "#111111").replace("#16a34a", "#111111").replace("#ef4444", "#111111")
     app.write_text(app_text)
     print("Blee 2.2: premium monochrome UI system applied across screens")
