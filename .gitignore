@@ -1,0 +1,30 @@
+# Generated app workspace reconstructed by build-blee.command
+/src/
+/app/
+/plugins/
+/android/
+/public/
+/out/
+/.next/
+/node_modules/
+/dist/
+/.blee-tools/
+/.blee-professional-inner.command
+
+# Reconstructed project manifests/config
+/package.json
+/package-lock.json
+/tsconfig.json
+/next-env.d.ts
+/next.config.*
+/capacitor.config.*
+
+# Local environment / IDE
+.env
+.env.*
+.DS_Store
+.idea/
+.vscode/
+
+# Build logs
+*.log
