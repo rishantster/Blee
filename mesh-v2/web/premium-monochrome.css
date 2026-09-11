@@ -1,0 +1,309 @@
+/* Blee 2.2 premium monochrome design system */
+:root {
+  --blee-bg: #f3f3f0;
+  --blee-surface: #fbfbf8;
+  --blee-surface-strong: #ffffff;
+  --blee-ink: #0b0b0b;
+  --blee-muted: #70706b;
+  --blee-soft: #a6a69f;
+  --blee-line: #deded8;
+  --blee-line-strong: #c8c8c1;
+  --blee-black: #0a0a0a;
+  --blee-shadow: 0 18px 50px rgba(0,0,0,.08);
+  --blee-shadow-soft: 0 8px 28px rgba(0,0,0,.05);
+  --blee-radius-xl: 30px;
+  --blee-radius-lg: 24px;
+  --blee-radius-md: 18px;
+  --blee-radius-sm: 14px;
+}
+
+html, body {
+  background: var(--blee-bg) !important;
+  color: var(--blee-ink) !important;
+  font-family: ui-rounded, "SF Pro Rounded", "Avenir Next Rounded", "Avenir Next", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+body {
+  min-height: 100dvh;
+  letter-spacing: -.012em;
+}
+
+button, input, textarea, select {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* App frame */
+main,
+[class*="app-shell"],
+[class*="appShell"],
+[class*="screen-shell"],
+[class*="screenShell"] {
+  background: var(--blee-bg) !important;
+}
+
+[class*="screen"],
+[class*="page"] {
+  color: var(--blee-ink);
+}
+
+/* Brand/header — keep Blee centered and away from the screen corner. */
+header,
+[class*="topbar"],
+[class*="top-bar"],
+[class*="app-header"],
+[class*="appHeader"] {
+  position: relative;
+  min-height: 68px;
+  padding: max(12px, env(safe-area-inset-top)) 20px 12px !important;
+  display: flex;
+  align-items: center;
+  justify-content: center !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+header > :first-child:not(button),
+[class*="topbar"] > :first-child:not(button),
+[class*="top-bar"] > :first-child:not(button) {
+  margin-inline: auto;
+}
+
+header img[alt*="Blee" i],
+[class*="topbar"] img[alt*="Blee" i],
+[class*="brand"] img,
+[class*="logo"] img {
+  display: block;
+  width: auto;
+  max-width: 108px;
+  max-height: 30px;
+  object-fit: contain;
+  margin: 0 auto;
+}
+
+header [class*="brand"],
+[class*="topbar"] [class*="brand"],
+[class*="top-bar"] [class*="brand"] {
+  position: static !important;
+  transform: none !important;
+  margin: 0 auto !important;
+}
+
+header > button,
+[class*="topbar"] > button,
+[class*="top-bar"] > button {
+  position: absolute;
+}
+header > button:first-of-type,
+[class*="topbar"] > button:first-of-type,
+[class*="top-bar"] > button:first-of-type { left: 18px; }
+header > button:last-of-type,
+[class*="topbar"] > button:last-of-type,
+[class*="top-bar"] > button:last-of-type { right: 18px; }
+
+/* Cards / surfaces */
+[class*="card"],
+[class*="panel"],
+[class*="tile"],
+[class*="sheet"],
+[class*="modal"],
+[class*="drawer"] {
+  background: var(--blee-surface) !important;
+  border-color: var(--blee-line) !important;
+  box-shadow: var(--blee-shadow-soft);
+}
+
+[class*="card"],
+[class*="panel"],
+[class*="tile"] {
+  border-radius: var(--blee-radius-lg) !important;
+}
+
+[class*="sheet"],
+[class*="modal"],
+[class*="drawer"] {
+  border-radius: var(--blee-radius-xl) var(--blee-radius-xl) 0 0 !important;
+  box-shadow: 0 -18px 60px rgba(0,0,0,.12) !important;
+}
+
+/* Typography hierarchy */
+h1, h2, h3,
+[class*="title"],
+[class*="heading"] {
+  color: var(--blee-ink) !important;
+  letter-spacing: -.035em !important;
+  font-weight: 650 !important;
+}
+
+h1 { line-height: .98; }
+
+[class*="eyebrow"],
+[class*="label"],
+[class*="caption"],
+[class*="meta"],
+small {
+  color: var(--blee-muted) !important;
+  letter-spacing: .01em;
+}
+
+[class*="amount"],
+[class*="balance"],
+[class*="number"],
+[data-amount] {
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -.045em;
+}
+
+/* Inputs */
+input,
+textarea,
+select,
+[class*="input"] {
+  background: var(--blee-surface-strong) !important;
+  color: var(--blee-ink) !important;
+  border-color: var(--blee-line) !important;
+  border-radius: var(--blee-radius-md) !important;
+  box-shadow: none !important;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: 2px solid var(--blee-black) !important;
+  outline-offset: 1px;
+  border-color: var(--blee-black) !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--blee-soft) !important;
+}
+
+/* Primary/secondary actions */
+button[class*="primary"],
+[class*="primary-button"],
+[class*="primaryButton"],
+button[type="submit"] {
+  min-height: 56px;
+  border-radius: 18px !important;
+  background: var(--blee-black) !important;
+  color: #fff !important;
+  border: 1px solid var(--blee-black) !important;
+  box-shadow: 0 10px 30px rgba(0,0,0,.13) !important;
+  font-weight: 650 !important;
+  letter-spacing: -.018em;
+}
+
+button[class*="secondary"],
+[class*="secondary-button"],
+[class*="secondaryButton"] {
+  min-height: 52px;
+  border-radius: 17px !important;
+  background: var(--blee-surface-strong) !important;
+  color: var(--blee-ink) !important;
+  border: 1px solid var(--blee-line-strong) !important;
+  box-shadow: none !important;
+}
+
+button:disabled {
+  opacity: .38 !important;
+  box-shadow: none !important;
+}
+
+/* Statuses remain strictly monochrome. */
+[class*="error"],
+[class*="danger"],
+[class*="warning"],
+[class*="success"],
+[class*="notice"],
+[class*="banner"] {
+  color: var(--blee-ink) !important;
+  background: #ecece8 !important;
+  border-color: var(--blee-line-strong) !important;
+}
+
+[class*="status"] [class*="dot"],
+[class*="indicator"] {
+  background: var(--blee-ink) !important;
+}
+
+/* Nearby / activity rows */
+[class*="row"],
+[class*="list-item"],
+[class*="listItem"],
+[class*="peer"],
+[class*="activity-item"],
+[class*="activityItem"] {
+  border-color: var(--blee-line) !important;
+}
+
+[class*="avatar"] {
+  background: #e6e6e1 !important;
+  color: var(--blee-ink) !important;
+  border-color: var(--blee-line) !important;
+}
+
+/* Bottom navigation */
+nav[class*="bottom"],
+[class*="bottom-nav"],
+[class*="bottomNav"] {
+  background: rgba(250,250,247,.92) !important;
+  border-top: 1px solid var(--blee-line) !important;
+  box-shadow: 0 -8px 30px rgba(0,0,0,.04) !important;
+  backdrop-filter: blur(22px) saturate(120%);
+  -webkit-backdrop-filter: blur(22px) saturate(120%);
+}
+
+/* QR / receive surfaces */
+[class*="qr"] {
+  background: #fff !important;
+  border-color: var(--blee-line) !important;
+}
+
+/* Send sheet: cleaner hierarchy than the previous MVP-looking stack. */
+[class*="send"] [class*="amount"],
+[class*="pay"] [class*="amount"] {
+  font-weight: 650 !important;
+}
+
+/* Remove decorative colour leakage anywhere in the application. */
+svg:not([data-allow-color]) [fill]:not([fill="none"]) {
+  fill: currentColor;
+}
+
+/* Motion: quick, restrained, fintech-like. */
+button,
+[class*="card"],
+[class*="sheet"],
+[class*="modal"],
+[class*="row"] {
+  transition: transform 160ms cubic-bezier(.2,.8,.2,1), opacity 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+button:active:not(:disabled) {
+  transform: scale(.985);
+}
+
+@media (max-width: 520px) {
+  [class*="card"], [class*="panel"], [class*="tile"] {
+    border-radius: 22px !important;
+  }
+  [class*="sheet"], [class*="modal"], [class*="drawer"] {
+    border-radius: 28px 28px 0 0 !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
