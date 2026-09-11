@@ -6,13 +6,19 @@ Blee is an Android-first, self-custodial payment app with a native store-and-for
 
 The frozen protocol foundation is documented in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-## Blee 2.1.1 — Mesh v2 + crash-atomic signing
+## Blee 2.2 — premium Mesh v2 hardening
 
-The settlement rule is explicit:
+Blee 2.2 keeps the frozen sender-funded Mesh v2 protocol and hardens the actual Android product around four areas found during physical testing:
+
+- crash-atomic signing now accepts Capacitor numeric values safely (`chainId`, expiry and local transaction nonce);
+- the app no longer intentionally logs the user out because of inactivity/backgrounding — explicit logout remains authoritative for the active app process;
+- wallet passphrase minimum is **8 characters** instead of 12;
+- Bluetooth discovery runs in low-latency/high-power LE mode and negotiates 1M/2M/LE Coded PHY where hardware permits;
+- every screen receives a single premium monochrome design system, with restrained motion, consistent surfaces, typography and centered Blee brand treatment.
+
+The settlement rule remains:
 
 > **The sender funds settlement. Any Blee phone with Internet may broadcast the sender's already-signed transaction. Courier phones never spend their own funds.**
-
-Phone A prepares an EIP-3009 payment authorization and, when valid cached chain state is available, a sender-signed EIP-1559 raw transaction that calls `transferWithAuthorization`.
 
 ```text
 Phone A offline
@@ -35,95 +41,81 @@ Arc
 settlement receipt gossips back through Blee Mesh
 ```
 
-A courier phone:
-
-- pays **zero** gas for another user;
-- signs **nothing** for another user's payment;
-- never receives the sender's private key;
-- cannot alter the sender's signed transaction;
-- only contributes nearby transport, local storage and Internet connectivity.
-
-If Arc mainnet later has zero or externally sponsored fees, the architecture does not change; the sender's actual network cost simply becomes zero.
+A courier phone pays zero gas for another user, signs nothing for another user's payment, never receives the sender's private key and cannot alter the sender's signed transaction.
 
 ## Crash-atomic signing
 
-Blee 2.1.1 adds a native SQLite signing ledger so a wallet signature is never treated as a loose in-memory object.
+Blee uses a native SQLite signing ledger so a wallet signature is never treated as a loose in-memory object.
 
-### 1. Reserve before signing
+### Reserve before signing
 
-Before the wallet signs, native SQLite atomically records a `SIGNING` intent containing:
+Before the wallet signs, SQLite records a `SIGNING` intent containing the signing ID, process/session ID, chain ID, sender, recipient, amount, EIP-3009 authorization nonce, optional EOA transaction nonce and expiry.
 
-```text
-signing ID
-process/session ID
-chain ID
-sender
-recipient
-amount
-EIP-3009 authorization nonce
-EOA transaction nonce (when available)
-expiry
-```
-
-The `signing_intents` table is the authoritative local nonce-reservation source. JavaScript serialization is only an additional guard.
-
-### 2. Commit the exact signed bundle
+### Commit exact signed artifacts
 
 After EIP-3009 and EIP-1559 signing, a second SQLite transaction stores the authorization, raw transaction and bundle hash and moves the intent to `READY`.
 
-`createAuthorization()` does not return the signed bundle until that durable step succeeds.
+`createAuthorization()` does not return until that durable step succeeds.
 
-### 3. Persist payment + signing state together
+### Persist payment + signing state together
 
-When the payment journal stores the outgoing payment, the same SQLite transaction:
+When the payment journal stores the outgoing payment, the same SQLite transaction validates the `READY` signing intent, moves it to `PERSISTED` and records `SIGNATURE_BUNDLE_PERSISTED`.
 
-```text
-writes the payment row
-validates it against the READY signing intent
-moves signing state to PERSISTED
-writes SIGNATURE_BUNDLE_PERSISTED audit event
-```
+### Persist before network
 
-If one part fails, the whole transaction rolls back.
+Native Android commits the payment envelope outbox row, `QUEUED` event and settlement job before transmission. The recipient similarly commits the incoming payment and durable ACK before the ACK may be transmitted.
 
-### 4. Mesh queue is atomic too
+### Capacitor bridge hardening
 
-Before transmission, native Android commits the payment envelope outbox row, `QUEUED` event and settlement job together. Transmission only starts after commit.
+Physical testing exposed a bridge edge case where Java's `PluginCall.getLong()` could see `chainId` as an incompatible JSON numeric representation and reject a valid Arc chain ID.
 
-### 5. Recipient payment + ACK are atomic
+Blee 2.2 handles bridge numerics explicitly and also sends signing numerics as lossless strings from TypeScript. The native side accepts either a JSON number or numeric string before the signing transaction begins.
 
-After the recipient verifies the EIP-3009 authorization, native Android commits the incoming payment, `RECIPIENT_RECEIVED` event and durable `DELIVERY_ACK` outbox entry together. The ACK cannot be transmitted for a payment that was not durably recorded.
+## Session policy
 
-### Crash recovery
+The product policy is now simple:
 
-A previous process can leave a `SIGNING` row only if it died before the signed bundle became durable. Such an incomplete row is safe to mark `ABORTED` on a later signing session because it was never eligible for the payment journal or mesh.
+> **Blee does not intentionally log an unlocked user out because the app was idle or backgrounded. The user remains signed in for the lifetime of the active app process until they explicitly choose Log out.**
 
-`READY` and `PERSISTED` bundles are never reclaimed as unfinished signing attempts.
+This removes the old inactivity/auto-lock behavior that repeatedly forced passphrase entry during normal use.
 
-## What 2.1.1 contains
+Android can still terminate an app process under OS pressure, a device reboot changes process state, and a user force-stop remains authoritative. Those OS lifecycle events are distinct from Blee intentionally logging a user out.
 
-- native Android `BleeMeshService` foreground service;
-- simultaneous BLE advertising + scanning;
-- native fragmented GATT packet transport;
-- durable SQLite/WAL payment and event ledger;
-- crash-atomic `signing_intents` ledger;
-- bounded store-and-forward courier routing;
-- persistent packet deduplication;
-- native Android payment notifications;
-- EIP-3009 verification before financial acceptance;
-- cached sender nonce/EIP-1559 fee profile;
-- native transaction-nonce reservation before signing;
-- sender-signed `SENDER_FUNDED_RAW_TX` settlement artifact;
-- automatic `eth_sendRawTransaction` by any Internet-connected mesh node;
-- settlement-receipt gossip through BLE;
-- connectivity callbacks that trigger settlement immediately;
-- confirmed/spendable, pending-received and reserved-outgoing semantics;
-- persist-before-transmit and persist-before-ACK invariants;
-- supplied Blee branding, profile identity, QR receive and Activity timestamps.
+## Wallet passphrase
+
+New/imported encrypted wallets now require a minimum passphrase length of **8 characters**. Existing encrypted wallet backups and PBKDF2/AES-GCM protection remain compatible.
+
+## Bluetooth discovery
+
+Bluetooth LE operates in the 2.4 GHz ISM band; there are no extra Bluetooth frequency bands an Android app can enable. Blee 2.2 instead uses the strongest standards-compliant discovery configuration available through Android:
+
+- `SCAN_MODE_LOW_LATENCY`;
+- aggressive matching and immediate scan delivery;
+- `ADVERTISE_MODE_LOW_LATENCY`;
+- high advertising transmit power;
+- automatic scan restart after Android scanner failures;
+- high-priority GATT connection requests;
+- preference for all supported LE PHYs: 1M, 2M and LE Coded;
+- larger negotiated MTU with automatic peer fallback.
+
+The service continues simultaneous advertising + scanning inside the foreground `BleeMeshService`.
+
+## Premium monochrome UI
+
+Blee 2.2 keeps the existing Blee logo/wordmark and moves the product to one consistent crypto-fintech visual system:
+
+- monochrome only: off-white, white, black and neutral greys;
+- centered, properly spaced Blee brand placement instead of a corner-pinned logo;
+- rounded premium system typography with tabular numeric treatment;
+- consistent cards, sheets, inputs, buttons and bottom navigation;
+- monochrome error/status surfaces instead of prototype-style coloured alerts;
+- restrained press and sheet transitions;
+- accessibility support for reduced motion;
+- the same design tokens across Home, Nearby, Send, Receive, Activity, Profile, Settings and wallet/recovery surfaces.
 
 ## Payment authority and settlement vehicle
 
-Blee keeps both artifacts deliberately:
+Blee deliberately keeps both artifacts:
 
 ```text
 EIP-3009 authorization      payment authority
@@ -131,11 +123,11 @@ EIP-3009 authorization      payment authority
 sender-signed raw tx       sender-funded settlement vehicle
 ```
 
-A third phone can broadcast the raw transaction but cannot change the amount or recipient. If the sender's cached raw transaction becomes stale because the same EOA nonce was changed elsewhere, a courier does not rescue the payment using its own wallet. The sender reconciles and creates a fresh sender-funded submission while the EIP-3009 authorization remains valid.
+A third phone can broadcast the raw transaction but cannot change amount, recipient, calldata, nonce or signed fee caps. If the sender's raw transaction becomes stale because the same EOA nonce changed elsewhere, a courier does not rescue the payment using its own wallet.
 
 ## Offline chain profile
 
-An EOA cannot safely invent its account nonce while completely disconnected. Blee therefore caches:
+An EOA cannot safely invent its account nonce while disconnected. Blee caches:
 
 ```text
 chainId
@@ -147,13 +139,11 @@ maxPriorityFeePerGas
 syncedAt
 ```
 
-The native signing-intent ledger remains authoritative for already reserved local transaction nonces.
+The native `signing_intents` ledger remains authoritative for local nonce reservations.
 
-If no usable profile has ever been cached, Blee degrades to `AUTH_ONLY`: the nearby payment authorization can still be created, delivered and acknowledged, but third-phone sender-funded blockchain settlement waits until valid sender transaction state exists. Blee never guesses a nonce or charges another user's wallet.
+If no usable profile has ever been cached, Blee degrades to `AUTH_ONLY`: the nearby authorization can still be delivered and acknowledged, but automatic third-phone sender-funded blockchain settlement waits until valid sender transaction state exists.
 
 ## Offline payment flow
-
-Both A and B can be offline:
 
 ```text
 A presses Send
@@ -179,30 +169,6 @@ ACK travels back over BLE
 
 Financial state is reconstructed from SQLite/WAL, not React memory.
 
-## Three-phone settlement
-
-A and B are offline, C is online:
-
-```text
-A ──BLE──► B
-│          │
-└── mesh ──┴──► C
-               │
-               │ A's sender-signed raw tx
-               ▼
-              Arc
-               │
-               ▼
-        settlement receipt
-               │
-         BLE mesh gossip
-          ┌────┴────┐
-          ▼         ▼
-          A         B
-```
-
-C's wallet does not participate in the transaction.
-
 ## Balance semantics
 
 Blee separates:
@@ -225,12 +191,6 @@ Initial routing defaults:
 
 Receiving the same envelope through several routes must still produce one economic payment effect.
 
-## Native/background model
-
-The Android service owns BLE scan/advertise, packet fragmentation/reassembly, durable courier queues, connectivity observation, automatic raw-transaction broadcasting, settlement-receipt propagation and native notifications.
-
-Modern Android still controls permission/background policy. Blee cannot silently force Bluetooth/Wi-Fi on and a user force-stop remains authoritative.
-
 ## Persistence tables
 
 Core tables include:
@@ -247,7 +207,7 @@ Core tables include:
 - `peer_identities`
 - `kv`
 
-Normal lock/logout/restart/reboot must not erase payment history. Android Clear Storage and uninstall intentionally remove local data.
+Normal app lifecycle events must not erase payment history. Android Clear Storage and uninstall intentionally remove local data.
 
 ## Current development rail
 
@@ -260,7 +220,7 @@ The validated test rail remains **Arc Testnet**:
 - EIP-712 name: `USDC`
 - EIP-712 version: `2`
 
-The native automatic broadcaster is pinned to this validated rail in the current build.
+The native automatic broadcaster is pinned to this validated rail in the current test build.
 
 ## Build the APK
 
@@ -280,30 +240,18 @@ export PATH="$(brew --prefix openjdk@21)/bin:$PATH"
 bash build-blee.command
 ```
 
-### Fresh clone
-
-```bash
-git clone -b blee-professional --single-branch https://github.com/rishantster/Blee.git ~/Blee
-cd ~/Blee
-
-export JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home"
-export PATH="$(brew --prefix openjdk@21)/bin:$PATH"
-
-bash build-blee.command
-```
-
 Expected APK:
 
 ```text
-dist/Blee-2.1.1-mesh-v2-debug.apk
+dist/Blee-2.2.0-mesh-v2-debug.apk
 ```
 
-The build verifier blocks compilation if the crash-atomic signing ledger, sender-funded settlement path, native mesh service or atomic sender/recipient persistence wiring is missing.
+The build verifier blocks compilation when atomic signing, sender-funded settlement, the native mesh service, persistent-session policy, 8-character passphrase rule, Bluetooth hardening or the premium monochrome design layer is missing.
 
 ## Repository layout
 
 ```text
-ARCHITECTURE.md                  frozen Mesh v2 architecture
+ARCHITECTURE.md                  frozen Mesh v2 protocol architecture
 bootstrap/                       versioned base source/native snapshots
 professional/                    professional UX snapshot
 mesh-v2/
@@ -311,12 +259,15 @@ mesh-v2/
   native/                        SQLite/WAL store + atomic signing ledger
   web/
     BleeRuntime.tsx              native/runtime bridge
-    payments.ts.in               settlement implementation
+    payments.ts.in               sender-funded settlement implementation
     atomicSigning.ts.in          crash-atomic signing coordinator
+    premium-monochrome.css       Blee 2.2 product design system
 scripts/
-  apply-blee-mesh-v2.py          web/store overlay
-  apply-blee-mesh-v2-android.py  native Android installer + atomic hardening
-  verify-blee-mesh-v2.py         build-time architecture guard
+  apply-blee-mesh-v2.py          protocol/store web overlay
+  apply-blee-mesh-v2-android.py  native Android mesh installer
+  apply-blee-2.2.py              atomic bridge/session/passphrase/UI hardening
+  apply-blee-2.2-android.py      Bluetooth discovery hardening
+  verify-blee-mesh-v2.py         build-time architecture/product guard
 build-blee.command               canonical build entrypoint
 build-blee-professional.command  deterministic orchestrator
 ```
@@ -325,21 +276,24 @@ build-blee-professional.command  deterministic orchestrator
 
 Before mainnet/release-quality claims, test on real Android devices:
 
-1. kill the sender process before signing, during signing, after `READY`, after payment persistence and after outbox creation;
-2. verify no duplicate EIP-3009 or EOA transaction nonce is reused incorrectly;
+1. sender process kill before signing, during signing, after `READY`, after payment persistence and after outbox creation;
+2. no duplicate EIP-3009 or EOA transaction nonce reuse;
 3. A/B online direct payment;
-4. A/B offline direct nearby payment + native notification;
-5. recipient backgrounded/process lifecycle recovery;
-6. A/B offline + C online — C broadcasts A's raw transaction and C's balance does not change;
-7. duplicate multi-route delivery — one economic effect;
-8. Bluetooth off/on discovery recovery;
-9. Internet loss/return triggers immediate settlement work;
-10. stale sender EOA nonce fails safely without charging the courier;
-11. authorization expiry stops forwarding safely;
-12. reboot/package update recovers durable state;
-13. same wallet used externally while Blee holds offline reservations;
-14. fault injection around every SQLite transaction boundary.
+4. A/B offline nearby payment + native notification;
+5. inactivity/background/foreground cycle does not intentionally log the user out;
+6. explicit Log out still clears the active app session;
+7. 8-character passphrase create/import/unlock flows;
+8. A/B offline + C online — C broadcasts A's raw transaction and C's balance does not change;
+9. duplicate multi-route delivery — one economic effect;
+10. Bluetooth discovery on at least three Android vendors, including screen-off/background cases;
+11. Bluetooth off/on and Android scanner failure recovery;
+12. Internet loss/return triggers settlement work;
+13. stale sender EOA nonce fails safely without charging the courier;
+14. authorization expiry stops forwarding safely;
+15. reboot/package update recovers durable state;
+16. same wallet used externally while Blee holds offline reservations;
+17. visual regression of every screen in light monochrome UI.
 
 ## Status
 
-Blee 2.1.1 Mesh v2 is a **test build**, not a mainnet release. The architecture now enforces database-backed signing reservations and persist-before-network boundaries, but production still requires physical fault-injection/device-matrix testing, private authenticated peer sessions, malicious-mesh testing, release signing and a dedicated wallet/protocol security review.
+Blee 2.2 Mesh v2 remains a **test build**, not a mainnet release. The architecture enforces database-backed signing reservations and persist-before-network boundaries, but production still requires physical fault-injection/device-matrix testing, authenticated private peer sessions, malicious-mesh testing, release signing and a dedicated wallet/protocol security review.
