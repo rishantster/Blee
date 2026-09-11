@@ -11,6 +11,7 @@ This document defines the canonical Blee Android presentation model. It is inten
 - **Nearby**, **Activity** and **Profile** are destinations in the persistent bottom navigation.
 - Settings are entered from Profile / the appropriate header control, not duplicated across Home.
 - The supplied Blee wordmark appears once per screen header at its natural aspect ratio.
+- The supplied standalone Blee logo is the app-launcher, Android/system identity and cold-launch animation asset.
 - No decorative radar, orbit, halo or concentric-ring artwork.
 - Monochrome only: off-white, white, black and neutral greys.
 - Financial state must never be encoded by colour alone.
@@ -23,7 +24,7 @@ This document defines the canonical Blee Android presentation model. It is inten
 
 ## Cold launch
 
-Cold start shows the supplied Blee wordmark only, with a restrained one-time transition. No decorative rings or marketing carousel.
+Cold start shows the supplied standalone Blee logo—not the wordmark—with a restrained ~680ms transition and the subtle Blee chime. No decorative rings or marketing carousel. Reduced-motion preference disables the visual motion but does not alter wallet/network behavior.
 
 ## Screen map
 
@@ -177,7 +178,7 @@ Send and Receive are actions, not permanent tabs.
 
 ## Motion
 
-- cold-start wordmark transition: restrained, under ~700ms
+- cold-start standalone-logo transition: restrained, ~680ms
 - screen transition: 180–240ms
 - sheet transition: 220–260ms
 - button press: subtle scale only
@@ -193,6 +194,8 @@ The canonical build must fail if any of these regress:
 - biometric capability gating disappears
 - notification permission/event plumbing disappears
 - supplied Blee wordmark is stretched/replaced by synthetic geometry
+- supplied standalone Blee logo is replaced in the launcher, Android system identity or cold-launch screen
+- cold-launch logo animation or launch chime is dropped
 - Send or Receive disappears
 - inactivity/background auto-lock returns
 - courier-funded settlement returns
