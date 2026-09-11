@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Build;
 
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -15,6 +16,8 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+
+import java.util.List;
 
 @CapacitorPlugin(
     name = "BleeMesh",
@@ -96,6 +99,50 @@ public class BleeMeshPlugin extends Plugin {
             call.resolve(result);
         } catch (Throwable error) {
             call.reject("Unable to read Blee Mesh status: " + error.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void pendingEnvelopes(PluginCall call) {
+        try {
+            BleeMeshDb db = new BleeMeshDb(getContext());
+            List<String> pending = db.pendingEnvelopes();
+            db.close();
+            JSArray packets = new JSArray();
+            for (String raw : pending) packets.put(raw);
+            JSObject result = new JSObject();
+            result.put("packets", packets);
+            call.resolve(result);
+        } catch (Throwable error) {
+            call.reject("Unable to load pending Blee envelopes: " + error.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void acceptEnvelope(PluginCall call) {
+        String messageId = call.getString("messageId", "");
+        if (messageId.isEmpty()) {
+            call.reject("Missing messageId");
+            return;
+        }
+        try {
+            BleeMeshDb db = new BleeMeshDb(getContext());
+            String deviceId = BleeDeviceIdentity.deviceId(getContext());
+            String publicKey = BleeDeviceIdentity.publicKey();
+            BleeMeshDb.AcceptedPayment accepted = db.acceptVerifiedEnvelope(messageId, deviceId, publicKey);
+            db.close();
+            JSObject result = new JSObject();
+            result.put("accepted", accepted.accepted);
+            result.put("paymentId", accepted.paymentId);
+            if (accepted.accepted) {
+                JSObject event = new JSObject();
+                event.put("paymentId", accepted.paymentId);
+                event.put("eventType", "RECIPIENT_RECEIVED");
+                notifyListeners("ledgerChanged", event, true);
+            }
+            call.resolve(result);
+        } catch (Throwable error) {
+            call.reject("Unable to accept verified Blee payment: " + error.getMessage());
         }
     }
 
