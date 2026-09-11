@@ -41,9 +41,11 @@ def main() -> None:
         "PasswordField", "Show passphrase", "Hide passphrase", "Fingerprint unlock", "BleeBiometric.unlock",
         "BleeBiometric.enroll", "splash-logo", "/brand/blee-wordmark.svg",
     ))
+    # Verify real rendered 2.5 CSS features rather than a bookkeeping comment marker.
     css = require(ROOT / "app/globals.css", (
-        "BLEE_UI_2_4", "BLEE_UI_2_5_AUTH_AND_LAUNCH", "grid-template-columns: repeat(4, 1fr)",
-        ".blee-phone.with-nav", ".blee-wordmark", "blee-launch-logo", "safe-area-inset-bottom",
+        "BLEE_UI_2_4", "grid-template-columns: repeat(4, 1fr)", ".blee-phone.with-nav",
+        ".blee-wordmark", "height: auto", ".password-input", ".biometric-opt-in",
+        "@keyframes blee-launch-logo", "safe-area-inset-bottom",
     ))
     biometric = require(ROOT / "src/lib/biometric.ts", (
         "registerPlugin<NativeBleeBiometric>('BleeBiometric')", "enroll(passphrase", "unlock():", "disable()",
