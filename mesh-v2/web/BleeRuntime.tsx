@@ -2,22 +2,23 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import type { Address } from 'viem';
 import BleeApp from './BleeApp';
-import { verifyAuthorization } from '../lib/payments';
+import { refreshSenderFundedSettlementProfile, verifyAuthorization } from '../lib/payments';
 
 type MeshStatus = {
   running: boolean;
   protocol: string;
   wallet?: string | null;
-  relayMode?: string;
-  relayConfigured?: boolean;
+  broadcastMode?: string;
+  senderPaysGas?: boolean;
+  relayPaysGas?: boolean;
 };
 
 type MeshPlugin = {
   start(): Promise<{ running: boolean; protocol: string }>;
   status(): Promise<MeshStatus>;
   ensureNotificationPermission(): Promise<{ granted?: boolean } | void>;
-  configureRelay(options: { mode: string; endpoint: string }): Promise<{ configured: boolean }>;
   pendingEnvelopes(): Promise<{ packets: string[] }>;
   acceptEnvelope(options: { messageId: string }): Promise<{ accepted: boolean; paymentId?: string }>;
   addListener(
@@ -54,6 +55,15 @@ export default function BleeRuntime() {
       }, 180);
     };
 
+    const refreshSettlementProfile = async () => {
+      try {
+        const status = await BleeMesh.status();
+        if (status.wallet) await refreshSenderFundedSettlementProfile(status.wallet as Address);
+      } catch {
+        // Offline is expected. The most recent chain nonce/fee profile remains cached.
+      }
+    };
+
     const verifyPendingOfflinePayments = async () => {
       if (!active || processing.current) return;
       processing.current = true;
@@ -86,18 +96,11 @@ export default function BleeRuntime() {
       try {
         await BleeMesh.start();
         await BleeMesh.ensureNotificationPermission();
-        const relayEndpoint = process.env.NEXT_PUBLIC_BLEE_RELAY_ENDPOINT?.trim();
-        if (relayEndpoint) {
-          await BleeMesh.configureRelay({
-            mode: process.env.NEXT_PUBLIC_BLEE_RELAY_MODE?.trim() || 'SPONSORED_AUTO_RELAY',
-            endpoint: relayEndpoint,
-          });
-        }
         listener = await BleeMesh.addListener('ledgerChanged', () => {
           void verifyPendingOfflinePayments();
           refreshLedger();
         });
-        await verifyPendingOfflinePayments();
+        await Promise.allSettled([verifyPendingOfflinePayments(), refreshSettlementProfile()]);
       } catch (error) {
         console.warn('Blee Mesh v2 native runtime is unavailable', error);
       }
@@ -106,11 +109,13 @@ export default function BleeRuntime() {
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
         void verifyPendingOfflinePayments();
+        void refreshSettlementProfile();
         refreshLedger();
       }
     };
     const onFocus = () => {
       void verifyPendingOfflinePayments();
+      void refreshSettlementProfile();
       refreshLedger();
     };
     document.addEventListener('visibilitychange', onVisible);

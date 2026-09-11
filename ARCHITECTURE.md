@@ -1,62 +1,119 @@
 # Blee Mesh v2 — Frozen Architecture
 
-Status: **frozen protocol foundation** for the next Android build.
+Status: **frozen for Blee 2.1 implementation**
 
-Blee is an offline-first payment mesh. Internet availability controls blockchain settlement; it must not control whether Blee devices can create, persist, deliver, acknowledge, notify, carry, or reconcile payments.
+Blee is an offline-first, self-custodial payment system. Internet availability controls blockchain settlement, not whether Blee devices can create, persist, deliver, acknowledge, notify, carry or reconcile payments.
 
-## Architecture
+## 1. Architectural rule
 
-```text
-                         Arc / EVM
-                            │
-                    blockchain settlement
-                            │
-                    ┌───────▼────────┐
-                    │ Settlement     │
-                    │ Coordinator    │
-                    └───────┬────────┘
-                            │ signed settlement events
-              ┌─────────────┴─────────────┐
-              │                           │
-       Internet transport           Local Blee mesh
-                                     BLE / local LAN
-              │                           │
-              └─────────────┬─────────────┘
-                            │
-                    ┌───────▼────────┐
-                    │ Local ledger   │
-                    │ SQLite + WAL   │
-                    └───────┬────────┘
-                            │
-                       Blee UI
-```
-
-Every Android installation contains a native `BleeMeshService`. The React/Capacitor UI presents local ledger state; it is not responsible for keeping the mesh alive.
-
-## Native runtime
+The native Android process is the network node. React/Capacitor renders local state; it is not responsible for keeping the mesh alive.
 
 ```text
+Blee UI
+   │
+   ▼
+SQLite / WAL event ledger
+   │
+   ▼
 BleeMeshService
-├── DeviceIdentityManager
-├── PeerDiscoveryManager
-├── BluetoothTransport
-├── LocalNetworkTransport
-├── MeshRouter
-├── CourierStore
-├── DurableInbox
-├── DurableOutbox
-├── PaymentEventProcessor
-├── ConnectivityObserver
-├── SettlementCoordinator
-├── ReconciliationEngine
-└── NotificationEngine
+   ├─ BLE scanner + advertiser
+   ├─ GATT transport / fragmentation
+   ├─ durable inbox + outbox
+   ├─ bounded store-and-forward courier routing
+   ├─ connectivity observer
+   ├─ sender-funded settlement broadcaster
+   └─ Android notifications
 ```
 
-The service is started by the native app after Blee has been opened and remains `START_STICKY` while Android permits it. Real-time BLE work belongs in the native foreground service. WorkManager may be used later for deferred recovery/retry jobs, but is not the real-time transport.
+## 2. Settlement rule: sender pays, courier only broadcasts
 
-## Ledger model
+A random third Blee phone must never spend its owner's funds to settle somebody else's payment.
 
-Blee uses immutable payment events as the audit source of truth. Mutable payment rows are projections/cache for the UI.
+Phone A creates two cryptographic artifacts:
+
+1. the EIP-3009 `TransferWithAuthorization` authorization for the payment; and
+2. when a cached chain nonce/fee profile is available, a **sender-signed EIP-1559 raw transaction** that calls `transferWithAuthorization`.
+
+The raw transaction is signed by Phone A's wallet. Therefore the EVM transaction sender is A and any network fee is charged to A. Phone C merely submits the already-signed bytes with `eth_sendRawTransaction`.
+
+```text
+Phone A (offline sender)
+  signs payment authorization
+  signs settlement transaction
+          │
+          │ BLE / store-and-forward
+          ▼
+Phone B / Phone C / Phone D
+          │
+     any node gets Internet
+          │
+          │ eth_sendRawTransaction(rawTx)
+          ▼
+Arc
+          │
+     transaction receipt
+          │
+          ▼
+Blee mesh gossips SETTLEMENT_RECEIPT
+```
+
+### Invariants
+
+- Phone C signs nothing for A.
+- Phone C never exposes or uses A's private key.
+- Phone C never pays A's gas.
+- Phone C cannot change recipient, amount, calldata, nonce or fee caps without invalidating A's transaction signature.
+- Automatic mesh broadcasting is pinned to Blee's validated chain/RPC; arbitrary RPC endpoints are not accepted by the background service.
+- If Arc later makes the fee zero or an external actor sponsors it, the protocol still works; sender cost simply becomes zero.
+
+## 3. Why EIP-3009 remains
+
+The raw transaction does not replace EIP-3009. The authorization is still the payment-level authority and gives Blee an independently verifiable payment object.
+
+The preferred settlement path is:
+
+```text
+EIP-3009 authorization
+       +
+sender-signed EIP-1559 transaction
+       ↓
+any online phone broadcasts
+```
+
+If the cached raw transaction becomes stale because the sender used the wallet elsewhere or its account nonce changed, a third phone does **not** spend its own gas to rescue it. When the sender later comes online/unlocks, Blee can reconcile chain state and produce a fresh sender-funded submission while the authorization remains valid.
+
+## 4. Offline nonce and fee profile
+
+An EOA cannot create a valid future raw transaction without chain state. Therefore Blee caches a settlement profile while the sender is online:
+
+```text
+chainId
+sender address
+pending account nonce
+next locally reserved nonce
+maxFeePerGas
+maxPriorityFeePerGas
+syncedAt
+```
+
+`getBalance()` and the native runtime opportunistically refresh this profile whenever Internet is available.
+
+When A later creates a payment offline, Blee:
+
+1. serializes transaction creation;
+2. checks active local outgoing payments for already-reserved transaction nonces;
+3. reserves the next nonce;
+4. uses conservative cached EIP-1559 fee caps;
+5. signs the raw settlement transaction;
+6. stores the signed payment before mesh transmission.
+
+If no usable profile has ever been cached, Blee still creates the EIP-3009 authorization and local nearby payment envelope, but marks it `AUTH_ONLY`. Nearby delivery still works; automatic sender-funded third-phone settlement cannot be manufactured without a valid sender transaction nonce/fee profile.
+
+This is a correctness constraint, not a UI limitation.
+
+## 5. Durable event ledger
+
+Financial/network state is reconstructed from durable SQLite state, not React memory.
 
 Core tables:
 
@@ -66,14 +123,18 @@ Core tables:
 - `mesh_outbox`
 - `mesh_seen_packets`
 - `courier_envelopes`
-- `peer_identities`
 - `settlement_jobs`
 - `settlement_receipts`
+- `peer_identities`
 - `kv`
 
-Every event carries a UTC epoch-millisecond timestamp. UI formatting is local-time date + hour + minute + second. Existing rows are migrated additively; payment history is never dropped during an upgrade.
+Write-ahead logging is enabled. Migrations are additive; payment data is never dropped as an upgrade strategy.
 
-## Payment lifecycle
+Every important transition records an immutable UTC epoch-millisecond timestamp.
+
+## 6. Payment states
+
+Protocol state:
 
 ```text
 CREATED
@@ -93,23 +154,59 @@ SETTLED_RELAY_REPORTED
 CHAIN_CONFIRMED
 ```
 
-Offline delivery is not chain finality.
+The historical internal name `SETTLED_RELAY_REPORTED` means settlement evidence was received through the mesh; it does **not** mean the courier paid gas.
 
-User-facing wording can remain simpler: `Sending`, `Delivered nearby`, `Received offline`, `Settlement pending`, `Settled`, `Confirmed`.
+User-facing copy may be simplified to `Sending`, `Delivered nearby`, `Received offline`, `Settlement pending`, `Settled`, `Confirmed`.
 
-## Balance model
+## 7. Balance semantics
 
-Blee never collapses all money into one ambiguous number.
+Blee keeps separate concepts:
 
-- **Confirmed / spendable** — independently chain-confirmed funds.
-- **Pending received** — valid incoming authorization received locally but not yet chain-confirmed.
-- **Reserved outgoing** — signed outgoing authorizations that must no longer be counted as freely spendable locally.
+- **confirmed / spendable** — independently chain-confirmed balance;
+- **pending received** — valid received authorization not yet independently chain-confirmed;
+- **reserved outgoing** — signed outgoing value that must not be treated as freely spendable locally.
 
-Blee devices gossip signed events and settlement evidence, **never arbitrary balance numbers**. Each phone derives its own projection from the ledger.
+Devices never gossip arbitrary balance numbers. They gossip signed payment events and settlement evidence. Every phone derives its own projection.
 
-## Packet envelope
+## 8. Persist-before-network rules
 
-All mesh traffic uses a common envelope:
+Sender:
+
+```text
+sign authorization / raw tx
+        ↓
+SQLite transaction
+        ↓
+persist payment + outbox + reservation
+        ↓
+COMMIT
+        ↓
+transmit
+```
+
+Recipient:
+
+```text
+receive packet
+        ↓
+validate transport integrity
+        ↓
+verify EIP-3009 authorization
+        ↓
+persist incoming payment/event
+        ↓
+COMMIT
+        ↓
+send DELIVERY_ACK
+```
+
+An ACK must never precede durable financial persistence.
+
+The current Android foundation can post a native notification as soon as the envelope reaches the device. Financial promotion of the incoming authorization remains gated by viem verification. A future fully headless verifier may move that EIP-712 verification into native code; until then a killed WebView may require the app process to resume before the pending balance projection is promoted.
+
+## 9. Mesh packet model
+
+Every packet carries common routing/integrity metadata:
 
 ```text
 version
@@ -123,155 +220,125 @@ createdAt
 expiresAt
 hopCount
 hopLimit
+copyBudget
 payloadHash
 payload
+devicePublicKey
 deviceSignature
 ```
 
-Initial packet types:
+Key packet types:
 
-- `IDENTITY_HELLO`
 - `PAYMENT_ENVELOPE`
 - `DELIVERY_ACK`
-- `SETTLEMENT_REQUEST`
-- `SETTLEMENT_SUBMITTED`
 - `SETTLEMENT_RECEIPT`
-- `LEDGER_DIGEST`
-- `EVENT_REQUEST`
-- `EVENT_RESPONSE`
 
-`messageId` provides transport deduplication. `paymentId` plus the EIP-3009 authorization nonce provides payment idempotency.
+Routing metadata is bounded. Initial defaults are copy budget `3`, hop limit `6`, retention until authorization expiry.
 
-## Store-and-forward mesh
+`messageId` deduplicates transport. Payment ID + EIP-3009 nonce provide economic idempotency.
 
-The mesh is delay-tolerant, not merely direct peer-to-peer discovery.
+## 10. Store-and-forward behavior
 
-A sealed envelope may travel directly or through couriers:
+Blee is delay tolerant, not merely direct peer-to-peer.
 
 ```text
-Rishant → Kumar
-
-or
-
-Rishant → Phone C → Phone D → Kumar
+A → B
+A → C → B
+A → C   (devices separate)   C → B later
 ```
 
-A device may carry an envelope and deliver it later when it encounters the destination.
+A courier stores an envelope in SQLite and forwards it later. PAYMENT_ENVELOPE packets continue beyond the recipient so an Internet-connected mesh member can broadcast the sender-funded raw transaction. Settlement receipts are gossip events and travel back through the mesh.
 
-Initial safety limits:
+## 11. Three-phone scenario
 
-- courier copy budget: 3
-- hop limit: 6
-- retention: no longer than payment authorization expiry
-- persistent deduplication: required
-- retry: exponential backoff
-- relay jitter: required
-
-Financial traffic has priority over profile/media traffic.
-
-## Courier vs settlement relay
-
-These are separate capabilities.
-
-### Mesh courier
-
-A courier stores and forwards a sealed packet. It does not authorize the payment and does not need Internet.
-
-### Settlement relay
-
-A settlement relay has Internet, validates a signed payment authorization, submits it to the configured settlement path, obtains settlement evidence, and injects the resulting settlement event back into the mesh.
-
-The production-preferred mode is **sponsored auto relay / paymaster**. A phone discovering an unsettled valid authorization sends it to the configured Blee relay service; the phone owner is not charged another user's gas.
-
-Relay policies are explicit:
-
-- `TESTNET_AUTO_RELAY`
-- `SPONSORED_AUTO_RELAY`
-- `USER_OPT_IN_RELAY`
-
-No production build may embed a shared relayer private key inside the APK.
-
-## Three-phone flow
-
-If A and B are offline and C is online:
+A and B are offline; C has Internet.
 
 ```text
-A signs payment for B
+A signs 5 USDC payment + sender-funded raw tx
        ↓ BLE
-B persists + ACKs immediately
-       ↓ mesh gossip
-C receives authorization
-       ↓ Internet
-sponsored relay / Arc settlement
+B receives envelope and is notified
+       ↓ bounded mesh forwarding
+C receives same envelope
        ↓
-C receives settlement receipt
-       ↓ BLE mesh
-A and B update automatically
+C sees Internet
+       ↓
+C submits A's raw bytes to Arc
+       ↓
+Arc charges A according to A's signed transaction
+       ↓
+C receives successful transaction receipt
+       ↓ BLE gossip
+A and B learn settlement state
 ```
 
-A and B do not need Internet to learn the relay result if the receipt reaches them through the local mesh.
+C's wallet is irrelevant to the transaction.
 
-A fully offline phone records a relay receipt as `SETTLED_RELAY_REPORTED`. When it later obtains Internet itself it independently verifies the chain and advances to `CHAIN_CONFIRMED`.
+## 12. Settlement evidence and finality
 
-## Native notifications
+An offline phone can receive a real transaction hash/block receipt through the mesh, but it cannot independently query canonical chain state while fully offline. Therefore:
 
-The recipient must not need the Activity screen open.
+- `SETTLED_RELAY_REPORTED`: chain evidence arrived through another node;
+- `CHAIN_CONFIRMED`: this phone independently verified chain state when Internet became available.
 
-After a valid payment is durably persisted, Blee posts an Android notification such as:
+A later light-client/proof design can strengthen offline finality without changing the transport model.
 
-`Payment received — Rishant sent 5 USDC · received nearby, settlement pending`
+## 13. Identity and privacy
 
-After settlement evidence arrives:
-
-`Payment settled — 5 USDC from Rishant is now settled`
-
-**Persist first, ACK/notify second.**
-
-## Identity and privacy
-
-Wallet identity and mesh device identity are separate.
+Wallet keys authorize money. Android Keystore device keys authorize mesh transport messages.
 
 ```text
-wallet key
-   │ authorizes
-   ▼
-device identity key
-   │
-   ▼
-rotating BLE identifier
+wallet identity
+   └─ financial authorization
+
+device identity
+   └─ ACK / courier / transport evidence
 ```
 
-Wallet keys authorize money. Device keys authorize mesh protocol traffic, ACKs and presence. BLE advertisements must not continuously expose the wallet address. Profile metadata is exchanged only after an authenticated peer session.
+The production protocol should use rotating BLE identifiers and authenticated/private peer sessions. Wallet addresses should not be continuously exposed as BLE advertising identity.
 
-## Reconciliation
+## 14. Background model
 
-When two Blee devices meet they exchange compact ledger summaries and request only missing relevant events. The protocol is event synchronization, not database replication and not remote balance assignment.
+`BleeMeshService` is a native foreground service and uses Android connectivity callbacks rather than polling for Internet state. `START_STICKY` plus the boot/package receiver rebuilds the service after ordinary process/device lifecycle events when Android permits.
 
-Traffic priority:
+Modern Android can still restrict background work, and a user force-stop is authoritative. Blee must never claim it can override OS policy or silently enable Bluetooth/Wi-Fi.
 
-- P0: payment authorization, delivery ACK, settlement receipt
-- P1: event reconciliation, device/identity certificate
-- P2: profile metadata, profile photo, historical repair
+## 15. Development rail
 
-## Frozen invariants
+Current validated development rail:
+
+- Arc Testnet
+- chain ID `5042002`
+- RPC `https://rpc.testnet.arc.network`
+- USDC contract `0x3600000000000000000000000000000000000000`
+- EIP-712 name `USDC`
+- EIP-712 version `2`
+
+The native automatic broadcaster is pinned to this rail for the test build.
+
+## 16. Security boundaries
+
+Before mainnet release, Blee still requires:
+
+- private authenticated peer-session transport;
+- nonce/fee-profile stress testing under external-wallet use;
+- malicious packet/flooding tests;
+- Android vendor/background-kill matrix testing;
+- release signing and reproducible-build review;
+- dedicated wallet/protocol security review;
+- explicit policy for fee estimation as Arc mainnet parameters become final.
+
+## 17. Frozen invariants
 
 1. Persist before transmit.
 2. Persist before ACK.
 3. Offline delivery is not blockchain finality.
-4. Confirmed, pending received and reserved outgoing remain distinct.
-5. Gossip signed events/evidence, never balance claims.
-6. Every financial message is idempotent and persistently deduplicated.
-7. Native service owns networking; React owns presentation.
-8. Any eligible Blee device may act as a courier.
-9. An online Blee device may trigger automatic settlement only under an explicit relay policy.
-10. Settlement results propagate back through the mesh.
-11. Every ledger transition has an immutable UTC timestamp.
-12. Wallet keys authorize funds; device keys authorize mesh traffic.
-13. BLE discovery must not expose raw wallet addresses as persistent identifiers.
-14. Process death/restart recovers entirely from durable local state.
-15. Losing Internet degrades settlement, not local payment communication.
-16. Duplicate packets must never produce duplicate payment effects.
-17. An ACK is sent only after the receiving transaction has committed to SQLite.
-18. No app upgrade may drop payment history as a migration strategy.
-
-These invariants are the implementation contract for Blee Mesh v2.
+4. Devices exchange events/evidence, never asserted balances.
+5. Every financial effect is idempotent.
+6. Native Android owns network reliability; UI owns presentation.
+7. Any Blee device may carry another user's encrypted/signed payment packet.
+8. Any online Blee device may broadcast a valid sender-signed raw transaction.
+9. **The sender funds the transaction; courier devices never spend their own wallet balance.**
+10. Settlement receipts propagate through the mesh.
+11. Wallet keys authorize money; device keys authorize transport.
+12. Recovery must come from durable SQLite state after normal process/reboot lifecycle.
+13. If a sender-funded raw transaction cannot be prepared safely, Blee degrades to `AUTH_ONLY` rather than inventing a nonce or charging another user.

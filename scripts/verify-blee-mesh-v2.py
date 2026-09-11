@@ -18,8 +18,8 @@ def require(path: Path, markers: tuple[str, ...]) -> None:
 
 def main() -> None:
     package = json.loads((ROOT / "package.json").read_text())
-    if package.get("version") != "2.0.0":
-        raise SystemExit(f"VERIFY ERROR: package version is {package.get('version')}, expected 2.0.0")
+    if package.get("version") != "2.1.0":
+        raise SystemExit(f"VERIFY ERROR: package version is {package.get('version')}, expected 2.1.0")
 
     require(
         ROOT / "plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java",
@@ -36,6 +36,17 @@ def main() -> None:
         ),
     )
     require(
+        ROOT / "src/lib/payments.ts",
+        (
+            "SENDER_FUNDED_RAW_TX",
+            "signTransaction",
+            "sendRawTransaction",
+            "refreshSenderFundedSettlementProfile",
+            "txNonce",
+            "rawTransaction",
+        ),
+    )
+    require(
         ROOT / "src/components/BleeRuntime.tsx",
         (
             "registerPlugin<MeshPlugin>('BleeMesh')",
@@ -43,9 +54,10 @@ def main() -> None:
             "pendingEnvelopes",
             "verifyAuthorization",
             "acceptEnvelope",
+            "refreshSenderFundedSettlementProfile",
         ),
     )
-    require(ROOT / "src/components/BleeApp.tsx", ("Blee 2.0", "formatLedgerTimestamp"))
+    require(ROOT / "src/components/BleeApp.tsx", ("Blee 2.1", "formatLedgerTimestamp"))
 
     activities = list((ROOT / "android/app/src/main/java").rglob("MainActivity.java"))
     if len(activities) != 1:
@@ -56,8 +68,25 @@ def main() -> None:
     for name, markers in {
         "BleeDeviceIdentity.java": ("AndroidKeyStore", "SHA256withECDSA"),
         "BleeMeshDb.java": ("PAYMENT_ENVELOPE", "DELIVERY_ACK", "SETTLEMENT_RECEIPT", "pendingEnvelopes", "acceptVerifiedEnvelope"),
-        "BleeMeshService.java": ("START_STICKY", "BluetoothLeScanner", "BluetoothLeAdvertiser", "registerDefaultNetworkCallback", "attemptSponsoredSettlement"),
-        "BleeMeshPlugin.java": ("BleeMesh", "ledgerChanged", "pendingEnvelopes", "acceptEnvelope", "configureRelay"),
+        "BleeMeshService.java": (
+            "START_STICKY",
+            "BluetoothLeScanner",
+            "BluetoothLeAdvertiser",
+            "registerDefaultNetworkCallback",
+            "attemptSenderFundedSettlement",
+            "eth_sendRawTransaction",
+            "SENDER_FUNDED_RAW_TX",
+            "TRUSTED_CHAIN_ID = 5042002L",
+        ),
+        "BleeMeshPlugin.java": (
+            "BleeMesh",
+            "ledgerChanged",
+            "pendingEnvelopes",
+            "acceptEnvelope",
+            "broadcastMode",
+            "senderPaysGas",
+            "relayPaysGas",
+        ),
         "BleeBootReceiver.java": ("BOOT_COMPLETED", "BleeMeshService.start"),
     }.items():
         require(activity.parent / name, markers)
@@ -78,17 +107,30 @@ def main() -> None:
     )
 
     generated = "\n".join(path.read_text(errors="replace") for path in activity.parent.glob("Blee*.java"))
+    web = (ROOT / "src/components/BleeRuntime.tsx").read_text(errors="replace") + "\n" + (ROOT / "src/lib/payments.ts").read_text(errors="replace")
     if "__BLEE_APP_PACKAGE__" in generated:
         raise SystemExit("VERIFY ERROR: unresolved Android package placeholder")
 
+    banned = (
+        "attemptSponsoredSettlement",
+        "SPONSORED_AUTO_RELAY",
+        "mesh.relay.endpoint",
+        "configureRelay",
+        "NEXT_PUBLIC_BLEE_RELAY_ENDPOINT",
+    )
+    found = [marker for marker in banned if marker in generated or marker in web]
+    if found:
+        raise SystemExit(f"VERIFY ERROR: obsolete sponsored-relay implementation remains: {found}")
+
     print("============================================================")
-    print("VERIFIED: Blee 2.0 Mesh v2 source wiring")
+    print("VERIFIED: Blee 2.1 Mesh v2 source wiring")
     print("- SQLite/WAL immutable event ledger + durable mesh queues")
     print("- Native foreground BLE mesh service + reboot recovery")
     print("- Persistent dedup + bounded store-and-forward courier path")
     print("- Offline notification + viem-verified financial acceptance")
-    print("- Connectivity-triggered sponsored relay client")
-    print("- Capacitor ledger-change bridge")
+    print("- Sender-funded EIP-1559 raw transaction prepared by Phone A")
+    print("- Any online mesh phone can broadcast; relay phone pays zero gas")
+    print("- Arc receipt is gossiped back through the BLE mesh")
     print("============================================================")
 
 

@@ -10,4 +10,18 @@ export type TransferAuthorization = {
   validBefore: string;
   nonce: Hex;
   signature: Hex;
+  broadcast?:
+    | {
+        mode: 'SENDER_FUNDED_RAW_TX';
+        chainId: number;
+        txNonce: number;
+        rawTransaction: Hex;
+        txHash: Hex;
+        gasLimit: string;
+        maxFeePerGas: string;
+        maxPriorityFeePerGas: string;
+        maxGasCostNative: string;
+        profileSyncedAt: number;
+      }
+    | { mode: 'AUTH_ONLY'; reason: string };
 };

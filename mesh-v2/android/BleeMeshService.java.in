@@ -39,9 +39,11 @@ import android.os.ParcelUuid;
 import android.util.Base64;
 import android.util.Log;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -66,10 +68,16 @@ public class BleeMeshService extends Service {
     private static final String CHANNEL_SERVICE = "blee_mesh_service";
     private static final String CHANNEL_PAYMENTS = "blee_payments";
     private static final int SERVICE_NOTIFICATION_ID = 24001;
-    private static final UUID SERVICE_UUID = UUID.fromString("50f57a10-7bd4-4b6a-bf45-blee20000001".replace("blee", "b1ee"));
+    private static final UUID SERVICE_UUID = UUID.fromString("50f57a10-7bd4-4b6a-bf45-b1ee20000001");
     private static final UUID WRITE_UUID = UUID.fromString("50f57a10-7bd4-4b6a-bf45-b1ee20000002");
     private static final long LOOP_MS = 4_000L;
     private static final long PEER_RETRY_MS = 8_000L;
+    private static final long SETTLEMENT_RETRY_MS = 12_000L;
+
+    // The APK never accepts an arbitrary RPC for automatic mesh broadcasting.
+    // A mesh courier can submit sender-signed bytes only to Blee's validated rail.
+    private static final long TRUSTED_CHAIN_ID = 5042002L;
+    private static final String TRUSTED_RPC = "https://rpc.testnet.arc.network";
 
     static volatile boolean running = false;
 
@@ -78,6 +86,7 @@ public class BleeMeshService extends Service {
     private final Map<String, BluetoothDevice> peers = Collections.synchronizedMap(new HashMap<String, BluetoothDevice>());
     private final Map<String, Long> lastConnect = Collections.synchronizedMap(new HashMap<String, Long>());
     private final Map<String, Assembly> assemblies = Collections.synchronizedMap(new HashMap<String, Assembly>());
+    private final Map<String, Long> settlementRetryAfter = Collections.synchronizedMap(new HashMap<String, Long>());
 
     private BleeMeshDb db;
     private String deviceId;
@@ -90,6 +99,7 @@ public class BleeMeshService extends Service {
     private ConnectivityManager connectivity;
     private volatile boolean networkAvailable = false;
     private volatile boolean scanning = false;
+    private volatile boolean settlementScheduled = false;
 
     public static void start(Context context) {
         Intent intent = new Intent(context, BleeMeshService.class);
@@ -134,7 +144,7 @@ public class BleeMeshService extends Service {
                 db.bootstrapOutgoing(deviceId, publicKey);
                 if (!scanning) startBluetooth();
                 pumpKnownPeers();
-                if (networkAvailable) io.execute(new Runnable() { @Override public void run() { attemptSponsoredSettlement(); } });
+                scheduleSenderFundedSettlement();
             } catch (Throwable error) {
                 Log.w(TAG, "mesh loop", error);
             } finally {
@@ -158,7 +168,7 @@ public class BleeMeshService extends Service {
     private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
         @Override public void onAvailable(Network network) {
             networkAvailable = hasInternet(network);
-            if (networkAvailable) io.execute(new Runnable() { @Override public void run() { attemptSponsoredSettlement(); } });
+            scheduleSenderFundedSettlement();
         }
         @Override public void onLost(Network network) {
             try {
@@ -167,14 +177,174 @@ public class BleeMeshService extends Service {
             } catch (Throwable ignored) { networkAvailable = false; }
         }
         @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) {
-            networkAvailable = capabilities != null && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+            networkAvailable = capabilities != null
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+            scheduleSenderFundedSettlement();
         }
     };
 
     private boolean hasInternet(Network network) {
         if (network == null || connectivity == null) return false;
         NetworkCapabilities c = connectivity.getNetworkCapabilities(network);
-        return c != null && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+        return c != null
+            && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+    }
+
+    private void scheduleSenderFundedSettlement() {
+        if (!networkAvailable || settlementScheduled || io.isShutdown()) return;
+        settlementScheduled = true;
+        io.execute(new Runnable() {
+            @Override public void run() {
+                try { attemptSenderFundedSettlement(); }
+                finally { settlementScheduled = false; }
+            }
+        });
+    }
+
+    /**
+     * Phone C never signs and never pays gas. It only forwards a sender-signed
+     * EIP-1559 raw transaction with eth_sendRawTransaction, then gossips the
+     * resulting chain receipt back into the nearby mesh.
+     */
+    private void attemptSenderFundedSettlement() {
+        if (!networkAvailable) return;
+        long now = System.currentTimeMillis();
+        List<String> candidates = db.settlementCandidates(now, 64);
+        for (String raw : candidates) {
+            try {
+                JSONObject packet = new JSONObject(raw);
+                String paymentId = packet.optString("paymentId", "");
+                if (paymentId.isEmpty()) continue;
+                Long retryAt = settlementRetryAfter.get(paymentId);
+                if (retryAt != null && retryAt > now) continue;
+
+                JSONObject payment = new JSONObject(packet.optString("payload", "{}"));
+                JSONObject auth = payment.optJSONObject("authorization");
+                if (auth == null) auth = payment.optJSONObject("auth");
+                if (auth == null) continue;
+                JSONObject broadcast = auth.optJSONObject("broadcast");
+                if (broadcast == null || !"SENDER_FUNDED_RAW_TX".equals(broadcast.optString("mode", ""))) continue;
+                if (broadcast.optLong("chainId", -1L) != TRUSTED_CHAIN_ID) continue;
+
+                String rawTx = broadcast.optString("rawTransaction", "");
+                String expectedHash = broadcast.optString("txHash", "");
+                if (!isHex(rawTx, 4, 262144) || !isTxHash(expectedHash)) continue;
+
+                JSONObject receipt = transactionReceipt(expectedHash);
+                if (receipt == null) {
+                    try {
+                        String returnedHash = sendRawTransaction(rawTx);
+                        if (returnedHash != null && isTxHash(returnedHash) && !returnedHash.equalsIgnoreCase(expectedHash)) {
+                            throw new IllegalStateException("RPC returned a different transaction hash");
+                        }
+                    } catch (Throwable broadcastError) {
+                        String message = broadcastError.getMessage() == null ? "broadcast failed" : broadcastError.getMessage();
+                        String lower = message.toLowerCase();
+                        boolean possiblyAlreadySubmitted = lower.contains("already known")
+                            || lower.contains("known transaction")
+                            || lower.contains("already imported")
+                            || lower.contains("nonce too low");
+                        if (!possiblyAlreadySubmitted) {
+                            settlementRetryAfter.put(paymentId, now + SETTLEMENT_RETRY_MS);
+                            db.markSettlementAttempt(paymentId, false, message);
+                            continue;
+                        }
+                    }
+                    try { Thread.sleep(650L); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                    receipt = transactionReceipt(expectedHash);
+                }
+
+                if (receipt == null) {
+                    settlementRetryAfter.put(paymentId, now + SETTLEMENT_RETRY_MS);
+                    db.markSettlementAttempt(paymentId, false, "sender-funded transaction pending");
+                    continue;
+                }
+
+                String status = receipt.optString("status", "");
+                if (!"0x1".equalsIgnoreCase(status)) {
+                    settlementRetryAfter.put(paymentId, now + 30_000L);
+                    db.markSettlementAttempt(paymentId, false, "sender-funded transaction reverted");
+                    continue;
+                }
+
+                JSONObject evidence = new JSONObject();
+                evidence.put("txHash", expectedHash);
+                evidence.put("chainId", TRUSTED_CHAIN_ID);
+                evidence.put("blockNumber", receipt.optString("blockNumber", ""));
+                evidence.put("status", status);
+                evidence.put("settlementMode", "SENDER_FUNDED_RAW_TX");
+                evidence.put("gasPaidBy", auth.optString("from", "sender"));
+                evidence.put("reportedAt", System.currentTimeMillis());
+                db.recordSettlementReceipt(packet, evidence, deviceId, publicKey);
+                db.markSettlementAttempt(paymentId, true, null);
+                settlementRetryAfter.remove(paymentId);
+                notifyLedgerChanged(paymentId, "SETTLEMENT_RECEIPT");
+            } catch (Throwable error) {
+                Log.d(TAG, "sender-funded settlement candidate skipped: " + error.getMessage());
+            }
+        }
+    }
+
+    private String sendRawTransaction(String rawTx) throws Exception {
+        Object result = rpc("eth_sendRawTransaction", new JSONArray().put(rawTx));
+        return result instanceof String ? (String) result : null;
+    }
+
+    private JSONObject transactionReceipt(String txHash) throws Exception {
+        Object result = rpc("eth_getTransactionReceipt", new JSONArray().put(txHash));
+        return result instanceof JSONObject ? (JSONObject) result : null;
+    }
+
+    private Object rpc(String method, JSONArray params) throws Exception {
+        URL url = new URL(TRUSTED_RPC);
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod("POST");
+        connection.setConnectTimeout(7000);
+        connection.setReadTimeout(12000);
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Content-Type", "application/json");
+        connection.setRequestProperty("Accept", "application/json");
+
+        JSONObject body = new JSONObject();
+        body.put("jsonrpc", "2.0");
+        body.put("id", 1);
+        body.put("method", method);
+        body.put("params", params);
+        byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
+        connection.setFixedLengthStreamingMode(bytes.length);
+        try (OutputStream out = connection.getOutputStream()) { out.write(bytes); }
+
+        int code = connection.getResponseCode();
+        InputStream stream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
+        StringBuilder text = new StringBuilder();
+        if (stream != null) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) text.append(line);
+            }
+        }
+        connection.disconnect();
+        if (code < 200 || code >= 300) throw new IllegalStateException("Arc RPC HTTP " + code + ": " + text);
+
+        JSONObject response = new JSONObject(text.toString());
+        JSONObject error = response.optJSONObject("error");
+        if (error != null) throw new IllegalStateException(error.optString("message", error.toString()));
+        Object result = response.opt("result");
+        return result == JSONObject.NULL ? null : result;
+    }
+
+    private static boolean isTxHash(String value) {
+        return value != null && value.matches("^0x[0-9a-fA-F]{64}$");
+    }
+
+    private static boolean isHex(String value, int minChars, int maxChars) {
+        return value != null
+            && value.length() >= minChars
+            && value.length() <= maxChars
+            && value.matches("^0x[0-9a-fA-F]+$")
+            && ((value.length() - 2) % 2 == 0);
     }
 
     private boolean bluetoothPermissionsGranted() {
@@ -318,7 +488,10 @@ public class BleeMeshService extends Service {
     }
 
     private final BluetoothGattServerCallback serverCallback = new BluetoothGattServerCallback() {
-        @Override public void onCharacteristicWriteRequest(BluetoothDevice device, int requestId, BluetoothGattCharacteristic characteristic, boolean preparedWrite, boolean responseNeeded, int offset, byte[] value) {
+        @Override public void onCharacteristicWriteRequest(
+            BluetoothDevice device, int requestId, BluetoothGattCharacteristic characteristic,
+            boolean preparedWrite, boolean responseNeeded, int offset, byte[] value
+        ) {
             int status = BluetoothGatt.GATT_FAILURE;
             try {
                 if (characteristic != null && WRITE_UUID.equals(characteristic.getUuid()) && value != null) {
@@ -358,6 +531,7 @@ public class BleeMeshService extends Service {
             BleeMeshDb.ProcessResult result = db.receive(raw, deviceId, publicKey);
             if (result.accepted && result.ledgerChanged) notifyLedgerChanged(result.paymentId, result.type);
             if (result.notificationTitle != null) paymentNotification(result.notificationTitle, result.notificationBody, result.paymentId);
+            if (result.accepted) scheduleSenderFundedSettlement();
             return result.accepted;
         } catch (Throwable error) {
             Log.w(TAG, "packet assembly failed", error);
@@ -371,61 +545,6 @@ public class BleeMeshService extends Service {
         intent.putExtra(EXTRA_PAYMENT_ID, paymentId == null ? "" : paymentId);
         intent.putExtra(EXTRA_EVENT_TYPE, type == null ? "" : type);
         sendBroadcast(intent);
-    }
-
-    private void attemptSponsoredSettlement() {
-        String endpoint = db.getKv("mesh.relay.endpoint");
-        String mode = db.getKv("mesh.relay.mode");
-        if (endpoint == null || endpoint.trim().isEmpty()) return;
-        if (mode == null || mode.trim().isEmpty()) mode = "SPONSORED_AUTO_RELAY";
-        if (!("SPONSORED_AUTO_RELAY".equals(mode) || "TESTNET_AUTO_RELAY".equals(mode))) return;
-        endpoint = endpoint.trim();
-        if (!endpoint.startsWith("https://")) return;
-
-        List<String> candidates = db.settlementCandidates(System.currentTimeMillis(), 4);
-        for (String raw : candidates) {
-            try {
-                JSONObject packet = new JSONObject(raw);
-                String paymentId = packet.optString("paymentId", "");
-                JSONObject request = new JSONObject();
-                request.put("protocol", "blee-mesh-v2");
-                request.put("mode", mode);
-                request.put("packet", packet);
-                JSONObject receipt = postJson(endpoint, request);
-                if (receipt != null && !receipt.optString("txHash", "").isEmpty()) {
-                    db.recordSettlementReceipt(packet, receipt, deviceId, publicKey);
-                    db.markSettlementAttempt(paymentId, true, null);
-                    notifyLedgerChanged(paymentId, "SETTLEMENT_RECEIPT");
-                }
-            } catch (Throwable error) {
-                try {
-                    JSONObject packet = new JSONObject(raw);
-                    db.markSettlementAttempt(packet.optString("paymentId", ""), false, error.getMessage());
-                } catch (Throwable ignored) {}
-            }
-        }
-    }
-
-    private JSONObject postJson(String endpoint, JSONObject body) throws Exception {
-        URL url = new URL(endpoint);
-        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-        connection.setRequestMethod("POST");
-        connection.setConnectTimeout(8000);
-        connection.setReadTimeout(15000);
-        connection.setDoOutput(true);
-        connection.setRequestProperty("Content-Type", "application/json");
-        connection.setRequestProperty("Accept", "application/json");
-        byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
-        connection.setFixedLengthStreamingMode(bytes.length);
-        try (OutputStream out = connection.getOutputStream()) { out.write(bytes); }
-        int code = connection.getResponseCode();
-        if (code < 200 || code >= 300) throw new IllegalStateException("Relay returned HTTP " + code);
-        StringBuilder text = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) text.append(line);
-        } finally { connection.disconnect(); }
-        return new JSONObject(text.toString());
     }
 
     private void createNotificationChannels() {
@@ -443,7 +562,9 @@ public class BleeMeshService extends Service {
     private Notification serviceNotification(String text) {
         Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
         PendingIntent pending = launch == null ? null : PendingIntent.getActivity(this, 0, launch, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new Notification.Builder(this, CHANNEL_SERVICE) : new Notification.Builder(this);
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            ? new Notification.Builder(this, CHANNEL_SERVICE)
+            : new Notification.Builder(this);
         builder.setContentTitle("Blee")
             .setContentText(text)
             .setSmallIcon(getApplicationInfo().icon)
@@ -460,9 +581,20 @@ public class BleeMeshService extends Service {
         if (manager == null) return;
         Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
         if (launch != null && paymentId != null) launch.putExtra("bleePaymentId", paymentId);
-        PendingIntent pending = launch == null ? null : PendingIntent.getActivity(this, paymentId == null ? 0 : paymentId.hashCode(), launch, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new Notification.Builder(this, CHANNEL_PAYMENTS) : new Notification.Builder(this);
-        builder.setContentTitle(title).setContentText(body).setSmallIcon(getApplicationInfo().icon).setAutoCancel(true).setCategory(Notification.CATEGORY_MESSAGE);
+        PendingIntent pending = launch == null ? null : PendingIntent.getActivity(
+            this,
+            paymentId == null ? 0 : paymentId.hashCode(),
+            launch,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            ? new Notification.Builder(this, CHANNEL_PAYMENTS)
+            : new Notification.Builder(this);
+        builder.setContentTitle(title)
+            .setContentText(body)
+            .setSmallIcon(getApplicationInfo().icon)
+            .setAutoCancel(true)
+            .setCategory(Notification.CATEGORY_MESSAGE);
         if (pending != null) builder.setContentIntent(pending);
         manager.notify(paymentId == null ? (int) System.currentTimeMillis() : paymentId.hashCode(), builder.build());
     }

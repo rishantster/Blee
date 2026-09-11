@@ -91,10 +91,9 @@ public class BleeMeshPlugin extends Plugin {
             result.put("running", BleeMeshService.running);
             result.put("protocol", "blee-mesh-v2");
             result.put("wallet", db.activeWallet());
-            String mode = db.getKv("mesh.relay.mode");
-            String endpoint = db.getKv("mesh.relay.endpoint");
-            result.put("relayMode", mode == null ? "SPONSORED_AUTO_RELAY" : mode);
-            result.put("relayConfigured", endpoint != null && endpoint.startsWith("https://"));
+            result.put("broadcastMode", "SENDER_FUNDED_RAW_TX");
+            result.put("senderPaysGas", true);
+            result.put("relayPaysGas", false);
             db.close();
             call.resolve(result);
         } catch (Throwable error) {
@@ -143,32 +142,6 @@ public class BleeMeshPlugin extends Plugin {
             call.resolve(result);
         } catch (Throwable error) {
             call.reject("Unable to accept verified Blee payment: " + error.getMessage());
-        }
-    }
-
-    @PluginMethod
-    public void configureRelay(PluginCall call) {
-        String mode = call.getString("mode", "SPONSORED_AUTO_RELAY");
-        String endpoint = call.getString("endpoint", "");
-        if (!("SPONSORED_AUTO_RELAY".equals(mode) || "TESTNET_AUTO_RELAY".equals(mode) || "USER_OPT_IN_RELAY".equals(mode))) {
-            call.reject("Unsupported relay mode");
-            return;
-        }
-        if (!endpoint.isEmpty() && !endpoint.startsWith("https://")) {
-            call.reject("Relay endpoint must use HTTPS");
-            return;
-        }
-        try {
-            BleeMeshDb db = new BleeMeshDb(getContext());
-            db.setKv("mesh.relay.mode", mode);
-            db.setKv("mesh.relay.endpoint", endpoint);
-            db.close();
-            JSObject result = new JSObject();
-            result.put("mode", mode);
-            result.put("configured", !endpoint.isEmpty());
-            call.resolve(result);
-        } catch (Throwable error) {
-            call.reject("Unable to configure relay: " + error.getMessage());
         }
     }
 }
