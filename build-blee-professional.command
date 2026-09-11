@@ -43,7 +43,11 @@ for required in \
   "$ROOT/mesh-v2/web/payments.ts.in" \
   "$ROOT/mesh-v2/web/atomicSigning.ts.in" \
   "$ROOT/ui-v4/parts/part00" \
-  "$ROOT/ui-v4/parts/part10"; do
+  "$ROOT/ui-v4/parts/part10" \
+  "$ROOT/ui-v5/parts/part00" \
+  "$ROOT/ui-v5/parts/part01" \
+  "$ROOT/ui-v5/parts/part02" \
+  "$ROOT/ui-v5/parts/part03"; do
   [ -e "$required" ] || { echo "ERROR: Missing $required"; exit 1; }
 done
 
