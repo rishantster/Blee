@@ -2,9 +2,9 @@
 
 Blee is an Android-first, self-custodial USDC payment wallet with native nearby/offline delivery, durable SQLite/WAL state and Arc settlement.
 
-## Canonical source
+## Canonical repository contract
 
-`main` is the only release/source-of-truth branch.
+`main` is the release/source-of-truth branch.
 
 There is one supported build entrypoint:
 
@@ -12,7 +12,9 @@ There is one supported build entrypoint:
 bash build-blee.command
 ```
 
-Do not use historical/versioned builders or APK names. The canonical build artifact is always:
+Historical builder filenames remain only as thin compatibility wrappers and delegate immediately to `build-blee.command`. They contain no independent build logic.
+
+The public APK artifact is always:
 
 ```text
 dist/Blee.apk
@@ -24,7 +26,9 @@ A SHA-256 file is produced alongside it when the host provides `shasum` or `sha2
 dist/Blee.apk.sha256
 ```
 
-Internal Android `versionCode` / `versionName` may still advance for upgrade compatibility. Those internal values must never change the public APK filename.
+Internal Android `versionCode` / `versionName` may advance for upgrade compatibility. Those internal values never change the public APK filename.
+
+Every canonical build runs `scripts/verify-canonical-build.py` before source materialization and again after all web/native hardening. This fails the build if a legacy builder regains independent logic, a versioned APK name reappears, or required protocol-hardening markers disappear.
 
 ## Product scope
 
