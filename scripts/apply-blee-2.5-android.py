@@ -35,12 +35,7 @@ def install_biometric(activity: Path, package: str) -> None:
 
 
 def harden_capacitor_reject_types(activity: Path) -> None:
-    """Capacitor PluginCall.reject accepts Exception, not arbitrary Throwable.
-
-    The biometric implementation intentionally catches broad failures around
-    Android keystore/biometric APIs, but the generated Java must narrow the
-    value passed into PluginCall.reject so javac can select the correct overload.
-    """
+    """Capacitor PluginCall.reject accepts Exception, not arbitrary Throwable."""
     target = activity.parent / "BleeBiometricPlugin.java"
     text = target.read_text()
     hits = text.count("catch (Throwable error)")
@@ -85,14 +80,16 @@ def generate_chime() -> None:
 def patch_activity(activity: Path) -> None:
     text = activity.read_text()
     package_end = text.find(';', text.find('package '))
-    imports = {
-        'import android.Manifest;': 'import android.Manifest;',
-        'import android.content.pm.PackageManager;': 'import android.content.pm.PackageManager;',
-        'import android.media.MediaPlayer;': 'import android.media.MediaPlayer;',
-        'import android.os.Build;': 'import android.os.Build;',
-    }
-    for marker, line in imports.items():
-        if marker not in text:
+    imports = (
+        'import android.Manifest;',
+        'import android.content.pm.PackageManager;',
+        'import android.media.MediaPlayer;',
+        'import android.os.Build;',
+        'import java.util.ArrayList;',
+        'import java.util.List;',
+    )
+    for line in imports:
+        if line not in text:
             text = text[:package_end+1] + '\n' + line + text[package_end+1:]
 
     if 'registerPlugin(BleeBiometricPlugin.class);' not in text:
@@ -102,7 +99,8 @@ def patch_activity(activity: Path) -> None:
         text = text.replace(marker, marker + '\n        registerPlugin(BleeBiometricPlugin.class);', 1)
 
     start_marker = 'BleeMeshService.start(this);'
-    addition = '''BleeMeshService.start(this);
+    addition = '''ensureBleeNearbyPermissions();
+        BleeMeshService.start(this);
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, 24002);
         }
@@ -112,11 +110,53 @@ def patch_activity(activity: Path) -> None:
             raise SystemExit("Blee 2.5: mesh service start marker missing")
         text = text.replace(start_marker, addition, 1)
 
-    if 'private static boolean bleeLaunchChimePlayed' not in text:
+    if 'BLEE_NEARBY_PERMISSION_REQUEST' not in text:
         close = text.rfind('}')
         method = '''
 
+    private static final int BLEE_NEARBY_PERMISSION_REQUEST = 24003;
     private static boolean bleeLaunchChimePlayed = false;
+
+    private void ensureBleeNearbyPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            List<String> missing = new ArrayList<>();
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                missing.add(Manifest.permission.BLUETOOTH_SCAN);
+            }
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                missing.add(Manifest.permission.BLUETOOTH_CONNECT);
+            }
+            if (checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED) {
+                missing.add(Manifest.permission.BLUETOOTH_ADVERTISE);
+            }
+            if (!missing.isEmpty()) {
+                requestPermissions(missing.toArray(new String[0]), BLEE_NEARBY_PERMISSION_REQUEST);
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+            && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[] { Manifest.permission.ACCESS_FINE_LOCATION }, BLEE_NEARBY_PERMISSION_REQUEST);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != BLEE_NEARBY_PERMISSION_REQUEST) return;
+        boolean granted = grantResults.length > 0;
+        for (int result : grantResults) {
+            if (result != PackageManager.PERMISSION_GRANTED) {
+                granted = false;
+                break;
+            }
+        }
+        if (granted) {
+            // The mesh service retries every few seconds, but recreating the
+            // Capacitor activity also re-arms the legacy nearby peer scanner
+            // after its first permission-gated start attempt.
+            BleeMeshService.start(this);
+            recreate();
+        }
+    }
 
     private void playBleeLaunchChime() {
         if (bleeLaunchChimePlayed) return;
@@ -133,6 +173,9 @@ def patch_activity(activity: Path) -> None:
     }
 '''
         text = text[:close] + method + '\n' + text[close:]
+    elif 'ensureBleeNearbyPermissions();' not in text:
+        raise SystemExit("Blee 2.5: nearby permission helper exists but is not called")
+
     activity.write_text(text)
 
 
@@ -172,7 +215,11 @@ def patch_notifications(activity: Path) -> None:
 
 def verify(activity: Path) -> None:
     text = activity.read_text()
-    for marker in ('BleeBiometricPlugin.class', 'POST_NOTIFICATIONS', 'playBleeLaunchChime()', 'R.raw.blee_open_chime'):
+    for marker in (
+        'BleeBiometricPlugin.class', 'POST_NOTIFICATIONS', 'playBleeLaunchChime()', 'R.raw.blee_open_chime',
+        'BLEE_NEARBY_PERMISSION_REQUEST', 'BLUETOOTH_SCAN', 'BLUETOOTH_CONNECT', 'BLUETOOTH_ADVERTISE',
+        'ensureBleeNearbyPermissions();', 'recreate();'
+    ):
         if marker not in text:
             raise SystemExit(f"Blee 2.5 Android activity feature missing: {marker}")
     plugin = activity.parent / "BleeBiometricPlugin.java"
@@ -185,7 +232,7 @@ def verify(activity: Path) -> None:
     if ptext.count('catch (Exception error)') < 5:
         raise SystemExit("Blee 2.5 biometric compile guard: Exception narrowing was not applied")
     manifest = (ANDROID / 'AndroidManifest.xml').read_text()
-    for marker in ('USE_BIOMETRIC', 'POST_NOTIFICATIONS'):
+    for marker in ('USE_BIOMETRIC', 'POST_NOTIFICATIONS', 'BLUETOOTH_SCAN', 'BLUETOOTH_CONNECT', 'BLUETOOTH_ADVERTISE'):
         if marker not in manifest:
             raise SystemExit(f"Blee 2.5 manifest missing {marker}")
     if not (ANDROID / 'res/raw/blee_open_chime.wav').is_file():
@@ -196,7 +243,7 @@ def verify(activity: Path) -> None:
     db = (activity.parent / 'BleeMeshDb.java').read_text()
     if 'Payment delivered' not in db:
         raise SystemExit("Blee 2.5 delivery notification missing")
-    print("Blee 2.5 Android verified: fingerprint unlock + notification permission/events + subtle cold-start chime")
+    print("Blee 2.5 Android verified: biometric + notifications + startup chime + runtime nearby permissions/rearm")
 
 
 def main() -> None:
