@@ -78,7 +78,7 @@ function normalizePrivateKey(value: string): Hex {
 }
 
 async function encryptAndStore(privateKey: Hex, passphrase: string) {
-  if (passphrase.length < 12) throw new Error("Use a passphrase of at least 12 characters");
+  if (passphrase.length < 8) throw new Error("Use a passphrase of at least 8 characters");
   const account = privateKeyToAccount(privateKey);
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
