@@ -23,7 +23,12 @@ def require_all(rel: str, markers: tuple[str, ...]) -> str:
 build = require_all(
     "build-blee.command",
     (
+        "CANONICAL_BLEE_BUILDER_V2",
         'FINAL_APK="$ROOT/dist/Blee.apk"',
+        "--exclude 'ARCHITECTURE.md'",
+        "--exclude 'UI_ARCHITECTURE.md'",
+        "--exclude 'scripts/apply-blee-*.py'",
+        "--exclude 'scripts/verify-*.py'",
         'apply-blee-final-hardening.py --web',
         'apply-blee-final-hardening.py --android',
         'apply-blee-final-hardening-2.py',
@@ -78,7 +83,6 @@ require_all(
     ),
 )
 
-# Historical builders must never become alternate build pipelines again.
 for rel in ("build-blee-macos.command", "build-blee-professional.command"):
     path = ROOT / rel
     if not path.exists():
