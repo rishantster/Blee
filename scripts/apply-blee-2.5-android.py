@@ -80,6 +80,15 @@ def generate_chime() -> None:
 
 def patch_activity(activity: Path) -> None:
     text = activity.read_text()
+
+    # Capacitor BridgeActivity exposes onStart() as public. Older generated Blee
+    # sources used protected, which is an illegal weaker override in Java. Repair
+    # that source in-place so this patch is idempotent and can resume a failed build.
+    visibility_hits = text.count('protected void onStart()')
+    if visibility_hits:
+        text = text.replace('protected void onStart()', 'public void onStart()')
+        print(f"Blee 2.5: normalized MainActivity.onStart visibility ({visibility_hits} legacy override repaired)")
+
     package_end = text.find(';', text.find('package '))
     imports = (
         'import android.Manifest;',
