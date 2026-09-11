@@ -10,8 +10,8 @@ This document defines the canonical Blee Android presentation model. It is inten
 - Home contains only the primary payment actions: **Send** and **Receive**.
 - **Nearby**, **Activity** and **Profile** are destinations in the persistent bottom navigation.
 - Settings are entered from Profile / the appropriate header control, not duplicated across Home.
-- The supplied Blee wordmark appears once per screen header at its natural aspect ratio.
-- The supplied standalone Blee logo is the app-launcher, Android/system identity and cold-launch animation asset.
+- Normal in-app headers use the supplied Blee wordmark at its natural aspect ratio.
+- The Android launcher and cold-launch screen use the supplied standalone Blee logo, not the wordmark and not generated/default Capacitor artwork.
 - No decorative radar, orbit, halo or concentric-ring artwork.
 - Monochrome only: off-white, white, black and neutral greys.
 - Financial state must never be encoded by colour alone.
@@ -24,7 +24,7 @@ This document defines the canonical Blee Android presentation model. It is inten
 
 ## Cold launch
 
-Cold start shows the supplied standalone Blee logo—not the wordmark—with a restrained ~680ms transition and the subtle Blee chime. No decorative rings or marketing carousel. Reduced-motion preference disables the visual motion but does not alter wallet/network behavior.
+Cold launch shows the supplied standalone Blee logo only, centered with its original geometry and a restrained one-time transition. The native Blee launch chime plays when the app genuinely enters the foreground, with lifecycle debouncing to prevent duplicate playback. No decorative rings or marketing carousel.
 
 ## Screen map
 
@@ -178,7 +178,7 @@ Send and Receive are actions, not permanent tabs.
 
 ## Motion
 
-- cold-start standalone-logo transition: restrained, ~680ms
+- cold-start standalone-logo transition: restrained, under ~700ms
 - screen transition: 180–240ms
 - sheet transition: 220–260ms
 - button press: subtle scale only
@@ -193,9 +193,9 @@ The canonical build must fail if any of these regress:
 - Show / Hide passphrase controls disappear
 - biometric capability gating disappears
 - notification permission/event plumbing disappears
-- supplied Blee wordmark is stretched/replaced by synthetic geometry
-- supplied standalone Blee logo is replaced in the launcher, Android system identity or cold-launch screen
-- cold-launch logo animation or launch chime is dropped
+- normal Blee wordmark is stretched/replaced by synthetic geometry
+- standalone Blee logo disappears from Android launcher or cold launch
+- cold-launch animation or native Blee chime disappears
 - Send or Receive disappears
 - inactivity/background auto-lock returns
 - courier-funded settlement returns
