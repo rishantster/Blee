@@ -46,23 +46,113 @@ def harden_sender_funded_service(activity: Path) -> None:
     path = activity.parent / "BleeMeshService.java"
     text = path.read_text()
 
-    # Do not let already-settled envelopes consume the first small settlement
-    # candidate window forever. The DB still bounds storage/expiry; the worker
-    # can inspect a larger local batch cheaply.
     text = text.replace(
         "List<String> candidates = db.settlementCandidates(now, 64);",
         "List<String> candidates = db.settlementCandidates(now, 512);",
         1,
     )
 
-    # Once this process has seen a successful chain receipt, stop re-submitting
-    # the same raw transaction every loop. A reboot may re-check once, which is
-    # harmless and useful for recovery.
     old = "db.markSettlementAttempt(paymentId, true, null);\n                settlementRetryAfter.remove(paymentId);"
     new = "db.markSettlementAttempt(paymentId, true, null);\n                settlementRetryAfter.put(paymentId, Long.MAX_VALUE);"
     if old not in text:
         raise SystemExit("Could not locate sender-funded settlement success marker")
     text = text.replace(old, new, 1)
+    path.write_text(text)
+
+
+def harden_mesh_db(activity: Path) -> None:
+    path = activity.parent / "BleeMeshDb.java"
+    text = path.read_text()
+
+    # Sender side: the mesh packet, QUEUED event and settlement job must either
+    # all exist or none exist. A process death cannot leave a transmissible
+    # outbox row without its corresponding durable ledger state.
+    old_sender = '''                try {
+                    JSONObject packet = packet(
+                        "PAYMENT_ENVELOPE", messageId, paymentId, destination,
+                        payment.toString(), now, expiry, 0, 6, 3, deviceId, publicKey
+                    );
+                    enqueue(packet);
+                    addEvent(paymentId, "QUEUED", now, deviceId, packet.toString());
+                    upsertSettlementJob(paymentId, auth.toString(), now);
+                } catch (Throwable ignored) {}
+'''
+    new_sender = '''                // BLEE_ATOMIC_OUTBOX_V1
+                SQLiteDatabase database = db();
+                boolean ownTransaction = !database.inTransaction();
+                if (ownTransaction) database.beginTransaction();
+                try {
+                    JSONObject packet = packet(
+                        "PAYMENT_ENVELOPE", messageId, paymentId, destination,
+                        payment.toString(), now, expiry, 0, 6, 3, deviceId, publicKey
+                    );
+                    enqueue(packet);
+                    addEvent(paymentId, "QUEUED", now, deviceId, packet.toString());
+                    upsertSettlementJob(paymentId, auth.toString(), now);
+                    if (ownTransaction) database.setTransactionSuccessful();
+                } catch (Throwable ignored) {
+                } finally {
+                    if (ownTransaction && database.inTransaction()) database.endTransaction();
+                }
+'''
+    if old_sender not in text:
+        raise SystemExit("Could not locate mesh sender persistence block")
+    text = text.replace(old_sender, new_sender, 1)
+
+    # Recipient side: incoming payment projection, RECIPIENT_RECEIVED event and
+    # the durable DELIVERY_ACK outbox entry commit in one SQLite transaction.
+    # The transport cannot ACK a payment that was not durably recorded.
+    start = text.find('            if (!paymentExists("incoming:" + paymentId)) {')
+    end_marker = '            return new AcceptedPayment(true, paymentId);'
+    end = text.find(end_marker, start)
+    if start < 0 or end < 0:
+        raise SystemExit("Could not locate recipient persistence/ACK block")
+    end += len(end_marker)
+    old_recipient = text[start:end]
+    new_recipient = '''            // BLEE_ATOMIC_RECIPIENT_ACK_V1
+            SQLiteDatabase database = db();
+            boolean ownTransaction = !database.inTransaction();
+            if (ownTransaction) database.beginTransaction();
+            try {
+                if (!paymentExists("incoming:" + paymentId)) {
+                    payment.put("direction", "incoming");
+                    payment.put("state", "delivered_offline");
+                    payment.put("updatedAt", now);
+                    if (!payment.has("createdAt")) payment.put("createdAt", packet.optLong("createdAt", now));
+
+                    ContentValues pv = new ContentValues();
+                    pv.put("payment_key", "incoming:" + paymentId);
+                    pv.put("payment_id", paymentId);
+                    pv.put("direction", "incoming");
+                    pv.put("state", "delivered_offline");
+                    pv.put("created_at", payment.optLong("createdAt", now));
+                    pv.put("updated_at", now);
+                    pv.put("payload", payment.toString());
+                    if (database.insertWithOnConflict("payments", null, pv, SQLiteDatabase.CONFLICT_REPLACE) == -1) throw new IllegalStateException("Incoming payment persistence failed");
+                    addEvent(paymentId, "RECIPIENT_RECEIVED", now, packet.optString("originDeviceId", null), raw);
+                }
+
+                String senderWallet = extractSender(payment);
+                if (!senderWallet.isEmpty()) {
+                    JSONObject ackPayload = new JSONObject();
+                    ackPayload.put("paymentId", paymentId);
+                    ackPayload.put("receivedAt", now);
+                    ackPayload.put("recipientWallet", wallet);
+                    String ackId = "ack:" + paymentId + ":" + wallet;
+                    JSONObject ack = packet(
+                        "DELIVERY_ACK", ackId, paymentId, senderWallet,
+                        ackPayload.toString(), now, packet.optLong("expiresAt", now + 3600000L),
+                        0, 6, 3, localDeviceId, localPublicKey
+                    );
+                    enqueue(ack);
+                }
+                if (ownTransaction) database.setTransactionSuccessful();
+            } finally {
+                if (ownTransaction && database.inTransaction()) database.endTransaction();
+            }
+            return new AcceptedPayment(true, paymentId);'''
+    text = text[:start] + new_recipient + text[end:]
+
     path.write_text(text)
 
 
@@ -201,16 +291,28 @@ def verify(activity: Path, package: str) -> None:
     if missing:
         raise SystemExit(f"Sender-funded Android service incomplete: {missing}")
 
+    mesh_db = (activity.parent / "BleeMeshDb.java").read_text()
+    required_db = (
+        "BLEE_ATOMIC_OUTBOX_V1",
+        "BLEE_ATOMIC_RECIPIENT_ACK_V1",
+        "database.beginTransaction()",
+        "database.setTransactionSuccessful()",
+    )
+    missing_db = [marker for marker in required_db if marker not in mesh_db]
+    if missing_db:
+        raise SystemExit(f"Atomic Mesh DB persistence incomplete: {missing_db}")
+
 
 def main() -> None:
     activity = locate_main_activity()
     package = app_package(activity)
     install_templates(activity, package)
     harden_sender_funded_service(activity)
+    harden_mesh_db(activity)
     patch_main_activity(activity)
     patch_manifest(package)
     verify(activity, package)
-    print(f"Blee 2.1 Mesh v2 sender-funded Android service installed for {package}.")
+    print(f"Blee 2.1.1 Mesh v2 atomic sender-funded Android service installed for {package}.")
 
 
 if __name__ == "__main__":
