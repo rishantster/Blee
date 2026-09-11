@@ -28,7 +28,26 @@ def patch_store() -> None:
 def patch_payments() -> None:
     # This is deliberately applied AFTER the legacy/professional overlays. It is
     # the canonical settlement implementation for Blee 2.1.
-    copy_required(MESH / "web" / "payments.ts.in", ROOT / "src/lib/payments.ts")
+    source = MESH / "web" / "payments.ts.in"
+    target = ROOT / "src/lib/payments.ts"
+    if not source.exists():
+        raise SystemExit("Missing Blee Mesh v2 sender-funded payments template")
+    text = source.read_text()
+
+    # nextNonce is itself persisted before the caller persists the payment. It
+    # must therefore participate in the next reservation after process death,
+    # otherwise a crash between signing and payment persistence could reuse an
+    # EOA transaction nonce.
+    old = "const txNonce = Math.max(profile.chainNonce, maxActive + 1, maxMemory + 1);"
+    new = "const txNonce = Math.max(profile.chainNonce, profile.nextNonce, maxActive + 1, maxMemory + 1);"
+    if old in text:
+        text = text.replace(old, new, 1)
+    elif new not in text:
+        raise SystemExit("Could not locate sender-funded transaction nonce reservation")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text)
+    print(f"mesh v2 overlay: {target.relative_to(ROOT)}")
 
 
 def patch_runtime() -> None:
@@ -100,6 +119,7 @@ def verify() -> None:
             "sendRawTransaction",
             "refreshSenderFundedSettlementProfile",
             "NO_SYNCED_NONCE_OR_FEE_PROFILE",
+            "profile.nextNonce",
         ),
         "src/components/BleeRuntime.tsx": (
             "BleeMesh",
