@@ -88,6 +88,13 @@ override = r'''
   object-fit: contain !important;
   object-position: center !important;
   transform-origin: center center;
+  animation: blee-launch-logo 680ms cubic-bezier(.22,.8,.24,1) both !important;
+  will-change: transform, opacity;
+}
+@media (prefers-reduced-motion: reduce) {
+  .splash-screen .splash-logo {
+    animation: none !important;
+  }
 }
 '''
 CSS.write_text(text + "\n\n" + override + "\n")
@@ -100,5 +107,5 @@ if LOGO.read_bytes() != (PUBLIC / "blee-mark.svg").read_bytes():
     raise SystemExit("Blee brand install: legacy mark alias does not match canonical logo")
 
 print("Blee brand: normal headers use the supplied wordmark at natural aspect ratio")
-print("Blee brand: cold launch uses the supplied standalone logo with preserved geometry")
+print("Blee brand: cold launch uses the supplied standalone logo with preserved geometry + subtle animation")
 print("Blee brand: canonical logo staged for Android launcher identity")
