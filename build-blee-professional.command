@@ -20,6 +20,8 @@ for required in \
   "$BASE_BUILDER" \
   "$ROOT/ARCHITECTURE.md" \
   "$ROOT/UI_ARCHITECTURE.md" \
+  "$ROOT/brand-assets/blee-wordmark.svg" \
+  "$ROOT/brand-assets/blee-mark.svg" \
   "$ROOT/scripts/apply-blee-professional.py" \
   "$ROOT/scripts/apply-blee-1.4.py" \
   "$ROOT/scripts/apply-blee-1.4-finalize.py" \
@@ -31,6 +33,8 @@ for required in \
   "$ROOT/scripts/apply-blee-2.3.py" \
   "$ROOT/scripts/apply-blee-2.3-ringfix.py" \
   "$ROOT/scripts/apply-blee-2.4.py" \
+  "$ROOT/scripts/apply-blee-original-brand.py" \
+  "$ROOT/scripts/verify-blee-original-brand.py" \
   "$ROOT/scripts/verify-blee-mesh-v2.py" \
   "$ROOT/mesh-v2/web/payments.ts.in" \
   "$ROOT/mesh-v2/web/atomicSigning.ts.in" \
@@ -60,13 +64,13 @@ for old, new in replacements.items():
     text = text.replace(old, new, 1)
 
 anchor = '''echo "Applying Blee 1.1 wallet recovery + custom network support..."\npython3 scripts/apply-blee-1.1.py\n'''
-addition = anchor + '''\necho "Applying Blee 1.3 identity, QR, discovery and profile UX..."\npython3 scripts/apply-blee-professional.py\n\necho "Applying Blee 1.4 brand and ledger timestamp patch..."\npython3 scripts/apply-blee-1.4.py\npython3 scripts/apply-blee-1.4-finalize.py\n\necho "Applying Blee Mesh v2 + crash-atomic sender-funded settlement..."\npython3 scripts/apply-blee-mesh-v2.py\n\necho "Applying Blee 2.2 functional hardening..."\npython3 scripts/apply-blee-2.2.py\n\necho "Applying Blee 2.3 legacy compatibility cleanup..."\npython3 scripts/apply-blee-2.3.py\npython3 scripts/apply-blee-2.3-ringfix.py\n\necho "Replacing legacy presentation with Blee 2.4 ground-up product UI..."\npython3 scripts/apply-blee-2.4.py\n'''
+addition = anchor + '''\necho "Applying Blee 1.3 identity, QR, discovery and profile UX..."\npython3 scripts/apply-blee-professional.py\n\necho "Applying Blee 1.4 brand and ledger timestamp patch..."\npython3 scripts/apply-blee-1.4.py\npython3 scripts/apply-blee-1.4-finalize.py\n\necho "Applying Blee Mesh v2 + crash-atomic sender-funded settlement..."\npython3 scripts/apply-blee-mesh-v2.py\n\necho "Applying Blee 2.2 functional hardening..."\npython3 scripts/apply-blee-2.2.py\n\necho "Applying Blee 2.3 legacy compatibility cleanup..."\npython3 scripts/apply-blee-2.3.py\npython3 scripts/apply-blee-2.3-ringfix.py\n\necho "Replacing legacy presentation with Blee 2.4 ground-up product UI..."\npython3 scripts/apply-blee-2.4.py\n\necho "Installing original supplied Blee wordmark + mark..."\npython3 scripts/apply-blee-original-brand.py\n'''
 if anchor not in text:
     raise SystemExit('Blee 2.4 builder could not locate Blee 1.1 overlay stage')
 text = text.replace(anchor, addition, 1)
 
 compile_anchor = 'echo "Compiling APK..."'
-compile_addition = '''echo "Applying supplied Blee launcher mark..."\npython3 scripts/apply-blee-launcher-1.4.py\n\necho "Installing Blee Mesh v2 native Android service..."\npython3 scripts/apply-blee-mesh-v2-android.py\n\necho "Hardening Bluetooth discovery..."\npython3 scripts/apply-blee-2.2-android.py\n\necho "Verifying final Blee 2.4 source + native wiring..."\npython3 scripts/verify-blee-mesh-v2.py\n\necho "Compiling APK..."'''
+compile_addition = '''echo "Applying original Blee launcher mark..."\npython3 scripts/apply-blee-launcher-1.4.py\n\necho "Verifying original Blee brand assets..."\npython3 scripts/verify-blee-original-brand.py\n\necho "Installing Blee Mesh v2 native Android service..."\npython3 scripts/apply-blee-mesh-v2-android.py\n\necho "Hardening Bluetooth discovery..."\npython3 scripts/apply-blee-2.2-android.py\n\necho "Verifying final Blee 2.4 source + native wiring..."\npython3 scripts/verify-blee-mesh-v2.py\n\necho "Compiling APK..."'''
 if compile_anchor not in text:
     raise SystemExit('Blee 2.4 builder could not locate Android compile stage')
 text = text.replace(compile_anchor, compile_addition, 1)
@@ -81,6 +85,7 @@ echo "Building Blee 2.4 — ground-up production UI / Mesh v2"
 echo "============================================================"
 echo "Architecture: ARCHITECTURE.md"
 echo "UI contract: UI_ARCHITECTURE.md"
+echo "Brand: original supplied Blee wordmark + mark"
 bash "$INNER_BUILDER"
 
 APK="$ROOT/dist/$EXPECTED_APK"
