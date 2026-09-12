@@ -1,9 +1,12 @@
     // BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1
     // BLEE_RADIO_ARBITRATION_V2
+    // BLEE_BITCHAT_ANDROID_GATT_PARITY_V1
     private static final int BLE_MAX_CLIENT_LINKS = 1;
     private static final int BLE_MAX_CANDIDATES = 24;
     private static final long BLE_CONNECT_RATE_MS = 650L;
-    private static final long BLE_CANDIDATE_STALE_MS = 30_000L;
+    private static final long BLE_CANDIDATE_STALE_MS = 8_000L;
+    private static final long BLE_CONNECT_FRESHNESS_MS = 4_000L;
+    private static final long BLE_GATT_CONNECT_TIMEOUT_MS = 30_000L;
     private static final long BLE_DISCONNECT_SETTLE_MS = 1_800L;
     private static final long BLE_GATT_STALL_MS = 15_000L;
     private static final long BLE_SCAN_STALL_MS = 25_000L;
@@ -71,14 +74,16 @@
 
     private boolean shouldInitiateCandidate(BleCandidate candidate) {
         if (candidate == null) return false;
+        Integer remoteToken = peerRoleTokens.get(candidate.address);
+        int localToken = localRoleToken();
+        // A controller can occasionally surface its own/stale advertisement.
+        // Never try to establish a GATT link to our own stable role token.
+        if (remoteToken != null && localToken == remoteToken) return false;
         if (candidate.hasPacket) return true;
         // If this phone cannot currently advertise, it cannot wait passively for
         // the peer to discover it. Scanner-first mode must own the central role.
         if (!advertising) return true;
-        Integer remoteToken = peerRoleTokens.get(candidate.address);
         if (remoteToken == null) return true; // backward-compatible with older Blee builds
-        int localToken = localRoleToken();
-        if (localToken == remoteToken) return true; // extremely unlikely hash collision
         return localToken < remoteToken;
     }
 
@@ -131,7 +136,7 @@
         bleCandidates.put(address, new BleCandidate(device, address, rssi, seenAt, needsIdentity, hasPacket));
         pruneBleCandidates(now);
         trimBleCandidates(now);
-        long admissionDelay = hasPacket ? 0L : 100L + Math.abs(address.hashCode() % 350);
+        long admissionDelay = hasPacket ? 0L : 75L + Math.abs(address.hashCode() % 175);
         requestConnectionPump(admissionDelay);
     }
 
@@ -180,6 +185,9 @@
             boolean stillNeedsIdentity = identityAt == null || now - identityAt > 45_000L;
             boolean stillHasPacket = db != null && !db.duePacketsForPeer(now, c.address, 1).isEmpty();
             if (!stillNeedsIdentity && !stillHasPacket) { bleCandidates.remove(c.address); continue; }
+            // Match Bitchat Android's connect-from-current-scan behavior. A remembered
+            // BluetoothDevice/MAC is not connection-worthy once the advertisement is old.
+            if (now - c.seenAt > BLE_CONNECT_FRESHNESS_MS) { bleCandidates.remove(c.address); continue; }
             long cool = bleCooldownUntil.containsKey(c.address) ? bleCooldownUntil.get(c.address) : 0L;
             long settle = bleDisconnectUntil.containsKey(c.address) ? bleDisconnectUntil.get(c.address) : 0L;
             if (now < cool || now < settle) continue;
@@ -200,6 +208,7 @@
         synchronized (bleCandidates) {
             for (BleCandidate c : bleCandidates.values()) {
                 if (bleLinkStates.containsKey(c.address) || !shouldInitiateCandidate(c)) continue;
+                if (now - c.seenAt > BLE_CONNECT_FRESHNESS_MS) continue;
                 long at = global;
                 if (bleCooldownUntil.containsKey(c.address)) at = Math.max(at, bleCooldownUntil.get(c.address));
                 if (bleDisconnectUntil.containsKey(c.address)) at = Math.max(at, bleDisconnectUntil.get(c.address));
@@ -249,35 +258,28 @@
 
     private BluetoothGatt connectGattReliable(BluetoothDevice device) {
         // BLEE_SAFE_GATT_BOOTSTRAP_1M_V1
-        // Do not negotiate a multi-PHY mask during connection establishment.
-        // Vendor stacks are most interoperable when the initial LE link comes up
-        // on the mandatory 1M PHY; higher PHYs are an optimization, not discovery.
+        // Use the same direct LE bootstrap as Bitchat Android: autoConnect=false,
+        // TRANSPORT_LE, and no speculative PHY negotiation before STATE_CONNECTED.
         return device.connectGatt(this, false, clientCallback, BluetoothDevice.TRANSPORT_LE);
     }
 
     private void pauseScanForGatt() {
-        if (scanner == null || !scanning) return;
-        try { scanner.stopScan(scanCallback); } catch (Throwable ignored) {}
-        scanning = false;
-        gattScanPaused = true;
-        diagLastPhase = "gatt_radio_handoff";
+        // gatt_radio_handoff compatibility marker. Bitchat Android keeps scanning
+        // while the direct GATT link is being established; stopping the scanner
+        // can invalidate useful controller state on some vendor stacks.
+        gattScanPaused = false;
     }
 
     private void resumeRadioAfterGatt() {
-        if (!gattScanPaused) return;
+        // Scanning is intentionally continuous through connection establishment.
         gattScanPaused = false;
-        handler.postDelayed(() -> {
-            if (!bluetoothStopping && clientGatts.isEmpty() && bleLinkStates.isEmpty()) startBluetooth();
-        }, 350L);
     }
 
     private void beginGattConnection(final BleCandidate c) {
         if (clientGatts.containsKey(c.address)) { bleLinkStates.remove(c.address); requestConnectionPump(250L); return; }
-        pauseScanForGatt();
-        // Give the controller a short quiet window between stopping a low-latency
-        // scan and opening a central GATT link. This avoids common vendor-stack
-        // stalls without depending on a manufacturer/model allowlist.
-        handler.postDelayed(() -> openGattConnection(c), 220L);
+        // BLEE_BITCHAT_ANDROID_GATT_PARITY_V1: connect directly from the fresh scan
+        // result. Do not stop scanning and do not insert an artificial radio gap.
+        openGattConnection(c);
     }
 
     private void openGattConnection(BleCandidate c) {
@@ -300,7 +302,7 @@
                 return;
             }
             clientGatts.put(c.address, gatt);
-            touchGatt(gatt);
+            scheduleGattConnectTimeout(gatt, c.address);
         } catch (Throwable error) {
             markBleFailure(c.address, now); diagLastPhase = "gatt_connect_exception";
             diagLastGattError = error.getMessage() == null ? error.toString() : error.getMessage();
@@ -308,6 +310,17 @@
             resumeRadioAfterGatt();
             requestConnectionPump(1_000L);
         }
+    }
+
+    private void scheduleGattConnectTimeout(final BluetoothGatt gatt, final String address) {
+        handler.postDelayed(() -> {
+            if (clientGatts.get(address) != gatt) return;
+            if (!"CONNECTING".equals(bleLinkStates.get(address))) return;
+            diagLastPhase = "gatt_connect_timeout";
+            diagLastGattError = "No Android GATT connection callback for " + BLE_GATT_CONNECT_TIMEOUT_MS + "ms";
+            diagLastError = diagLastGattError;
+            failGatt(gatt, "GATT connect timeout");
+        }, BLE_GATT_CONNECT_TIMEOUT_MS);
     }
 
     private void handleClientConnectionState(BluetoothGatt gatt, int status, int newState) {
@@ -323,16 +336,26 @@
             bleLinkStates.put(address, "CONNECTED"); bleFailures.remove(address); bleCooldownUntil.remove(address); bleDisconnectUntil.remove(address);
             touchGatt(gatt); diagGattConnected++; diagLastPhase = "gatt_connected"; diagLastGattError = ""; diagLastError = "";
             try { gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH); } catch (Throwable ignored) {}
-            try { if (!gatt.discoverServices()) failGatt(gatt, "discoverServices rejected"); }
-            catch (Throwable error) { failGatt(gatt, "discoverServices threw"); }
+            // Let the controller settle before service discovery. Bitchat Android
+            // likewise sequences post-connect GATT work instead of firing it in
+            // the same connection-state callback.
+            handler.postDelayed(() -> {
+                if (clientGatts.get(address) != gatt || !"CONNECTED".equals(bleLinkStates.get(address))) return;
+                try { if (!gatt.discoverServices()) failGatt(gatt, "discoverServices rejected"); }
+                catch (Throwable error) { failGatt(gatt, "discoverServices threw"); }
+            }, 200L);
             return;
         }
         if (newState == BluetoothProfile.STATE_DISCONNECTED) {
             boolean established = "CONNECTED".equals(bleLinkStates.get(address));
+            if (!established) {
+                diagLastGattError = "disconnect status=" + status;
+                diagLastError = diagLastGattError;
+            }
             finishGatt(gatt, !established, "disconnect status=" + status); return;
         }
         if (status != BluetoothGatt.GATT_SUCCESS) failGatt(gatt, "connection status=" + status);
-        else touchGatt(gatt);
+        else if ("CONNECTED".equals(bleLinkStates.get(address))) touchGatt(gatt);
     }
 
     private void touchGatt(final BluetoothGatt gatt) {
@@ -347,15 +370,16 @@
     private void scheduleGattWatchdog(final BluetoothGatt gatt, final String address, long delay) {
         handler.postDelayed(() -> {
             if (clientGatts.get(address) != gatt) { gattWatchdogDueAt.remove(address); return; }
+            if (!"CONNECTED".equals(bleLinkStates.get(address))) { gattWatchdogDueAt.remove(address); return; }
             long now = System.currentTimeMillis(); Long progress = gattProgressAt.get(address);
             if (progress != null && now - progress < BLE_GATT_STALL_MS) {
                 long next = Math.max(250L, BLE_GATT_STALL_MS - (now - progress));
                 gattWatchdogDueAt.put(address, now + next); scheduleGattWatchdog(gatt, address, next); return;
             }
-            gattWatchdogDueAt.remove(address); diagLastPhase = "gatt_stall_timeout";
-            diagLastGattError = "No GATT progress for " + BLE_GATT_STALL_MS + "ms";
+            gattWatchdogDueAt.remove(address); diagLastPhase = "gatt_operation_timeout";
+            diagLastGattError = "No connected GATT operation progress for " + BLE_GATT_STALL_MS + "ms";
             diagLastError = diagLastGattError;
-            failGatt(gatt, "GATT progress timeout");
+            failGatt(gatt, "GATT operation timeout");
         }, Math.max(250L, delay));
     }
 
