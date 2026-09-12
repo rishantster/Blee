@@ -16,18 +16,23 @@ rm -f "$ROOT/dist"/*.apk "$ROOT/dist"/*.apk.sha256 2>/dev/null || true
 python3 scripts/verify-canonical-build.py
 
 case "$(uname -m)" in
-  arm64)
-    CLI_ARCHIVE="commandlinetools-mac_arm64-${CLI_VERSION}_latest.zip"
-    CLI_SHA256="835b62a26162b229b441d1f6d4680383815a270809eb33522c0d480fa5002c4e"
-    ADOPTIUM_ARCH="aarch64"
-    ;;
-  x86_64)
-    CLI_ARCHIVE="commandlinetools-mac_x86_64-${CLI_VERSION}_latest.zip"
-    CLI_SHA256="c5a6378ab5cf7e0d5701921405115befff13e9ff7417fb588389338f8bd050f3"
-    ADOPTIUM_ARCH="x64"
-    ;;
-  *) echo "Unsupported Mac architecture: $(uname -m)"; exit 1 ;;
+  arm64|aarch64) ADOPTIUM_ARCH="aarch64" ;;
+  x86_64) ADOPTIUM_ARCH="x64" ;;
+  *) echo "Unsupported architecture: $(uname -m)"; exit 1 ;;
 esac
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  case "$(uname -m)" in
+    arm64)
+      CLI_ARCHIVE="commandlinetools-mac_arm64-${CLI_VERSION}_latest.zip"
+      CLI_SHA256="835b62a26162b229b441d1f6d4680383815a270809eb33522c0d480fa5002c4e"
+      ;;
+    x86_64)
+      CLI_ARCHIVE="commandlinetools-mac_x86_64-${CLI_VERSION}_latest.zip"
+      CLI_SHA256="c5a6378ab5cf7e0d5701921405115befff13e9ff7417fb588389338f8bd050f3"
+      ;;
+  esac
+fi
 
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
   echo "Node.js/npm are required. Install Node 22+ and rerun."
@@ -84,7 +89,11 @@ echo "npm: $(npm --version)"
 echo "Java:"; java -version
 
 mkdir -p "$SDK_ROOT/cmdline-tools"
-if [ ! -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+if ! command -v sdkmanager >/dev/null 2>&1 && [ ! -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+  if [ "$(uname -s)" != "Darwin" ]; then
+    echo "Android sdkmanager is required on $(uname -s). Configure ANDROID_HOME or add sdkmanager to PATH."
+    exit 1
+  fi
   TMP_SDK="$(mktemp -d)"
   trap 'rm -rf "${TMP_JDK:-}" "${TMP_SDK:-}"' EXIT
   echo "Installing Android command-line tools..."
