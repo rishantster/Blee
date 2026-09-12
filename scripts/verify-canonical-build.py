@@ -183,6 +183,8 @@ require_all(
         "private boolean handleIdentityRead",
         "if (identityResolved) writeLocalIdentity(gatt)",
         "private void writeLocalIdentity(BluetoothGatt gatt)",
+        "identity.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE",
+        "legacy read-only peer may reject this optional write",
         "PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_WRITE",
         "IDENTITY_UUID.equals(characteristic.getUuid()) && value != null",
         "continueAfterIdentity",
