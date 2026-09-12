@@ -5,7 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-FINAL_APK="$ROOT/dist/Blee.apk"
+APP_VERSION="2.6.0"
+FINAL_APK="$ROOT/dist/Blee-${APP_VERSION}.apk"
 SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 TOOLS_ROOT="$ROOT/.blee-tools"
 CLI_VERSION="15859902"
@@ -88,7 +89,7 @@ fi
 
 echo "============================================================"
 echo "Building Blee"
-echo "Canonical artifact: dist/Blee.apk"
+echo "Canonical artifact: dist/Blee-${APP_VERSION}.apk"
 echo "============================================================"
 echo "Node: $(node --version)"
 echo "npm: $(npm --version)"
@@ -220,8 +221,8 @@ from pathlib import Path
 import re
 gradle=Path('android/app/build.gradle')
 g=gradle.read_text()
-g=re.sub(r'versionCode\s+\d+', 'versionCode 15', g)
-g=re.sub(r'versionName\s+"[^"]+"', 'versionName "2.5.1"', g)
+g=re.sub(r'versionCode\s+\d+', 'versionCode 16', g)
+g=re.sub(r'versionName\s+"[^"]+"', 'versionName "2.6.0"', g)
 gradle.write_text(g)
 PY
 
@@ -256,12 +257,12 @@ mkdir -p "$ROOT/dist"
 rm -f "$ROOT/dist"/*.apk "$ROOT/dist"/*.apk.sha256 2>/dev/null || true
 cp "$APK" "$FINAL_APK"
 
-if find "$ROOT/dist" -maxdepth 1 -type f -name 'Blee-*.apk' | grep -q .; then
-  echo "ERROR: versioned APK survived canonical build"
+[ -f "$FINAL_APK" ] || { echo "ERROR: versioned Blee APK was not produced: $FINAL_APK"; exit 1; }
+[ "$(find "$ROOT/dist" -maxdepth 1 -type f -name '*.apk' | wc -l | tr -d ' ')" = "1" ] || {
+  echo "ERROR: dist must contain exactly one APK"
   find "$ROOT/dist" -maxdepth 1 -type f -name '*.apk' -print
   exit 1
-fi
-[ -f "$FINAL_APK" ] || { echo "ERROR: canonical Blee.apk was not produced"; exit 1; }
+}
 
 if command -v shasum >/dev/null 2>&1; then
   shasum -a 256 "$FINAL_APK" > "$FINAL_APK.sha256"

@@ -328,7 +328,14 @@ def patch_service(native_dir: Path) -> None:
             BluetoothGattService service = gatt.getService(SERVICE_UUID);
             BluetoothGattCharacteristic identity = service == null ? null : service.getCharacteristic(IDENTITY_UUID);
             byte[] payload = localIdentityPayload();
-            if (identity == null || payload.length != 20) { closeGatt(gatt); return; }
+            // Reciprocal identity was introduced in 2.6. Older peers expose a
+            // read-only characteristic; keep payment delivery compatible after
+            // their identity has already been successfully authenticated.
+            if (identity == null || payload.length != 20
+                || (identity.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0) {
+                continueAfterIdentity(gatt);
+                return;
+            }
             identity.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
             boolean started;
             if (Build.VERSION.SDK_INT >= 33) {
@@ -337,8 +344,8 @@ def patch_service(native_dir: Path) -> None:
                 identity.setValue(payload);
                 started = gatt.writeCharacteristic(identity);
             }
-            if (!started) closeGatt(gatt);
-        } catch (Throwable ignored) { closeGatt(gatt); }
+            if (!started) continueAfterIdentity(gatt);
+        } catch (Throwable ignored) { continueAfterIdentity(gatt); }
     }
 
 '''
@@ -473,8 +480,10 @@ def patch_service(native_dir: Path) -> None:
             SendState state = SendState.forGatt(gatt);'''
     write_callback_new = '''        @Override public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
             if (characteristic != null && IDENTITY_UUID.equals(characteristic.getUuid())) {
-                if (status == BluetoothGatt.GATT_SUCCESS) continueAfterIdentity(gatt);
-                else closeGatt(gatt);
+                // The remote identity was validated by the preceding read. A
+                // legacy read-only peer may reject this optional write, but its
+                // queued payment must still continue to MTU negotiation.
+                continueAfterIdentity(gatt);
                 return;
             }
             SendState state = SendState.forGatt(gatt);'''
@@ -572,6 +581,8 @@ def verify(native_dir: Path) -> None:
         "private boolean handleIdentityRead",
         "if (identityResolved) writeLocalIdentity(gatt)",
         "private void writeLocalIdentity(BluetoothGatt gatt)",
+        "identity.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE",
+        "legacy read-only peer may reject this optional write",
         "PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_WRITE",
         "IDENTITY_UUID.equals(characteristic.getUuid()) && value != null",
         "continueAfterIdentity",
@@ -599,6 +610,14 @@ def verify(native_dir: Path) -> None:
         raise SystemExit("Blee BLE v4: service discovery does not immediately read identity")
     if "int chunkSize = 120" in service:
         raise SystemExit("Blee BLE v4: packet frames still ignore the negotiated MTU")
+
+    write_callback_start = service.find("@Override public void onCharacteristicWrite(BluetoothGatt gatt")
+    payment_state_start = service.find("SendState state = SendState.forGatt(gatt);", write_callback_start)
+    if write_callback_start < 0 or payment_state_start < 0:
+        raise SystemExit("Blee BLE v4: characteristic-write compatibility callback missing")
+    identity_write_callback = service[write_callback_start:payment_state_start]
+    if "continueAfterIdentity(gatt);" not in identity_write_callback or "closeGatt(gatt)" in identity_write_callback:
+        raise SystemExit("Blee BLE v4: optional reciprocal identity write can block legacy payment delivery")
 
     db_markers = (
         "BLEE_ACTIVE_WALLET_RESOLUTION_V4",

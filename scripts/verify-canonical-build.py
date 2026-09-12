@@ -25,7 +25,8 @@ build = require_all(
     "build-blee.command",
     (
         "CANONICAL_BLEE_BUILDER_V2",
-        'FINAL_APK="$ROOT/dist/Blee.apk"',
+        'APP_VERSION="2.6.0"',
+        'FINAL_APK="$ROOT/dist/Blee-${APP_VERSION}.apk"',
         "command -v sdkmanager",
         'if [ "$(uname -s)" != "Darwin" ]',
         'Darwin) ADOPTIUM_OS="mac"',
@@ -52,8 +53,8 @@ build = require_all(
 )
 
 architecture = require_file("ARCHITECTURE.md")
-if "dist/Blee.apk" not in architecture:
-    raise SystemExit("Canonical architecture does not declare dist/Blee.apk")
+if "dist/Blee-2.6.0.apk" not in architecture:
+    raise SystemExit("Canonical architecture does not declare the versioned Blee APK")
 if "source-of-truth" not in architecture or "main" not in architecture:
     raise SystemExit("Canonical architecture does not declare main as source of truth")
 if not any(
@@ -71,7 +72,7 @@ if "Fingerprint unlock is optional" not in ui:
     raise SystemExit("UI contract is missing optional fingerprint unlock")
 if "fingerprint hardware" not in ui.lower() or "enrolled" not in ui.lower():
     raise SystemExit("UI contract is missing fingerprint capability gating")
-if "dist/Blee.apk" not in ui:
+if "dist/Blee-2.6.0.apk" not in ui:
     raise SystemExit("UI contract does not pin the canonical APK name")
 if "standalone Blee logo" not in ui or "cold-launch" not in ui:
     raise SystemExit("UI contract does not pin the standalone Blee launch identity")
@@ -182,6 +183,8 @@ require_all(
         "private boolean handleIdentityRead",
         "if (identityResolved) writeLocalIdentity(gatt)",
         "private void writeLocalIdentity(BluetoothGatt gatt)",
+        "identity.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE",
+        "legacy read-only peer may reject this optional write",
         "PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_WRITE",
         "IDENTITY_UUID.equals(characteristic.getUuid()) && value != null",
         "continueAfterIdentity",
@@ -230,7 +233,7 @@ for rel in ("build-blee-macos.command", "build-blee-professional.command"):
     if 'exec bash "$ROOT/build-blee.command"' not in text:
         raise SystemExit(f"Legacy builder still has independent logic: {rel}")
 
-if re.search(r"dist/Blee-[^\s\"']+\.apk", build):
-    raise SystemExit("Versioned public APK naming survived in canonical builder")
+if 'versionCode 16' not in build or 'versionName "2.6.0"' not in build:
+    raise SystemExit("Android and artifact versions are not aligned at Blee 2.6.0")
 
 print("Canonical Blee repository contract verified.")

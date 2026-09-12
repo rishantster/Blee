@@ -47,16 +47,16 @@ jobs:
 
       - name: Verify artifact contract
         run: |
-          test -f dist/Blee.apk
-          unzip -t dist/Blee.apk >/dev/null
-          test -f dist/Blee.apk.sha256
-          ! find dist -maxdepth 1 -type f -name 'Blee-*.apk' | grep .
+          test -f dist/Blee-2.6.0.apk
+          unzip -t dist/Blee-2.6.0.apk >/dev/null
+          test -f dist/Blee-2.6.0.apk.sha256
+          test "$(find dist -maxdepth 1 -type f -name '*.apk' | wc -l)" -eq 1
 
-      - name: Upload Blee.apk
+      - name: Upload Blee 2.6.0 APK
         uses: actions/upload-artifact@v4
         with:
           name: Blee
           path: |
-            dist/Blee.apk
-            dist/Blee.apk.sha256
+            dist/Blee-2.6.0.apk
+            dist/Blee-2.6.0.apk.sha256
           if-no-files-found: error
