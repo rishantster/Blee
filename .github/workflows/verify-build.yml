@@ -20,13 +20,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
+          # package.json/package-lock.json are intentionally materialized from
+          # the verified bootstrap archive by build-blee.command. Enabling the
+          # setup-node npm cache here makes the job fail before the builder can
+          # create those files.
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
+          # Gradle files are also materialized during the canonical build, so
+          # setup-java cannot discover them at this point in the job.
 
       - uses: android-actions/setup-android@v3
 
