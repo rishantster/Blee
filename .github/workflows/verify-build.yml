@@ -20,13 +20,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
+          # package.json/package-lock.json are intentionally materialized from
+          # the verified bootstrap archive by build-blee.command. Enabling the
+          # setup-node npm cache here makes the job fail before the builder can
+          # create those files.
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
+          # Gradle files are also materialized during the canonical build, so
+          # setup-java cannot discover them at this point in the job.
 
       - uses: android-actions/setup-android@v3
 
@@ -43,16 +47,16 @@ jobs:
 
       - name: Verify artifact contract
         run: |
-          test -f dist/Blee.apk
-          unzip -t dist/Blee.apk >/dev/null
-          test -f dist/Blee.apk.sha256
-          ! find dist -maxdepth 1 -type f -name 'Blee-*.apk' | grep .
+          test -f dist/Blee-2.6.0.apk
+          unzip -t dist/Blee-2.6.0.apk >/dev/null
+          test -f dist/Blee-2.6.0.apk.sha256
+          test "$(find dist -maxdepth 1 -type f -name '*.apk' | wc -l)" -eq 1
 
-      - name: Upload Blee.apk
+      - name: Upload Blee 2.6.0 APK
         uses: actions/upload-artifact@v4
         with:
           name: Blee
           path: |
-            dist/Blee.apk
-            dist/Blee.apk.sha256
+            dist/Blee-2.6.0.apk
+            dist/Blee-2.6.0.apk.sha256
           if-no-files-found: error

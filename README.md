@@ -17,18 +17,18 @@ Historical builder filenames remain only as thin compatibility wrappers and dele
 The public APK artifact is always:
 
 ```text
-dist/Blee.apk
+dist/Blee-2.6.0.apk
 ```
 
 A SHA-256 file is produced alongside it when the host provides `shasum` or `sha256sum`:
 
 ```text
-dist/Blee.apk.sha256
+dist/Blee-2.6.0.apk.sha256
 ```
 
-Internal Android `versionCode` / `versionName` may advance for upgrade compatibility. Those internal values never change the public APK filename.
+Android `versionCode` and `versionName` advance with releases. The public APK filename includes the same `versionName` so local builds are unambiguous.
 
-Every canonical build runs `scripts/verify-canonical-build.py` before source materialization and again after all web/native hardening. This fails the build if a legacy builder regains independent logic, a versioned APK name reappears, or required protocol-hardening markers disappear.
+Every canonical build runs `scripts/verify-canonical-build.py` before source materialization and again after all web/native hardening. This fails the build if a legacy builder regains independent logic, the versioned APK contract changes, or required protocol-hardening markers disappear.
 
 ## Product scope
 

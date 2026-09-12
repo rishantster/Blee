@@ -205,4 +205,4 @@ The canonical build must fail if any of these regress:
 - monotonic native payment state protection disappears
 - settlement receipts are accepted without sender-signed hash pinning
 - legacy orbit/radar/halo design returns
-- APK output is not `dist/Blee.apk`
+- APK output is not the release-versioned `dist/Blee-2.6.0.apk`
