@@ -45,26 +45,46 @@ grep -q 'python3 scripts/apply-blee-bitchat-reliability.py' build-blee.command |
 
 python3 - <<'PY'
 from pathlib import Path
+
 s = Path('build-blee.command').read_text()
-order = [
+
+# The canonical builder intentionally runs a web check/build once before Android
+# materialization, then runs a second check/build after all native BLE patchers.
+# Validate the native reliability chain first, then locate the *post-patch*
+# check/build/sync stages after that anchor so the earlier web build does not
+# create a false ordering failure.
+patch_order = [
     'python3 scripts/apply-blee-runtime-reliability.py',
     'python3 scripts/apply-blee-ble-transport-v4.py',
     'python3 scripts/apply-blee-ble-diagnostics.py',
     'python3 scripts/apply-blee-bitchat-reliability.py',
+]
+
+positions = []
+for token in patch_order:
+    i = s.find(token)
+    if i < 0:
+        raise SystemExit(f'SANITY FAIL: serialized build stage missing: {token}')
+    positions.append(i)
+
+if positions != sorted(positions):
+    raise SystemExit('SANITY FAIL: native BLE reliability stages are out of order')
+
+cursor = positions[-1]
+post_patch_order = [
     'npm run check',
     'npm run build',
     'npx cap sync android',
     'python3 scripts/verify-blee-mesh-v2.py',
     'python3 scripts/verify-canonical-build.py',
 ]
-pos = []
-for token in order:
-    i = s.find(token)
+
+for token in post_patch_order:
+    i = s.find(token, cursor + 1)
     if i < 0:
-        raise SystemExit(f'SANITY FAIL: serialized build stage missing: {token}')
-    pos.append(i)
-if pos != sorted(pos):
-    raise SystemExit('SANITY FAIL: canonical build stages are out of order')
+        raise SystemExit(f'SANITY FAIL: post-patch build stage missing or misplaced: {token}')
+    cursor = i
+
 print('SANITY OK: BLE/runtime/build stages are serialized')
 PY
 
