@@ -20,6 +20,7 @@ required=(
   "scripts/apply-blee-ble-transport-v4.py"
   "scripts/apply-blee-ble-diagnostics.py"
   "scripts/apply-blee-bitchat-reliability.py"
+  "scripts/apply-blee-gatt-interop.py"
   "mesh-v2/android/BleeBleReliability.javafrag"
   ".github/workflows/verify-build.yml"
 )
@@ -42,22 +43,19 @@ pass "Python patchers/verifiers compile"
 grep -q 'CANONICAL_BLEE_BUILDER_V2' build-blee.command || fail "canonical builder marker missing"
 grep -q 'python3 scripts/apply-blee-ble-diagnostics.py' build-blee.command || fail "BLE diagnostics stage missing"
 grep -q 'python3 scripts/apply-blee-bitchat-reliability.py' build-blee.command || fail "Bitchat reliability stage missing"
+grep -q 'python3 scripts/apply-blee-gatt-interop.py' build-blee.command || fail "GATT interop stage missing"
 
 python3 - <<'PY'
 from pathlib import Path
 
 s = Path('build-blee.command').read_text()
 
-# The canonical builder intentionally runs a web check/build once before Android
-# materialization, then runs a second check/build after all native BLE patchers.
-# Validate the native reliability chain first, then locate the *post-patch*
-# check/build/sync stages after that anchor so the earlier web build does not
-# create a false ordering failure.
 patch_order = [
     'python3 scripts/apply-blee-runtime-reliability.py',
     'python3 scripts/apply-blee-ble-transport-v4.py',
     'python3 scripts/apply-blee-ble-diagnostics.py',
     'python3 scripts/apply-blee-bitchat-reliability.py',
+    'python3 scripts/apply-blee-gatt-interop.py',
 ]
 
 positions = []
@@ -99,7 +97,7 @@ grep -q 'BLEE_SAFE_GATT_BOOTSTRAP_1M_V1' mesh-v2/android/BleeBleReliability.java
 grep -q 'BLE_CONNECT_FRESHNESS_MS = 4_000L' mesh-v2/android/BleeBleReliability.javafrag \
   || fail "fresh-advertisement GATT admission missing"
 grep -q 'BLE_GATT_CONNECT_TIMEOUT_MS = 30_000L' mesh-v2/android/BleeBleReliability.javafrag \
-  || fail "separate GATT establishment timeout missing"
+  || fail "base GATT establishment timeout marker missing"
 grep -q 'scheduleGattConnectTimeout' mesh-v2/android/BleeBleReliability.javafrag \
   || fail "GATT establishment watchdog missing"
 grep -q 'No connected GATT operation progress' mesh-v2/android/BleeBleReliability.javafrag \
@@ -116,6 +114,16 @@ grep -q 'BLEE_RADIO_ARBITRATION_V2' scripts/apply-blee-bitchat-reliability.py \
   || fail "Bitchat radio-arbitration patcher marker missing"
 grep -q 'addServiceData(new ParcelUuid(SERVICE_UUID), localRoleTokenPayload())' scripts/apply-blee-bitchat-reliability.py \
   || fail "role-token scan response wiring missing"
+grep -q 'BLEE_GATT_INTEROP_V1' scripts/apply-blee-gatt-interop.py \
+  || fail "GATT interop marker missing"
+grep -q 'connectImmediatelyFromScan' scripts/apply-blee-gatt-interop.py \
+  || fail "live ScanResult connection path missing"
+grep -q 'auto_connect_le' scripts/apply-blee-gatt-interop.py \
+  || fail "autoConnect fallback missing"
+grep -q 'scanner_first_peripheral_suspended' scripts/apply-blee-gatt-interop.py \
+  || fail "scanner-first controller resource recovery missing"
+grep -q 'result.isConnectable()' scripts/apply-blee-gatt-interop.py \
+  || fail "connectable advertisement telemetry missing"
 if grep -q 'connectGattWithPreferredPhy' mesh-v2/android/BleeBleReliability.javafrag; then
   fail "multi-PHY negotiation must not run during initial GATT connection"
 fi
@@ -131,9 +139,10 @@ start = s.index('private void openGattConnection')
 end = s.index('private void scheduleGattConnectTimeout', start)
 if 'touchGatt(gatt)' in s[start:end]:
     raise SystemExit('SANITY FAIL: post-connect operation watchdog still starts before STATE_CONNECTED')
-print('SANITY OK: Bitchat Android connection lifecycle is pinned')
+print('SANITY OK: Bitchat Android base connection lifecycle is pinned')
 PY
-pass "Bitchat-derived vendor-neutral BLE radio arbitration pinned"
+pass "Bitchat-derived base BLE radio arbitration pinned"
+pass "Android GATT interop recovery pinned"
 
 for forbidden in \
   'dist/*.apk' \
