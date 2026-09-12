@@ -38,6 +38,7 @@ build = require_all(
         'apply-blee-final-hardening-2.py',
         'apply-blee-runtime-reliability.py',
         'apply-blee-ble-transport-v4.py',
+        'apply-blee-ble-diagnostics.py',
         'verify-blee-mesh-v2.py',
         'verify-canonical-build.py',
         'rm -f "$ROOT/dist"/*.apk',
@@ -162,16 +163,33 @@ require_all(
     ),
 )
 require_all(
+    "scripts/apply-blee-ble-diagnostics.py",
+    (
+        "BLEE_BLE_DIAGNOSTICS_V1",
+        "BLEE_BLE_DIAGNOSTICS_PLUGIN_V1",
+        "diagnosticsSnapshot",
+        "diagRawScanResults",
+        "diagBleeAdvertisements",
+        "diagGattAttempts",
+        "diagIdentityReads",
+        "rearmBluetooth",
+    ),
+)
+runtime = require_all(
     "mesh-v2/web/BleeRuntime.tsx",
     (
         "BLEE_RUNTIME_NO_REMOUNT_V1",
         "nearbyPeers()",
         "peerChanged",
         "blee:native-nearby",
-        "return <BleeApp />;",
+        "diagnostics()",
+        "rearmBluetooth()",
+        "BLE DIAGNOSTICS",
+        "Restart Bluetooth discovery",
+        "<BleeApp />",
     ),
 )
-if "<BleeApp key=" in require_file("mesh-v2/web/BleeRuntime.tsx"):
+if "<BleeApp key=" in runtime:
     raise SystemExit("Canonical runtime still force-remounts BleeApp on focus/ledger changes")
 
 for rel in ("build-blee-macos.command", "build-blee-professional.command"):
