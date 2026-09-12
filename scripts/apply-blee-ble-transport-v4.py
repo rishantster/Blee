@@ -108,6 +108,8 @@ def patch_service(native_dir: Path) -> None:
     text = ensure_field(text, "    private volatile long lastAdvertiseAttemptAt = 0L;", "    private volatile boolean advertiseStarting = false;")
     text = ensure_field(text, "    private volatile long lastScanStartAt = 0L;", "    private volatile long lastAdvertiseAttemptAt = 0L;")
     text = ensure_field(text, "    private volatile long lastBleHitAt = 0L;", "    private volatile long lastScanStartAt = 0L;")
+    text = ensure_field(text, "    private volatile int advertiseRetryCount = 0;", "    private volatile long lastBleHitAt = 0L;")
+    text = ensure_field(text, "    private volatile long nextAdvertiseAttemptAt = 0L;", "    private volatile int advertiseRetryCount = 0;")
 
     if "if (!scanning) startBluetooth();" in text:
         text = text.replace("if (!scanning) startBluetooth();", "if (!scanning || !advertising) startBluetooth();", 1)
@@ -126,7 +128,7 @@ def patch_service(native_dir: Path) -> None:
             scanner = adapter.getBluetoothLeScanner();
 
             long now = System.currentTimeMillis();
-            if (advertiser != null && !advertising && !advertiseStarting && now - lastAdvertiseAttemptAt > 1200L) {
+            if (advertiser != null && !advertising && !advertiseStarting && now >= nextAdvertiseAttemptAt) {
                 advertiseStarting = true;
                 lastAdvertiseAttemptAt = now;
                 AdvertiseSettings settings = new AdvertiseSettings.Builder()
@@ -144,6 +146,7 @@ def patch_service(native_dir: Path) -> None:
                 } catch (Throwable error) {
                     advertiseStarting = false;
                     advertising = false;
+                    nextAdvertiseAttemptAt = now + 2_000L;
                     Log.w(TAG, "BLE advertising start threw: " + error.getMessage());
                 }
             } else if (advertiser == null) {
@@ -192,6 +195,7 @@ def patch_service(native_dir: Path) -> None:
         scanning = false;
         advertising = false;
         advertiseStarting = false;
+        nextAdvertiseAttemptAt = 0L;
         gattServer = null;
     }
 
@@ -202,6 +206,8 @@ def patch_service(native_dir: Path) -> None:
         @Override public void onStartSuccess(AdvertiseSettings settingsInEffect) {
             advertiseStarting = false;
             advertising = true;
+            advertiseRetryCount = 0;
+            nextAdvertiseAttemptAt = 0L;
             Log.i(TAG, "BLE advertising active");
         }
 
@@ -212,15 +218,22 @@ def patch_service(native_dir: Path) -> None:
                 // registered. The advertiser is healthy; treating it as down
                 // caused an endless 1.5-second restart loop on physical phones.
                 advertising = true;
+                advertiseRetryCount = 0;
+                nextAdvertiseAttemptAt = 0L;
                 Log.i(TAG, "BLE advertising already active");
                 return;
             }
             advertising = false;
+            advertiseRetryCount = Math.min(advertiseRetryCount + 1, 6);
             Log.w(TAG, "BLE advertising failed: " + errorCode + "; rearming");
             try { if (advertiser != null) advertiser.stopAdvertising(this); } catch (Throwable ignored) {}
+            final long retryDelay = errorCode == AdvertiseCallback.ADVERTISE_FAILED_TOO_MANY_ADVERTISERS
+                ? Math.min(60_000L, 10_000L * advertiseRetryCount)
+                : Math.min(30_000L, 2_000L * advertiseRetryCount);
+            nextAdvertiseAttemptAt = System.currentTimeMillis() + retryDelay;
             handler.postDelayed(new Runnable() {
                 @Override public void run() { startBluetooth(); }
-            }, 1500L);
+            }, retryDelay);
         }
     };
 
@@ -231,6 +244,21 @@ def patch_service(native_dir: Path) -> None:
     if callback_pos < 0 or scan_pos < 0:
         raise SystemExit("Blee BLE v4: advertise/scan callback anchors missing")
     text = text[:callback_pos] + advertise_new + text[scan_pos:]
+
+    pump_start = text.find("    private void pumpKnownPeers() {")
+    pump_end = text.find("\n    private void maybeConnect(BluetoothDevice device) {", pump_start)
+    if pump_start < 0 or pump_end < 0:
+        raise SystemExit("Blee BLE v4: known-peer pump anchor missing")
+    pump_new = '''    private void pumpKnownPeers() {
+        // Re-attempt identity discovery for remembered scan results even when
+        // Android only delivered one advertisement callback and no payment is
+        // queued. maybeConnect() provides the per-device retry throttle.
+        List<BluetoothDevice> snapshot;
+        synchronized (peers) { snapshot = new ArrayList<BluetoothDevice>(peers.values()); }
+        for (BluetoothDevice device : snapshot) maybeConnect(device);
+    }
+'''
+    text = text[:pump_start] + pump_new + text[pump_end:]
 
     identity_replacement = r'''    private byte[] localIdentityPayload() {
         String wallet = db == null ? null : db.activeWallet();
@@ -259,6 +287,16 @@ def patch_service(native_dir: Path) -> None:
 '''
     text = replace_between(text, "    private byte[] localIdentityPayload() {", "    private void readIdentityOrSend(BluetoothGatt gatt) {", identity_replacement, "local BLE identity payload")
 
+    # Make identity exchange bidirectional. If only one of two phones can claim
+    # an Android advertiser slot, the scanning phone connects to it, reads its
+    # wallet, then writes its own wallet back. Both UIs can therefore resolve a
+    # peer without requiring both controllers to advertise successfully.
+    text = text.replace(
+        "            BluetoothGattCharacteristic.PROPERTY_READ,\n            BluetoothGattCharacteristic.PERMISSION_READ",
+        "            BluetoothGattCharacteristic.PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_WRITE,\n            BluetoothGattCharacteristic.PERMISSION_READ | BluetoothGattCharacteristic.PERMISSION_WRITE",
+        1,
+    )
+
     read_identity_old = '''    private void readIdentityOrSend(BluetoothGatt gatt) {
         if (gatt == null) return;
         try {
@@ -283,6 +321,31 @@ def patch_service(native_dir: Path) -> None:
     if read_identity_old not in text:
         raise SystemExit("Blee BLE v4: identity read method anchor missing")
     text = text.replace(read_identity_old, read_identity_new, 1)
+
+    write_identity_method = '''    private void writeLocalIdentity(BluetoothGatt gatt) {
+        if (gatt == null) return;
+        try {
+            BluetoothGattService service = gatt.getService(SERVICE_UUID);
+            BluetoothGattCharacteristic identity = service == null ? null : service.getCharacteristic(IDENTITY_UUID);
+            byte[] payload = localIdentityPayload();
+            if (identity == null || payload.length != 20) { closeGatt(gatt); return; }
+            identity.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            boolean started;
+            if (Build.VERSION.SDK_INT >= 33) {
+                started = gatt.writeCharacteristic(identity, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == 0;
+            } else {
+                identity.setValue(payload);
+                started = gatt.writeCharacteristic(identity);
+            }
+            if (!started) closeGatt(gatt);
+        } catch (Throwable ignored) { closeGatt(gatt); }
+    }
+
+'''
+    handle_anchor = "    private void handleIdentityRead(BluetoothGatt gatt, byte[] value) {"
+    if handle_anchor not in text:
+        raise SystemExit("Blee BLE v4: identity handler insertion anchor missing")
+    text = text.replace(handle_anchor, write_identity_method + handle_anchor, 1)
 
     handle_replacement = r'''    private boolean handleIdentityRead(BluetoothGatt gatt, byte[] value) {
         try {
@@ -383,7 +446,7 @@ def patch_service(native_dir: Path) -> None:
                     identityResolved = handleIdentityRead(gatt, characteristic.getValue());
                 }
             } catch (Throwable ignored) {}
-            if (identityResolved) continueAfterIdentity(gatt);
+            if (identityResolved) writeLocalIdentity(gatt);
             else closeGatt(gatt);
         }
 
@@ -394,7 +457,7 @@ def patch_service(native_dir: Path) -> None:
                     identityResolved = handleIdentityRead(gatt, value);
                 }
             } catch (Throwable ignored) {}
-            if (identityResolved) continueAfterIdentity(gatt);
+            if (identityResolved) writeLocalIdentity(gatt);
             else closeGatt(gatt);
         }
 
@@ -405,6 +468,39 @@ def patch_service(native_dir: Path) -> None:
 
 '''
     text = text[:reads_start] + identity_callbacks + text[reads_end:]
+
+    write_callback_anchor = '''        @Override public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            SendState state = SendState.forGatt(gatt);'''
+    write_callback_new = '''        @Override public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
+            if (characteristic != null && IDENTITY_UUID.equals(characteristic.getUuid())) {
+                if (status == BluetoothGatt.GATT_SUCCESS) continueAfterIdentity(gatt);
+                else closeGatt(gatt);
+                return;
+            }
+            SendState state = SendState.forGatt(gatt);'''
+    if write_callback_anchor not in text:
+        raise SystemExit("Blee BLE v4: characteristic-write callback anchor missing")
+    text = text.replace(write_callback_anchor, write_callback_new, 1)
+
+    server_write_anchor = '''                if (characteristic != null && WRITE_UUID.equals(characteristic.getUuid()) && value != null) {
+                    String frame = new String(value, StandardCharsets.UTF_8);
+                    status = acceptFrame(device, frame) ? BluetoothGatt.GATT_SUCCESS : BluetoothGatt.GATT_FAILURE;
+                }'''
+    server_write_new = '''                if (characteristic != null && IDENTITY_UUID.equals(characteristic.getUuid()) && value != null) {
+                    String wallet = walletFromBytes(value);
+                    if (wallet != null && device != null) {
+                        String address = device.getAddress();
+                        int rssi = peerRssi.containsKey(address) ? peerRssi.get(address) : 0;
+                        publishResolvedPeer(address, wallet, "", rssi, System.currentTimeMillis());
+                        status = BluetoothGatt.GATT_SUCCESS;
+                    }
+                } else if (characteristic != null && WRITE_UUID.equals(characteristic.getUuid()) && value != null) {
+                    String frame = new String(value, StandardCharsets.UTF_8);
+                    status = acceptFrame(device, frame) ? BluetoothGatt.GATT_SUCCESS : BluetoothGatt.GATT_FAILURE;
+                }'''
+    if server_write_anchor not in text:
+        raise SystemExit("Blee BLE v4: GATT server write anchor missing")
+    text = text.replace(server_write_anchor, server_write_new, 1)
 
     send_method_anchor = "    private void sendOnePacket(BluetoothGatt gatt) {"
     continue_method = '''    private void continueAfterIdentity(BluetoothGatt gatt) {
@@ -463,6 +559,10 @@ def verify(native_dir: Path) -> None:
         "advertiseStarting",
         "onStartFailure(int errorCode)",
         "ADVERTISE_FAILED_ALREADY_STARTED",
+        "ADVERTISE_FAILED_TOO_MANY_ADVERTISERS",
+        "advertiseRetryCount",
+        "nextAdvertiseAttemptAt",
+        "now >= nextAdvertiseAttemptAt",
         "BLE advertising already active",
         "BLE advertising active",
         "Collections.<ScanFilter>emptyList()",
@@ -470,13 +570,17 @@ def verify(native_dir: Path) -> None:
         "walletFromBytes",
         "value.length != 20",
         "private boolean handleIdentityRead",
-        "if (identityResolved) continueAfterIdentity(gatt)",
+        "if (identityResolved) writeLocalIdentity(gatt)",
+        "private void writeLocalIdentity(BluetoothGatt gatt)",
+        "PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_WRITE",
+        "IDENTITY_UUID.equals(characteristic.getUuid()) && value != null",
         "continueAfterIdentity",
         "onMtuChanged(BluetoothGatt gatt, int mtu, int status)",
         "sendOnePacket(gatt, mtu)",
         "mtu - 3 - headerBytes",
         "if (!scanning || !advertising) startBluetooth();",
         "BLE peer resolved",
+        "Re-attempt identity discovery for remembered scan results",
     )
     missing = [marker for marker in service_markers if marker not in service]
     if missing:

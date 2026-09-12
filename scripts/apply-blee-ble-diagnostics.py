@@ -171,14 +171,14 @@ def patch_service(native_dir: Path) -> None:
     )
     text = replace_once(
         text,
-        "            advertiseStarting = false;\n            advertising = true;\n            Log.i(TAG, \"BLE advertising active\");",
-        "            advertiseStarting = false;\n            advertising = true;\n            diagAdvertiseSuccesses++;\n            diagLastPhase = \"advertising_active\";\n            diagLastError = \"\";\n            Log.i(TAG, \"BLE advertising active\");",
+        "            advertiseStarting = false;\n            advertising = true;\n            advertiseRetryCount = 0;\n            nextAdvertiseAttemptAt = 0L;\n            Log.i(TAG, \"BLE advertising active\");",
+        "            advertiseStarting = false;\n            advertising = true;\n            advertiseRetryCount = 0;\n            nextAdvertiseAttemptAt = 0L;\n            diagAdvertiseSuccesses++;\n            diagLastPhase = \"advertising_active\";\n            diagLastError = \"\";\n            Log.i(TAG, \"BLE advertising active\");",
         "advertising success",
     )
     text = replace_once(
         text,
-        "            advertising = false;\n            Log.w(TAG, \"BLE advertising failed: \" + errorCode + \"; rearming\");",
-        "            advertising = false;\n            diagAdvertiseFailures++;\n            diagLastPhase = \"advertising_failed\";\n            diagLastError = \"advertise_error_\" + errorCode;\n            Log.w(TAG, \"BLE advertising failed: \" + errorCode + \"; rearming\");",
+        "            advertising = false;\n            advertiseRetryCount = Math.min(advertiseRetryCount + 1, 6);\n            Log.w(TAG, \"BLE advertising failed: \" + errorCode + \"; rearming\");",
+        "            advertising = false;\n            advertiseRetryCount = Math.min(advertiseRetryCount + 1, 6);\n            diagAdvertiseFailures++;\n            diagLastPhase = \"advertising_failed\";\n            diagLastError = \"advertise_error_\" + errorCode;\n            Log.w(TAG, \"BLE advertising failed: \" + errorCode + \"; rearming\");",
         "advertising failure",
     )
     text = replace_once(

@@ -28,6 +28,9 @@ build = require_all(
         'FINAL_APK="$ROOT/dist/Blee.apk"',
         "command -v sdkmanager",
         'if [ "$(uname -s)" != "Darwin" ]',
+        'Darwin) ADOPTIUM_OS="mac"',
+        'Linux) ADOPTIUM_OS="linux"',
+        "ga/${ADOPTIUM_OS}/${ADOPTIUM_ARCH}",
         "--exclude 'ARCHITECTURE.md'",
         "--exclude 'UI_ARCHITECTURE.md'",
         "--exclude 'scripts/apply-blee-*.py'",
@@ -36,6 +39,7 @@ build = require_all(
         'apply-blee-launcher-1.4.py',
         'verify-blee-original-brand.py',
         'apply-blee-final-hardening.py --web',
+        'apply-blee-single-ble-owner.py',
         'apply-blee-final-hardening.py --android',
         'apply-blee-final-hardening-2.py',
         'apply-blee-runtime-reliability.py',
@@ -139,6 +143,14 @@ require_all(
     ),
 )
 require_all(
+    "scripts/apply-blee-single-ble-owner.py",
+    (
+        "BLEE_MESH_SERVICE_SOLE_BLE_OWNER_V1",
+        'ret.put("ble", false)',
+        "legacy Nearby is LAN-only",
+    ),
+)
+require_all(
     "scripts/apply-blee-runtime-reliability.py",
     (
         "BLEE_NATIVE_DISCOVERY_IDENTITY_V1",
@@ -160,16 +172,24 @@ require_all(
         "Collections.<ScanFilter>emptyList()",
         "onStartFailure(int errorCode)",
         "ADVERTISE_FAILED_ALREADY_STARTED",
+        "ADVERTISE_FAILED_TOO_MANY_ADVERTISERS",
+        "advertiseRetryCount",
+        "nextAdvertiseAttemptAt",
+        "now >= nextAdvertiseAttemptAt",
         "BLE advertising already active",
         "walletFromBytes",
         "identity read completes before any payment MTU negotiation begins",
         "private boolean handleIdentityRead",
-        "if (identityResolved) continueAfterIdentity(gatt)",
+        "if (identityResolved) writeLocalIdentity(gatt)",
+        "private void writeLocalIdentity(BluetoothGatt gatt)",
+        "PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_WRITE",
+        "IDENTITY_UUID.equals(characteristic.getUuid()) && value != null",
         "continueAfterIdentity",
         "onMtuChanged(BluetoothGatt gatt, int mtu, int status)",
         "mtu - 3 - headerBytes",
         "if (!scanning || !advertising) startBluetooth();",
         "BLE peer resolved",
+        "Re-attempt identity discovery for remembered scan results",
     ),
 )
 require_all(
