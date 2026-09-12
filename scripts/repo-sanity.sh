@@ -90,7 +90,7 @@ PY
 
 grep -q 'BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1' mesh-v2/android/BleeBleReliability.javafrag \
   || fail "Bitchat BLE reliability fragment marker missing"
-grep -q 'BLEE_BITCHAT_RELIABILITY_PATCHER_V1' scripts/apply-blee-bitchat-reliability.py \
+grep -q 'BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1' scripts/apply-blee-bitchat-reliability.py \
   || fail "Bitchat reliability patcher marker missing"
 pass "Bitchat-derived reliability layer pinned"
 
