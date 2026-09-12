@@ -34,9 +34,6 @@ def patch_db(native_dir: Path) -> None:
     end = "\n    synchronized String localDisplayName() {"
     replacement = r'''    // BLEE_ACTIVE_WALLET_RESOLUTION_V4
     synchronized String activeWallet() {
-        // Prefer the canonical key, but do not make BLE identity depend on one
-        // historical JavaScript storage-key spelling. Older Blee builds used
-        // different wallet/vault keys while still storing the same address.
         for (String key : new String[] {
             "wallet.vault.v2", "wallet.vault.v1", "blee.wallet.v2",
             "blee.wallet.v1", "wallet", "vault", "account"
@@ -81,39 +78,41 @@ def patch_db(native_dir: Path) -> None:
     print("Blee BLE v4: native wallet identity no longer depends on one legacy KV key")
 
 
+def ensure_field(text: str, declaration: str, after: str) -> str:
+    if declaration in text:
+        return text
+    if after not in text:
+        raise SystemExit(f"Blee BLE v4: field anchor missing for {declaration}")
+    return text.replace(after, after + "\n" + declaration, 1)
+
+
 def patch_service(native_dir: Path) -> None:
     path = native_dir / "BleeMeshService.java"
     text = path.read_text()
     if "BLEE_BLE_TRANSPORT_V4" in text:
         return
 
+    if "public class BleeMeshService extends Service {" not in text:
+        raise SystemExit("Blee BLE v4: service class anchor missing")
     text = text.replace(
         "public class BleeMeshService extends Service {",
         "public class BleeMeshService extends Service {\n    // BLEE_BLE_TRANSPORT_V4",
         1,
     )
 
-    field_anchor = "    private volatile boolean scanning = false;"
-    if field_anchor not in text:
+    scanning = "    private volatile boolean scanning = false;"
+    if scanning not in text:
         raise SystemExit("Blee BLE v4: scanning field anchor missing")
-    text = text.replace(
-        field_anchor,
-        field_anchor + '''
-    private volatile boolean advertising = false;
-    private volatile boolean advertiseStarting = false;
-    private volatile long lastAdvertiseAttemptAt = 0L;
-    private volatile long lastScanStartAt = 0L;
-    private volatile long lastBleHitAt = 0L;''',
-        1,
-    )
+    text = ensure_field(text, "    private volatile boolean advertising = false;", scanning)
+    text = ensure_field(text, "    private volatile boolean advertiseStarting = false;", "    private volatile boolean advertising = false;")
+    text = ensure_field(text, "    private volatile long lastAdvertiseAttemptAt = 0L;", "    private volatile boolean advertiseStarting = false;")
+    text = ensure_field(text, "    private volatile long lastScanStartAt = 0L;", "    private volatile long lastAdvertiseAttemptAt = 0L;")
+    text = ensure_field(text, "    private volatile long lastBleHitAt = 0L;", "    private volatile long lastScanStartAt = 0L;")
 
-    if "if (!scanning) startBluetooth();" not in text:
+    if "if (!scanning) startBluetooth();" in text:
+        text = text.replace("if (!scanning) startBluetooth();", "if (!scanning || !advertising) startBluetooth();", 1)
+    elif "if (!scanning || !advertising) startBluetooth();" not in text:
         raise SystemExit("Blee BLE v4: loop BLE rearm anchor missing")
-    text = text.replace(
-        "if (!scanning) startBluetooth();",
-        "if (!scanning || !advertising) startBluetooth();",
-        1,
-    )
 
     start_bluetooth = r'''    private void startBluetooth() {
         if (!bluetoothPermissionsGranted()) return;
@@ -163,10 +162,6 @@ def patch_service(native_dir: Path) -> None:
                 }
                 ScanSettings settings = scanBuilder.build();
                 try {
-                    // Do not rely on controller/offloaded UUID filters. Several
-                    // Android vendors intermittently drop 128-bit filtered scan
-                    // results even though the advertisement is visible. Scan
-                    // unfiltered and validate Blee's service UUID in-process.
                     scanner.startScan(Collections.<ScanFilter>emptyList(), settings, scanCallback);
                     scanning = true;
                     lastScanStartAt = now;
@@ -187,18 +182,8 @@ def patch_service(native_dir: Path) -> None:
     }
 
 '''
-    text = replace_between(
-        text,
-        "    private void startBluetooth() {",
-        "    private void stopBluetooth() {",
-        start_bluetooth,
-        "startBluetooth",
-    )
+    text = replace_between(text, "    private void startBluetooth() {", "    private void stopBluetooth() {", start_bluetooth, "startBluetooth")
 
-    stop_start = text.find("    private void stopBluetooth() {")
-    stop_end = text.find("\n    private void startGattServer() {", stop_start)
-    if stop_start < 0 or stop_end < 0:
-        raise SystemExit("Blee BLE v4: stopBluetooth anchors missing")
     stop_method = r'''    private void stopBluetooth() {
         if (!bluetoothPermissionsGranted()) return;
         try { if (scanner != null && scanning) scanner.stopScan(scanCallback); } catch (Throwable ignored) {}
@@ -209,12 +194,10 @@ def patch_service(native_dir: Path) -> None:
         advertiseStarting = false;
         gattServer = null;
     }
-'''
-    text = text[:stop_start] + stop_method + text[stop_end:]
 
-    advertise_old = "    private final AdvertiseCallback advertiseCallback = new AdvertiseCallback() {};"
-    if advertise_old not in text:
-        raise SystemExit("Blee BLE v4: advertise callback anchor missing")
+'''
+    text = replace_between(text, "    private void stopBluetooth() {", "    private void startGattServer() {", stop_method, "stopBluetooth")
+
     advertise_new = r'''    private final AdvertiseCallback advertiseCallback = new AdvertiseCallback() {
         @Override public void onStartSuccess(AdvertiseSettings settingsInEffect) {
             advertiseStarting = false;
@@ -230,11 +213,16 @@ def patch_service(native_dir: Path) -> None:
                 @Override public void run() { startBluetooth(); }
             }, 1500L);
         }
-    };'''
-    text = text.replace(advertise_old, advertise_new, 1)
+    };
 
-    identity_start = "    private byte[] localIdentityPayload() {"
-    identity_end = "    private void readIdentityOrSend(BluetoothGatt gatt) {"
+'''
+    callback_start = "    private final AdvertiseCallback advertiseCallback = new AdvertiseCallback()"
+    callback_pos = text.find(callback_start)
+    scan_pos = text.find("    private final ScanCallback scanCallback = new ScanCallback() {", callback_pos)
+    if callback_pos < 0 or scan_pos < 0:
+        raise SystemExit("Blee BLE v4: advertise/scan callback anchors missing")
+    text = text[:callback_pos] + advertise_new + text[scan_pos:]
+
     identity_replacement = r'''    private byte[] localIdentityPayload() {
         String wallet = db == null ? null : db.activeWallet();
         if (wallet == null || !wallet.matches("^0x[0-9a-fA-F]{40}$")) return new byte[0];
@@ -246,13 +234,9 @@ def patch_service(native_dir: Path) -> None:
         byte[] out = new byte[20];
         String hex = wallet.substring(2);
         try {
-            for (int i = 0; i < 20; i++) {
-                out[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-            }
+            for (int i = 0; i < 20; i++) out[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
             return out;
-        } catch (Throwable ignored) {
-            return new byte[0];
-        }
+        } catch (Throwable ignored) { return new byte[0]; }
     }
 
     private static String walletFromBytes(byte[] value) {
@@ -264,16 +248,13 @@ def patch_service(native_dir: Path) -> None:
     }
 
 '''
-    text = replace_between(text, identity_start, identity_end, identity_replacement, "local BLE identity payload")
+    text = replace_between(text, "    private byte[] localIdentityPayload() {", "    private void readIdentityOrSend(BluetoothGatt gatt) {", identity_replacement, "local BLE identity payload")
 
-    handle_start = "    private void handleIdentityRead(BluetoothGatt gatt, byte[] value) {"
-    handle_end = "\n    private void observeConnectivity() {"
     handle_replacement = r'''    private void handleIdentityRead(BluetoothGatt gatt, byte[] value) {
         try {
             if (gatt == null || gatt.getDevice() == null || value == null || value.length == 0 || value.length > 2048) return;
             String wallet = walletFromBytes(value);
             String displayName = "";
-            // Backward compatibility with the earlier JSON identity payload.
             if (wallet == null && value[0] == (byte) '{') {
                 JSONObject identity = new JSONObject(new String(value, StandardCharsets.UTF_8));
                 wallet = identity.optString("wallet", "");
@@ -293,12 +274,11 @@ def patch_service(native_dir: Path) -> None:
     }
 
 '''
-    text = replace_between(text, handle_start, handle_end, handle_replacement, "handleIdentityRead")
+    text = replace_between(text, "    private void handleIdentityRead(BluetoothGatt gatt, byte[] value) {", "    private void observeConnectivity() {", handle_replacement, "handleIdentityRead")
 
     scan_callback_anchor = "    private final ScanCallback scanCallback = new ScanCallback() {"
-    if scan_callback_anchor not in text:
-        raise SystemExit("Blee BLE v4: scan callback anchor missing")
-    scan_helper = r'''    private boolean isBleeAdvertisement(ScanResult result) {
+    if "    private boolean isBleeAdvertisement(ScanResult result) {" not in text:
+        scan_helper = r'''    private boolean isBleeAdvertisement(ScanResult result) {
         try {
             if (result == null || result.getScanRecord() == null) return false;
             List<ParcelUuid> serviceUuids = result.getScanRecord().getServiceUuids();
@@ -310,26 +290,27 @@ def patch_service(native_dir: Path) -> None:
     }
 
 '''
-    text = text.replace(scan_callback_anchor, scan_helper + scan_callback_anchor, 1)
+        if scan_callback_anchor not in text:
+            raise SystemExit("Blee BLE v4: scan callback anchor missing")
+        text = text.replace(scan_callback_anchor, scan_helper + scan_callback_anchor, 1)
 
-    scan_result_anchor = '''        @Override public void onScanResult(int callbackType, ScanResult result) {
+    filter_marker = "            if (!isBleeAdvertisement(result)) return;"
+    if filter_marker not in text:
+        scan_result_anchor = '''        @Override public void onScanResult(int callbackType, ScanResult result) {
             if (result == null || result.getDevice() == null) return;'''
-    if scan_result_anchor not in text:
-        raise SystemExit("Blee BLE v4: scan result anchor missing")
-    text = text.replace(
-        scan_result_anchor,
-        scan_result_anchor + '''
+        if scan_result_anchor not in text:
+            raise SystemExit("Blee BLE v4: scan result anchor missing")
+        text = text.replace(
+            scan_result_anchor,
+            scan_result_anchor + '''
             if (!isBleeAdvertisement(result)) return;
             lastBleHitAt = System.currentTimeMillis();''',
-        1,
-    )
+            1,
+        )
 
-    # A scan failure must not leave the service thinking discovery is healthy.
     if 'Log.w(TAG, "BLE scan failed: " + errorCode + "; rearming");' not in text:
         raise SystemExit("Blee BLE v4: scan failure/rearm callback missing")
 
-    # Discovery should not wait on MTU negotiation. A raw 20-byte address fits
-    # the default ATT payload, so read it almost immediately after services land.
     text = text.replace(
         'handler.postDelayed(new Runnable() {\n                @Override public void run() { readIdentityOrSend(gatt); }\n            }, 220L);',
         'handler.postDelayed(new Runnable() {\n                @Override public void run() { readIdentityOrSend(gatt); }\n            }, 80L);',
