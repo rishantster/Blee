@@ -55,6 +55,13 @@ def patch_service(native_dir):
 '''
     text = text[:cs] + callback + text[ce:]
 
+    service_failure = '''            if (status != BluetoothGatt.GATT_SUCCESS) { diagLastPhase = "service_discovery_failed"; diagLastError = "gatt_service_" + status; closeGatt(gatt); return; }'''
+    text = once(
+        text, service_failure,
+        '''            if (status != BluetoothGatt.GATT_SUCCESS) { diagLastPhase = "service_discovery_failed"; diagLastError = "gatt_service_" + status; failGatt(gatt, "service discovery status=" + status); return; }''',
+        "service discovery failure backoff",
+    )
+
     progress = '''            diagServicesDiscovered++;
             diagLastPhase = "blee_service_discovered";'''
     text = once(text, progress, progress + "\n            touchGatt(gatt);", "service discovery progress")
@@ -70,6 +77,14 @@ def patch_service(native_dir):
         '''        @Override public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
             touchGatt(gatt);
             boolean identityResolved = false;''', "modern read")
+    identity_failure = "            if (identityResolved) writeLocalIdentity(gatt);\n            else closeGatt(gatt);"
+    if text.count(identity_failure) < 2:
+        raise SystemExit("BLE reliability: identity failure anchors missing")
+    text = text.replace(
+        identity_failure,
+        "            if (identityResolved) writeLocalIdentity(gatt);\n            else failGatt(gatt, \"identity read failed\");",
+        2,
+    )
     text = once(text,
         '''        @Override public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
             if (status == BluetoothGatt.GATT_SUCCESS && mtu >= 23) sendOnePacket(gatt, mtu);''',
