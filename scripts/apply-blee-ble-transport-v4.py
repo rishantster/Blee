@@ -250,6 +250,31 @@ def patch_service(native_dir: Path) -> None:
 '''
     text = replace_between(text, "    private byte[] localIdentityPayload() {", "    private void readIdentityOrSend(BluetoothGatt gatt) {", identity_replacement, "local BLE identity payload")
 
+    read_identity_old = '''    private void readIdentityOrSend(BluetoothGatt gatt) {
+        if (gatt == null) return;
+        try {
+            BluetoothGattService service = gatt.getService(SERVICE_UUID);
+            BluetoothGattCharacteristic identity = service == null ? null : service.getCharacteristic(IDENTITY_UUID);
+            if (identity != null && gatt.readCharacteristic(identity)) return;
+        } catch (Throwable ignored) {}
+        sendOnePacket(gatt);
+    }'''
+    read_identity_new = '''    private void readIdentityOrSend(BluetoothGatt gatt) {
+        if (gatt == null) return;
+        try {
+            BluetoothGattService service = gatt.getService(SERVICE_UUID);
+            BluetoothGattCharacteristic identity = service == null ? null : service.getCharacteristic(IDENTITY_UUID);
+            if (identity != null && gatt.readCharacteristic(identity)) return;
+        } catch (Throwable ignored) {}
+        // A rejected read means another controller operation is still busy or
+        // the remote service is incomplete. Never silently skip identity.
+        Log.w(TAG, "BLE identity read could not be started; retrying later");
+        closeGatt(gatt);
+    }'''
+    if read_identity_old not in text:
+        raise SystemExit("Blee BLE v4: identity read method anchor missing")
+    text = text.replace(read_identity_old, read_identity_new, 1)
+
     handle_replacement = r'''    private void handleIdentityRead(BluetoothGatt gatt, byte[] value) {
         try {
             if (gatt == null || gatt.getDevice() == null || value == null || value.length == 0 || value.length > 2048) return;
@@ -311,11 +336,77 @@ def patch_service(native_dir: Path) -> None:
     if 'Log.w(TAG, "BLE scan failed: " + errorCode + "; rearming");' not in text:
         raise SystemExit("Blee BLE v4: scan failure/rearm callback missing")
 
-    text = text.replace(
-        'handler.postDelayed(new Runnable() {\n                @Override public void run() { readIdentityOrSend(gatt); }\n            }, 220L);',
-        'handler.postDelayed(new Runnable() {\n                @Override public void run() { readIdentityOrSend(gatt); }\n            }, 80L);',
-        1,
-    )
+    # Do not overlap MTU negotiation with the identity read. Android only permits
+    # one outstanding GATT operation per client; the previous implementation
+    # requested an MTU and then tried to read 80 ms later. On real controllers
+    # the MTU callback routinely arrives later, causing readCharacteristic() to
+    # return false and the connection to close without ever resolving a peer.
+    discovery_old = '''        @Override public void onServicesDiscovered(final BluetoothGatt gatt, int status) {
+            if (status != BluetoothGatt.GATT_SUCCESS) { closeGatt(gatt); return; }
+            try { gatt.requestMtu(517); } catch (Throwable ignored) {}
+            handler.postDelayed(new Runnable() {
+                @Override public void run() { readIdentityOrSend(gatt); }
+            }, 220L);
+        }'''
+    discovery_new = '''        @Override public void onServicesDiscovered(final BluetoothGatt gatt, int status) {
+            if (status != BluetoothGatt.GATT_SUCCESS) { closeGatt(gatt); return; }
+            // Identity is exactly 20 bytes and fits the default ATT MTU. Reading
+            // it first avoids racing requestMtu() on devices with slow stacks.
+            readIdentityOrSend(gatt);
+        }'''
+    if discovery_old not in text:
+        raise SystemExit("Blee BLE v4: service discovery/identity sequencing anchor missing")
+    text = text.replace(discovery_old, discovery_new, 1)
+
+    # Identity discovery uses the default MTU. Only negotiate a larger MTU
+    # afterwards when an actual packet is queued, and wait for Android's
+    # callback rather than guessing how long negotiation takes.
+    identity_send = '''            sendOnePacket(gatt);
+        }
+
+        @Override public void onCharacteristicRead'''
+    identity_continue = '''            continueAfterIdentity(gatt);
+        }
+
+        @Override public void onCharacteristicRead'''
+    if identity_send not in text:
+        raise SystemExit("Blee BLE v4: legacy identity callback continuation missing")
+    text = text.replace(identity_send, identity_continue, 1)
+
+    second_identity_send = '''            sendOnePacket(gatt);
+        }
+
+        @Override public void onCharacteristicWrite'''
+    second_identity_continue = '''            continueAfterIdentity(gatt);
+        }
+
+        @Override public void onMtuChanged(BluetoothGatt gatt, int mtu, int status) {
+            if (status == BluetoothGatt.GATT_SUCCESS && mtu >= 128) sendOnePacket(gatt);
+            else closeGatt(gatt);
+        }
+
+        @Override public void onCharacteristicWrite'''
+    if second_identity_send not in text:
+        raise SystemExit("Blee BLE v4: modern identity callback continuation missing")
+    text = text.replace(second_identity_send, second_identity_continue, 1)
+
+    send_method_anchor = "    private void sendOnePacket(BluetoothGatt gatt) {"
+    continue_method = '''    private void continueAfterIdentity(BluetoothGatt gatt) {
+        if (gatt == null) return;
+        if (db.duePackets(System.currentTimeMillis(), 1).isEmpty()) {
+            closeGatt(gatt);
+            return;
+        }
+        try {
+            if (gatt.requestMtu(247)) return;
+        } catch (Throwable ignored) {}
+        closeGatt(gatt);
+    }
+
+'''
+    if send_method_anchor not in text:
+        raise SystemExit("Blee BLE v4: packet sender anchor missing")
+    text = text.replace(send_method_anchor, continue_method + send_method_anchor, 1)
 
     path.write_text(text)
     print("Blee BLE v4: advertiser/scanner rearm + filterless scan + MTU-independent wallet identity installed")
@@ -335,6 +426,8 @@ def verify(native_dir: Path) -> None:
         "isBleeAdvertisement",
         "walletFromBytes",
         "value.length != 20",
+        "continueAfterIdentity",
+        "onMtuChanged(BluetoothGatt gatt, int mtu, int status)",
         "if (!scanning || !advertising) startBluetooth();",
         "BLE peer resolved",
     )
@@ -343,6 +436,16 @@ def verify(native_dir: Path) -> None:
         raise SystemExit(f"Blee BLE v4 verification failed in service: {missing}")
     if "new ScanFilter.Builder().setServiceUuid" in service:
         raise SystemExit("Blee BLE v4: hardware/offloaded UUID scan filter survived")
+
+    discovered_start = service.find("@Override public void onServicesDiscovered")
+    discovered_end = service.find("@Override public void onCharacteristicRead", discovered_start)
+    if discovered_start < 0 or discovered_end < 0:
+        raise SystemExit("Blee BLE v4: service-discovery callback missing")
+    discovery_callback = service[discovered_start:discovered_end]
+    if "requestMtu" in discovery_callback or "postDelayed" in discovery_callback:
+        raise SystemExit("Blee BLE v4: identity read still races MTU negotiation or a timer")
+    if "readIdentityOrSend(gatt);" not in discovery_callback:
+        raise SystemExit("Blee BLE v4: service discovery does not immediately read identity")
 
     db_markers = (
         "BLEE_ACTIVE_WALLET_RESOLUTION_V4",
@@ -359,6 +462,7 @@ def verify(native_dir: Path) -> None:
     print("- scanning and advertising have independent health/retry state")
     print("- Android controller UUID-filter quirks cannot suppress Blee scan results")
     print("- wallet identity is a raw 20-byte GATT read and does not depend on MTU negotiation")
+    print("- identity read completes before any payment MTU negotiation begins")
     print("- wallet lookup tolerates historical Blee vault/storage keys")
     print("- BLE discovery remains independent of Wi-Fi and queued payments")
     print("============================================================")
