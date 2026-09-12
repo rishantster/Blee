@@ -92,14 +92,26 @@ grep -q 'BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1' mesh-v2/android/BleeBleReliabili
   || fail "Bitchat BLE reliability fragment marker missing"
 grep -q 'BLEE_RADIO_ARBITRATION_V2' mesh-v2/android/BleeBleReliability.javafrag \
   || fail "vendor-neutral BLE radio arbitration marker missing"
+grep -q 'BLEE_BITCHAT_ANDROID_GATT_PARITY_V1' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "Bitchat Android GATT lifecycle marker missing"
 grep -q 'BLEE_SAFE_GATT_BOOTSTRAP_1M_V1' mesh-v2/android/BleeBleReliability.javafrag \
   || fail "safe 1M GATT bootstrap marker missing"
+grep -q 'BLE_CONNECT_FRESHNESS_MS = 4_000L' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "fresh-advertisement GATT admission missing"
+grep -q 'BLE_GATT_CONNECT_TIMEOUT_MS = 30_000L' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "separate GATT establishment timeout missing"
+grep -q 'scheduleGattConnectTimeout' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "GATT establishment watchdog missing"
+grep -q 'No connected GATT operation progress' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "post-connect GATT watchdog separation missing"
 grep -q 'localRoleTokenPayload' mesh-v2/android/BleeBleReliability.javafrag \
   || fail "deterministic BLE role token missing"
 grep -q 'advertiser_slot_busy_scanner_first' mesh-v2/android/BleeBleReliability.javafrag \
   || fail "scanner-first advertiser recovery missing"
 grep -q 'pauseScanForGatt' mesh-v2/android/BleeBleReliability.javafrag \
-  || fail "GATT radio handoff missing"
+  || fail "GATT radio compatibility hook missing"
+grep -q 'Scanning is intentionally continuous through connection establishment' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "continuous-scan GATT establishment missing"
 grep -q 'BLEE_RADIO_ARBITRATION_V2' scripts/apply-blee-bitchat-reliability.py \
   || fail "Bitchat radio-arbitration patcher marker missing"
 grep -q 'addServiceData(new ParcelUuid(SERVICE_UUID), localRoleTokenPayload())' scripts/apply-blee-bitchat-reliability.py \
@@ -107,6 +119,20 @@ grep -q 'addServiceData(new ParcelUuid(SERVICE_UUID), localRoleTokenPayload())' 
 if grep -q 'connectGattWithPreferredPhy' mesh-v2/android/BleeBleReliability.javafrag; then
   fail "multi-PHY negotiation must not run during initial GATT connection"
 fi
+python3 - <<'PY'
+from pathlib import Path
+s = Path('mesh-v2/android/BleeBleReliability.javafrag').read_text()
+start = s.index('private void beginGattConnection')
+end = s.index('private void openGattConnection', start)
+block = s[start:end]
+if 'pauseScanForGatt();' in block or 'postDelayed(() -> openGattConnection' in block:
+    raise SystemExit('SANITY FAIL: GATT establishment still stops/delays scanning before connectGatt')
+start = s.index('private void openGattConnection')
+end = s.index('private void scheduleGattConnectTimeout', start)
+if 'touchGatt(gatt)' in s[start:end]:
+    raise SystemExit('SANITY FAIL: post-connect operation watchdog still starts before STATE_CONNECTED')
+print('SANITY OK: Bitchat Android connection lifecycle is pinned')
+PY
 pass "Bitchat-derived vendor-neutral BLE radio arbitration pinned"
 
 for forbidden in \
