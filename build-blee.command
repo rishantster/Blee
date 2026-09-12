@@ -236,6 +236,7 @@ python3 scripts/apply-blee-final-hardening-2.py
 python3 scripts/apply-blee-runtime-reliability.py
 python3 scripts/apply-blee-ble-transport-v4.py
 python3 scripts/apply-blee-ble-diagnostics.py
+python3 scripts/apply-blee-bitchat-reliability.py
 
 npm run check
 npm run build
