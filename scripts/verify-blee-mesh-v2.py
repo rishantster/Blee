@@ -121,7 +121,9 @@ def main() -> None:
         "START_STICKY", "BluetoothLeScanner", "BluetoothLeAdvertiser", "registerDefaultNetworkCallback",
         "attemptSenderFundedSettlement", "eth_sendRawTransaction", "SENDER_FUNDED_RAW_TX", "TRUSTED_CHAIN_ID = 5042002L",
         "BLEE_BLUETOOTH_DISCOVERY_V2_2", "ADVERTISE_MODE_LOW_LATENCY", "ADVERTISE_TX_POWER_HIGH", "SCAN_MODE_LOW_LATENCY",
-        "MATCH_MODE_AGGRESSIVE", "CONNECTION_PRIORITY_HIGH", "PHY_LE_CODED_MASK",
+        "MATCH_MODE_AGGRESSIVE", "CONNECTION_PRIORITY_HIGH", "BLEE_RADIO_ARBITRATION_V2", "BLEE_SAFE_GATT_BOOTSTRAP_1M_V1",
+        "localRoleTokenPayload", "rememberPeerRoleToken", "pauseScanForGatt", "advertiser_slot_busy_scanner_first",
+        "addServiceData(new ParcelUuid(SERVICE_UUID), localRoleTokenPayload())",
         "BLEE_NATIVE_LIFECYCLE_HARDENING_V1", "bluetoothStateReceiver", "PEER_STALE_MS", "MAX_ASSEMBLIES",
         "MAX_PACKET_BYTES", "reconcileCanonicalReceipts", "CHAIN_CONFIRMED", "R.drawable.blee_notification",
     ))
@@ -171,7 +173,7 @@ def main() -> None:
     print("- wallet backup import is size/format/KDF bounded")
     print("- sender-funded raw settlement retained; courier never signs or pays gas")
     print("- stale React journal writes cannot downgrade native payment state")
-    print("- BLE scanning/advertising has runtime permissions + radio recovery")
+    print("- BLE uses deterministic roles, scanner-first recovery, safe 1M GATT bootstrap and radio handoff")
     print("- fragment assemblies and stale peer caches are bounded")
     print("- relay receipt hash is pinned to sender-signed transaction")
     print("- relay-reported state is independently promoted to CHAIN_CONFIRMED online")
