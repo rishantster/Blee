@@ -171,14 +171,14 @@ def patch_service(native_dir: Path) -> None:
     )
     text = replace_once(
         text,
-        "            advertiseStarting = false;\n            advertising = true;\n            Log.i(TAG, \"BLE advertising active\");",
-        "            advertiseStarting = false;\n            advertising = true;\n            diagAdvertiseSuccesses++;\n            diagLastPhase = \"advertising_active\";\n            diagLastError = \"\";\n            Log.i(TAG, \"BLE advertising active\");",
+        "            advertiseStarting = false;\n            advertising = true;\n            advertiseRetryCount = 0;\n            nextAdvertiseAttemptAt = 0L;\n            Log.i(TAG, \"BLE advertising active\");",
+        "            advertiseStarting = false;\n            advertising = true;\n            advertiseRetryCount = 0;\n            nextAdvertiseAttemptAt = 0L;\n            diagAdvertiseSuccesses++;\n            diagLastPhase = \"advertising_active\";\n            diagLastError = \"\";\n            Log.i(TAG, \"BLE advertising active\");",
         "advertising success",
     )
     text = replace_once(
         text,
-        "            advertiseStarting = false;\n            advertising = false;\n            Log.w(TAG, \"BLE advertising failed: \" + errorCode + \"; rearming\");",
-        "            advertiseStarting = false;\n            advertising = false;\n            diagAdvertiseFailures++;\n            diagLastPhase = \"advertising_failed\";\n            diagLastError = \"advertise_error_\" + errorCode;\n            Log.w(TAG, \"BLE advertising failed: \" + errorCode + \"; rearming\");",
+        "            advertising = false;\n            advertiseRetryCount = Math.min(advertiseRetryCount + 1, 6);\n            Log.w(TAG, \"BLE advertising failed: \" + errorCode + \"; rearming\");",
+        "            advertising = false;\n            advertiseRetryCount = Math.min(advertiseRetryCount + 1, 6);\n            diagAdvertiseFailures++;\n            diagLastPhase = \"advertising_failed\";\n            diagLastError = \"advertise_error_\" + errorCode;\n            Log.w(TAG, \"BLE advertising failed: \" + errorCode + \"; rearming\");",
         "advertising failure",
     )
     text = replace_once(
@@ -233,14 +233,14 @@ def patch_service(native_dir: Path) -> None:
 
     bad_identity = '''            if (wallet == null || !wallet.matches("^0x[0-9a-fA-F]{40}$")) {
                 Log.w(TAG, "BLE identity read returned no wallet (bytes=" + value.length + ")");
-                return;
+                return false;
             }'''
     bad_identity_new = '''            if (wallet == null || !wallet.matches("^0x[0-9a-fA-F]{40}$")) {
                 diagIdentityFailures++;
                 diagLastPhase = "identity_invalid";
                 diagLastError = "identity_bytes_" + value.length;
                 Log.w(TAG, "BLE identity read returned no wallet (bytes=" + value.length + ")");
-                return;
+                return false;
             }'''
     text = replace_once(text, bad_identity, bad_identity_new, "identity failure instrumentation")
     text = replace_once(

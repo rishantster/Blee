@@ -2,7 +2,7 @@
 
 Status: **canonical architecture for the Blee Android implementation**
 
-`main` is the release/source-of-truth branch. The supported build command is `bash build-blee.command` and the only public APK artifact name is `dist/Blee.apk`.
+`main` is the release/source-of-truth branch. The supported build command is `bash build-blee.command`. APK artifacts are versioned from Android `versionName`; release 2.6.0 produces only `dist/Blee-2.6.0.apk`.
 
 Blee is an offline-first, self-custodial payment system. Internet availability controls blockchain settlement, not whether Blee devices can create, persist, deliver, acknowledge, notify, carry or reconcile payments.
 
@@ -319,4 +319,4 @@ Before a production release, Blee still requires physical multi-device regressio
 17. Recovery comes from durable SQLite/WAL state after normal process/reboot lifecycle.
 18. Stale UI state can never downgrade newer native ledger state.
 19. Fingerprint UI appears only when compatible fingerprint hardware is actually available/enrolled.
-20. The canonical public APK filename is always `Blee.apk`.
+20. The canonical public APK filename includes Android `versionName` and is `Blee-2.6.0.apk` for this release.

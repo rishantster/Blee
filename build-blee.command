@@ -5,7 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-FINAL_APK="$ROOT/dist/Blee.apk"
+APP_VERSION="2.6.0"
+FINAL_APK="$ROOT/dist/Blee-${APP_VERSION}.apk"
 SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 TOOLS_ROOT="$ROOT/.blee-tools"
 CLI_VERSION="15859902"
@@ -16,18 +17,29 @@ rm -f "$ROOT/dist"/*.apk "$ROOT/dist"/*.apk.sha256 2>/dev/null || true
 python3 scripts/verify-canonical-build.py
 
 case "$(uname -m)" in
-  arm64)
-    CLI_ARCHIVE="commandlinetools-mac_arm64-${CLI_VERSION}_latest.zip"
-    CLI_SHA256="835b62a26162b229b441d1f6d4680383815a270809eb33522c0d480fa5002c4e"
-    ADOPTIUM_ARCH="aarch64"
-    ;;
-  x86_64)
-    CLI_ARCHIVE="commandlinetools-mac_x86_64-${CLI_VERSION}_latest.zip"
-    CLI_SHA256="c5a6378ab5cf7e0d5701921405115befff13e9ff7417fb588389338f8bd050f3"
-    ADOPTIUM_ARCH="x64"
-    ;;
-  *) echo "Unsupported Mac architecture: $(uname -m)"; exit 1 ;;
+  arm64|aarch64) ADOPTIUM_ARCH="aarch64" ;;
+  x86_64) ADOPTIUM_ARCH="x64" ;;
+  *) echo "Unsupported architecture: $(uname -m)"; exit 1 ;;
 esac
+
+case "$(uname -s)" in
+  Darwin) ADOPTIUM_OS="mac" ;;
+  Linux) ADOPTIUM_OS="linux" ;;
+  *) echo "Unsupported operating system: $(uname -s)"; exit 1 ;;
+esac
+
+if [ "$ADOPTIUM_OS" = "mac" ]; then
+  case "$(uname -m)" in
+    arm64)
+      CLI_ARCHIVE="commandlinetools-mac_arm64-${CLI_VERSION}_latest.zip"
+      CLI_SHA256="835b62a26162b229b441d1f6d4680383815a270809eb33522c0d480fa5002c4e"
+      ;;
+    x86_64)
+      CLI_ARCHIVE="commandlinetools-mac_x86_64-${CLI_VERSION}_latest.zip"
+      CLI_SHA256="c5a6378ab5cf7e0d5701921405115befff13e9ff7417fb588389338f8bd050f3"
+      ;;
+  esac
+fi
 
 if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
   echo "Node.js/npm are required. Install Node 22+ and rerun."
@@ -53,16 +65,16 @@ if command -v java >/dev/null 2>&1 && java -version >/tmp/blee-java-version.txt 
   if [ "${JAVA_MAJOR:-0}" -ge 21 ] 2>/dev/null; then JAVA_OK=1; fi
 fi
 if [ "$JAVA_OK" -ne 1 ]; then
-  JDK_DIR="$TOOLS_ROOT/jdk-21"
+  JDK_DIR="$TOOLS_ROOT/jdk-21-${ADOPTIUM_OS}-${ADOPTIUM_ARCH}"
   if [ ! -x "$JDK_DIR/bin/java" ] && [ ! -x "$JDK_DIR/Contents/Home/bin/java" ]; then
     echo "Java 21 not found. Installing a private Temurin JDK 21 (no sudo)..."
     TMP_JDK="$(mktemp -d)"
     trap 'rm -rf "${TMP_JDK:-}" "${TMP_SDK:-}"' EXIT
     CACHE_DIR="$TOOLS_ROOT/cache"; mkdir -p "$CACHE_DIR"
-    JDK_ARCHIVE="$CACHE_DIR/temurin21-${ADOPTIUM_ARCH}.tar.gz"
+    JDK_ARCHIVE="$CACHE_DIR/temurin21-${ADOPTIUM_OS}-${ADOPTIUM_ARCH}.tar.gz"
     if [ ! -s "$JDK_ARCHIVE" ]; then
       curl --fail --location --retry 4 --retry-delay 2 \
-        "https://api.adoptium.net/v3/binary/latest/21/ga/mac/${ADOPTIUM_ARCH}/jdk/hotspot/normal/eclipse" \
+        "https://api.adoptium.net/v3/binary/latest/21/ga/${ADOPTIUM_OS}/${ADOPTIUM_ARCH}/jdk/hotspot/normal/eclipse" \
         --output "$JDK_ARCHIVE"
     fi
     tar -xzf "$JDK_ARCHIVE" -C "$TMP_JDK"
@@ -77,14 +89,18 @@ fi
 
 echo "============================================================"
 echo "Building Blee"
-echo "Canonical artifact: dist/Blee.apk"
+echo "Canonical artifact: dist/Blee-${APP_VERSION}.apk"
 echo "============================================================"
 echo "Node: $(node --version)"
 echo "npm: $(npm --version)"
 echo "Java:"; java -version
 
 mkdir -p "$SDK_ROOT/cmdline-tools"
-if [ ! -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+if ! command -v sdkmanager >/dev/null 2>&1 && [ ! -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+  if [ "$(uname -s)" != "Darwin" ]; then
+    echo "Android sdkmanager is required on $(uname -s). Configure ANDROID_HOME or add sdkmanager to PATH."
+    exit 1
+  fi
   TMP_SDK="$(mktemp -d)"
   trap 'rm -rf "${TMP_JDK:-}" "${TMP_SDK:-}"' EXIT
   echo "Installing Android command-line tools..."
@@ -191,6 +207,7 @@ python3 scripts/apply-blee-2.5-ui.py
 python3 scripts/apply-blee-original-brand.py
 python3 scripts/apply-blee-2.5.py
 python3 scripts/apply-blee-final-hardening.py --web
+python3 scripts/apply-blee-single-ble-owner.py
 
 npm install --no-audit --no-fund
 npm run check
@@ -204,8 +221,8 @@ from pathlib import Path
 import re
 gradle=Path('android/app/build.gradle')
 g=gradle.read_text()
-g=re.sub(r'versionCode\s+\d+', 'versionCode 15', g)
-g=re.sub(r'versionName\s+"[^"]+"', 'versionName "2.5.1"', g)
+g=re.sub(r'versionCode\s+\d+', 'versionCode 16', g)
+g=re.sub(r'versionName\s+"[^"]+"', 'versionName "2.6.0"', g)
 gradle.write_text(g)
 PY
 
@@ -240,12 +257,12 @@ mkdir -p "$ROOT/dist"
 rm -f "$ROOT/dist"/*.apk "$ROOT/dist"/*.apk.sha256 2>/dev/null || true
 cp "$APK" "$FINAL_APK"
 
-if find "$ROOT/dist" -maxdepth 1 -type f -name 'Blee-*.apk' | grep -q .; then
-  echo "ERROR: versioned APK survived canonical build"
+[ -f "$FINAL_APK" ] || { echo "ERROR: versioned Blee APK was not produced: $FINAL_APK"; exit 1; }
+[ "$(find "$ROOT/dist" -maxdepth 1 -type f -name '*.apk' | wc -l | tr -d ' ')" = "1" ] || {
+  echo "ERROR: dist must contain exactly one APK"
   find "$ROOT/dist" -maxdepth 1 -type f -name '*.apk' -print
   exit 1
-fi
-[ -f "$FINAL_APK" ] || { echo "ERROR: canonical Blee.apk was not produced"; exit 1; }
+}
 
 if command -v shasum >/dev/null 2>&1; then
   shasum -a 256 "$FINAL_APK" > "$FINAL_APK.sha256"
