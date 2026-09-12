@@ -37,7 +37,6 @@ def patch_service(native_dir):
 
     # The fragment owns candidate admission now; remove the earlier direct-connect implementation.
     start = text.find("    private void maybeConnect(BluetoothDevice device) {", text.find("BLEE_BLE_DIAGNOSTICS_V1"))
-    # First occurrence is our injected method. Find the legacy occurrence after the fragment.
     start = text.find("    private void maybeConnect(BluetoothDevice device) {", start + 1)
     end = text.find("\n    private final BluetoothGattCallback clientCallback", start)
     if start < 0 or end < 0:
@@ -47,7 +46,6 @@ def patch_service(native_dir):
     loop = "                if (!scanning || !advertising) startBluetooth();"
     text = once(text, loop, loop + "\n                maintainBleReliability();", "service loop")
 
-    # Do not hammer a controller that has explicitly reported no advertiser slot.
     text = once(
         text,
         "            if (advertiser != null && !advertising && !advertiseStarting && now >= nextAdvertiseAttemptAt) {",
@@ -55,9 +53,6 @@ def patch_service(native_dir):
         "advertiser suppression gate",
     )
 
-    # Publish a tiny stable role token in the scan response. It lets two modern
-    # Blee phones deterministically choose which side opens the client GATT link,
-    # while the main advertisement stays a compact service-UUID beacon.
     text = once(
         text,
         "                    advertiser.startAdvertising(settings, data, advertiseCallback);",
@@ -68,8 +63,6 @@ def patch_service(native_dir):
         "role-token scan response",
     )
 
-    # Keep low-latency scanning out of the way while a central GATT connection is
-    # being established. Several Android vendor stacks stall if both run at once.
     text = once(
         text,
         "            if (scanner != null && !scanning && now - lastScanStartAt > 900L) {",
@@ -174,6 +167,59 @@ def patch_service(native_dir):
     path.write_text(text)
 
 
+def patch_runtime_diagnostics():
+    path = ROOT / "src/components/BleeRuntime.tsx"
+    if not path.is_file():
+        raise SystemExit("BLE reliability: generated BleeRuntime.tsx is missing")
+    text = path.read_text()
+    if "BLEE_RADIO_ARBITRATION_DIAGNOSTICS_V2" in text:
+        return
+
+    old = '''  if (numberValue(d.advertiseFailures) > 0 && !bool(d.advertiserActive)) {
+    return `BLE advertising is failing (${String(d.lastError || 'unknown error')}).`;
+  }
+  if (!bool(d.advertiserActive)) return 'Blee is not currently advertising over Bluetooth.';
+  if (!bool(d.scannerActive)) return 'Blee is not currently scanning over Bluetooth.';
+  if (numberValue(d.rawScanResults) === 0) return 'Scanner is active, but this phone has not seen any BLE advertisements yet.';
+  if (numberValue(d.bleeAdvertisements) === 0) return 'Bluetooth scanning works, but no Blee advertisement has been detected.';
+  if (numberValue(d.gattAttempts) === 0) return 'A Blee advertisement was seen, but a GATT connection was not attempted.';
+  if (numberValue(d.gattConnected) === 0) return 'Blee sees the other phone, but the BLE GATT connection is failing.';'''
+    new = '''  // BLEE_RADIO_ARBITRATION_DIAGNOSTICS_V2
+  const radioMode = String(d.radioMode || '');
+  const advertiserSlotBusy = String(d.lastAdvertiseError || '') === 'advertise_error_2'
+    || numberValue(d.advertiserResourceFailures) > 0;
+  if (!bool(d.scannerActive) && !bool(d.gattScanPaused)) return 'Blee is not currently scanning over Bluetooth.';
+  if (numberValue(d.rawScanResults) === 0) return 'Scanner is active, but this phone has not seen any BLE advertisements yet.';
+  if (numberValue(d.bleeAdvertisements) === 0) {
+    return advertiserSlotBusy && radioMode === 'scanner_first'
+      ? 'This phone has no free advertiser slot, so Blee switched to scanner-first mode and is waiting to see the other phone.'
+      : 'Bluetooth scanning works, but no Blee advertisement has been detected.';
+  }
+  if (numberValue(d.gattAttempts) === 0) return 'A Blee advertisement was seen. Blee is coordinating which phone should open the GATT link.';
+  if (numberValue(d.gattConnected) === 0) {
+    const detail = String(d.lastGattError || '').trim();
+    return detail
+      ? `Blee sees the other phone, but the GATT handshake is retrying (${detail}).`
+      : 'Blee sees the other phone, but the GATT handshake has not completed yet.';
+  }'''
+    text = once(text, old, new, "runtime diagnostic summary")
+
+    rows = "  ['advertiserActive', 'Advertiser active'],\n  ['gattServerActive', 'GATT server active'],"
+    replacement = """  ['advertiserActive', 'Advertiser active'],
+  ['radioMode', 'Radio mode'],
+  ['advertiserResourceFailures', 'Advertiser slot failures'],
+  ['gattScanPaused', 'Scan paused for GATT'],
+  ['gattServerActive', 'GATT server active'],"""
+    text = once(text, rows, replacement, "runtime diagnostic rows")
+    errors = "  ['lastPhase', 'Last BLE phase'],\n  ['lastError', 'Last BLE error'],"
+    error_replacement = """  ['lastPhase', 'Last BLE phase'],
+  ['lastAdvertiseError', 'Last advertise error'],
+  ['lastGattError', 'Last GATT error'],
+  ['lastError', 'Last BLE error'],"""
+    text = once(text, errors, error_replacement, "runtime diagnostic errors")
+    path.write_text(text)
+
+
 def verify(native_dir):
     text = (native_dir / "BleeMeshService.java").read_text()
     required = (
@@ -204,12 +250,17 @@ def verify(native_dir):
         raise SystemExit("BLE reliability verification failed: maybeConnect is not single-owner")
     if "connectGattWithPreferredPhy" in text:
         raise SystemExit("BLE reliability verification failed: multi-PHY negotiation returned to the initial GATT handshake")
+
+    runtime = (ROOT / "src/components/BleeRuntime.tsx").read_text()
+    if "BLEE_RADIO_ARBITRATION_DIAGNOSTICS_V2" not in runtime or "lastGattError" not in runtime:
+        raise SystemExit("BLE reliability verification failed: radio-arbitration diagnostics UI missing")
     print("Blee Bitchat-style BLE radio arbitration installed and verified")
 
 
 def main():
     native_dir = locate_activity().parent
     patch_service(native_dir)
+    patch_runtime_diagnostics()
     verify(native_dir)
 
 
