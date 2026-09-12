@@ -11,7 +11,6 @@ TOOLS_ROOT="$ROOT/.blee-tools"
 CLI_VERSION="15859902"
 mkdir -p "$TOOLS_ROOT" "$ROOT/dist"
 
-# Never let a stale/versioned artifact survive and look like the result of this build.
 rm -f "$ROOT/dist"/*.apk "$ROOT/dist"/*.apk.sha256 2>/dev/null || true
 
 python3 scripts/verify-canonical-build.py
@@ -135,7 +134,6 @@ PY
     "$SOURCE_TMP/" "$ROOT/"
   rm -rf "$SOURCE_TMP"
 
-  # Fail immediately if reconstruction somehow replaced canonical control-plane files.
   grep -q 'CANONICAL_BLEE_BUILDER_V2' "$ROOT/build-blee.command" || {
     echo "ERROR: canonical build entrypoint was replaced during source materialization"
     exit 1
@@ -217,21 +215,11 @@ python3 scripts/apply-blee-mesh-v2-android.py
 python3 scripts/apply-blee-2.2-android.py
 python3 scripts/apply-blee-2.5-android.py
 python3 scripts/apply-blee-final-hardening.py --android
-
-# Final hardening v2 closes the remaining cross-layer invariants: non-destructive
-# ACKs, sender/outbox auto-settlement, native monotonic state and peer-specific
-# bounded copy budgets. It patches both generated Android and web source, so the
-# web bundle is rebuilt and synced without regenerating the Android project.
 python3 scripts/apply-blee-final-hardening-2.py
-# Runtime reliability closes the two device-level regressions that are invisible
-# to same-Wi-Fi testing: BLE-native peer identity/discovery and background session
-# preservation. It patches both generated Android and useBlee, so run it before
-# the final web rebuild/sync.
 python3 scripts/apply-blee-runtime-reliability.py
-# BLE v4 is the physical-device discovery layer. It removes dependence on Android
-# controller UUID filtering, keeps scan/advertise health independent, and makes
-# wallet identity fit the default ATT payload so discovery does not wait on MTU.
 python3 scripts/apply-blee-ble-transport-v4.py
+python3 scripts/apply-blee-ble-diagnostics.py
+
 npm run check
 npm run build
 npx cap sync android
@@ -252,7 +240,6 @@ mkdir -p "$ROOT/dist"
 rm -f "$ROOT/dist"/*.apk "$ROOT/dist"/*.apk.sha256 2>/dev/null || true
 cp "$APK" "$FINAL_APK"
 
-# Enforce the public artifact contract. Any versioned Blee APK is a build failure.
 if find "$ROOT/dist" -maxdepth 1 -type f -name 'Blee-*.apk' | grep -q .; then
   echo "ERROR: versioned APK survived canonical build"
   find "$ROOT/dist" -maxdepth 1 -type f -name '*.apk' -print
