@@ -228,6 +228,10 @@ python3 scripts/apply-blee-final-hardening-2.py
 # preservation. It patches both generated Android and useBlee, so run it before
 # the final web rebuild/sync.
 python3 scripts/apply-blee-runtime-reliability.py
+# BLE v4 is the physical-device discovery layer. It removes dependence on Android
+# controller UUID filtering, keeps scan/advertise health independent, and makes
+# wallet identity fit the default ATT payload so discovery does not wait on MTU.
+python3 scripts/apply-blee-ble-transport-v4.py
 npm run check
 npm run build
 npx cap sync android
