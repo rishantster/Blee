@@ -63,12 +63,11 @@ def patch_service(native_dir):
         "role-token scan response",
     )
 
-    text = once(
-        text,
-        "            if (scanner != null && !scanning && now - lastScanStartAt > 900L) {",
-        "            if (scanner != null && !scanning && clientGatts.isEmpty() && bleLinkStates.isEmpty() && now - lastScanStartAt > 900L) {",
-        "GATT-exclusive scan gate",
-    )
+    # Keep scanning alive while a direct GATT connection is being established.
+    # The real Bitchat Android client calls connectGatt() directly from a fresh
+    # scan result and does not tear the scanner down first. This also lets Blee
+    # continue receiving fresh rotating BLE transport addresses while a previous
+    # connection attempt is pending.
 
     success = '''            diagAdvertiseSuccesses++;
             diagLastPhase = "advertising_active";
@@ -225,17 +224,20 @@ def verify(native_dir):
     required = (
         "BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1",
         "BLEE_RADIO_ARBITRATION_V2",
+        "BLEE_BITCHAT_ANDROID_GATT_PARITY_V1",
         "BLEE_SAFE_GATT_BOOTSTRAP_1M_V1",
         "BLE_MAX_CLIENT_LINKS = 1",
+        "BLE_CONNECT_FRESHNESS_MS = 4_000L",
+        "BLE_GATT_CONNECT_TIMEOUT_MS = 30_000L",
         "bleCandidateScore",
         "localRoleTokenPayload",
         "rememberPeerRoleToken",
         "advertiser_slot_busy_scanner_first",
-        "pauseScanForGatt",
-        "gatt_radio_handoff",
         "connectGattReliable",
         "device.connectGatt(this, false, clientCallback, BluetoothDevice.TRANSPORT_LE)",
-        "gatt_stall_timeout",
+        "scheduleGattConnectTimeout",
+        "gatt_connect_timeout",
+        "gatt_operation_timeout",
         "scan_watchdog_restart",
         "requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)",
         "maintainBleReliability();",
@@ -251,10 +253,17 @@ def verify(native_dir):
     if "connectGattWithPreferredPhy" in text:
         raise SystemExit("BLE reliability verification failed: multi-PHY negotiation returned to the initial GATT handshake")
 
+    begin = text[text.index("private void beginGattConnection"):text.index("private void openGattConnection")]
+    if "pauseScanForGatt();" in begin or "postDelayed(() -> openGattConnection" in begin:
+        raise SystemExit("BLE reliability verification failed: scanner is still stopped/delayed before connectGatt")
+    opening = text[text.index("private void openGattConnection"):text.index("private void scheduleGattConnectTimeout")]
+    if "touchGatt(gatt)" in opening:
+        raise SystemExit("BLE reliability verification failed: operation watchdog starts before STATE_CONNECTED")
+
     runtime = (ROOT / "src/components/BleeRuntime.tsx").read_text()
     if "BLEE_RADIO_ARBITRATION_DIAGNOSTICS_V2" not in runtime or "lastGattError" not in runtime:
         raise SystemExit("BLE reliability verification failed: radio-arbitration diagnostics UI missing")
-    print("Blee Bitchat-style BLE radio arbitration installed and verified")
+    print("Blee Bitchat-style Android GATT lifecycle installed and verified")
 
 
 def main():
