@@ -48,7 +48,8 @@
         bleCandidates.put(address, new BleCandidate(device, address, rssi, seenAt, needsIdentity, hasPacket));
         pruneBleCandidates(now);
         trimBleCandidates(now);
-        requestConnectionPump(0L);
+        long admissionDelay = hasPacket ? 0L : 75L + Math.abs(address.hashCode() % 325);
+        requestConnectionPump(admissionDelay);
     }
 
     private void pruneBleCandidates(long now) {
@@ -89,6 +90,10 @@
         Collections.sort(ranked, (a, b) -> Integer.compare(bleCandidateScore(b, now), bleCandidateScore(a, now)));
         for (BleCandidate c : ranked) {
             if (bleLinkStates.containsKey(c.address)) continue;
+            Long identityAt = peerIdentityAt.get(c.address);
+            boolean stillNeedsIdentity = identityAt == null || now - identityAt > 45_000L;
+            boolean stillHasPacket = db != null && !db.duePacketsForPeer(now, c.address, 1).isEmpty();
+            if (!stillNeedsIdentity && !stillHasPacket) { bleCandidates.remove(c.address); continue; }
             long cool = bleCooldownUntil.containsKey(c.address) ? bleCooldownUntil.get(c.address) : 0L;
             long settle = bleDisconnectUntil.containsKey(c.address) ? bleDisconnectUntil.get(c.address) : 0L;
             if (now < cool || now < settle) continue;
@@ -230,7 +235,7 @@
         if (owned) {
             clientGatts.remove(address); gattProgressAt.remove(address); gattWatchdogDueAt.remove(address); SendState.clear(gatt);
             long now = System.currentTimeMillis();
-            if (failed && !established) markBleFailure(address, now);
+            if (failed) markBleFailure(address, now);
             else { bleLinkStates.remove(address); if (established) bleDisconnectUntil.put(address, now + BLE_DISCONNECT_SETTLE_MS); }
         }
         try { gatt.disconnect(); } catch (Throwable ignored) {} try { gatt.close(); } catch (Throwable ignored) {}
@@ -241,6 +246,7 @@
         bluetoothStopping = true;
         List<BluetoothGatt> snapshot; synchronized (clientGatts) { snapshot = new ArrayList<BluetoothGatt>(clientGatts.values()); }
         clientGatts.clear(); gattProgressAt.clear(); gattWatchdogDueAt.clear(); bleCandidates.clear(); bleLinkStates.clear();
+        bleFailures.clear(); bleCooldownUntil.clear(); bleDisconnectUntil.clear();
         for (BluetoothGatt gatt : snapshot) { try { SendState.clear(gatt); } catch (Throwable ignored) {} try { gatt.disconnect(); } catch (Throwable ignored) {} try { gatt.close(); } catch (Throwable ignored) {} }
         bluetoothStopping = false;
     }
