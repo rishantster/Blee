@@ -90,15 +90,24 @@ PY
 
 grep -q 'BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1' mesh-v2/android/BleeBleReliability.javafrag \
   || fail "Bitchat BLE reliability fragment marker missing"
-grep -q 'BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1' scripts/apply-blee-bitchat-reliability.py \
-  || fail "Bitchat reliability patcher marker missing"
-grep -q 'connectGattWithPreferredPhy' mesh-v2/android/BleeBleReliability.javafrag \
-  || fail "adaptive BLE PHY connection helper missing"
-grep -q 'PHY_LE_CODED_MASK' mesh-v2/android/BleeBleReliability.javafrag \
-  || fail "LE Coded PHY fallback support missing"
-grep -q 'isLeCodedPhySupported' mesh-v2/android/BleeBleReliability.javafrag \
-  || fail "LE Coded PHY capability gate missing"
-pass "Bitchat-derived reliability + adaptive PHY layer pinned"
+grep -q 'BLEE_RADIO_ARBITRATION_V2' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "vendor-neutral BLE radio arbitration marker missing"
+grep -q 'BLEE_SAFE_GATT_BOOTSTRAP_1M_V1' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "safe 1M GATT bootstrap marker missing"
+grep -q 'localRoleTokenPayload' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "deterministic BLE role token missing"
+grep -q 'advertiser_slot_busy_scanner_first' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "scanner-first advertiser recovery missing"
+grep -q 'pauseScanForGatt' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "GATT radio handoff missing"
+grep -q 'BLEE_RADIO_ARBITRATION_V2' scripts/apply-blee-bitchat-reliability.py \
+  || fail "Bitchat radio-arbitration patcher marker missing"
+grep -q 'addServiceData(new ParcelUuid(SERVICE_UUID), localRoleTokenPayload())' scripts/apply-blee-bitchat-reliability.py \
+  || fail "role-token scan response wiring missing"
+if grep -q 'connectGattWithPreferredPhy' mesh-v2/android/BleeBleReliability.javafrag; then
+  fail "multi-PHY negotiation must not run during initial GATT connection"
+fi
+pass "Bitchat-derived vendor-neutral BLE radio arbitration pinned"
 
 for forbidden in \
   'dist/*.apk' \
