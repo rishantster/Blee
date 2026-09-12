@@ -37,6 +37,7 @@ build = require_all(
         'apply-blee-final-hardening.py --android',
         'apply-blee-final-hardening-2.py',
         'apply-blee-runtime-reliability.py',
+        'apply-blee-ble-transport-v4.py',
         'verify-blee-mesh-v2.py',
         'verify-canonical-build.py',
         'rm -f "$ROOT/dist"/*.apk',
@@ -68,9 +69,6 @@ if "dist/Blee.apk" not in ui:
 if "standalone Blee logo" not in ui or "cold-launch" not in ui:
     raise SystemExit("UI contract does not pin the standalone Blee launch identity")
 
-# The standalone logo is a canonical product asset. Pin its bytes so source
-# materialization or later patches cannot silently replace it with a generated
-# placeholder, wordmark, or old icon.
 logo = ROOT / "brand-assets/blee-logo.svg"
 if not logo.is_file():
     raise SystemExit("Canonical standalone Blee logo is missing")
@@ -149,6 +147,18 @@ require_all(
         "nearbyPeers",
         "peerChanged",
         "blee:native-nearby",
+    ),
+)
+require_all(
+    "scripts/apply-blee-ble-transport-v4.py",
+    (
+        "BLEE_BLE_TRANSPORT_V4",
+        "BLEE_ACTIVE_WALLET_RESOLUTION_V4",
+        "Collections.<ScanFilter>emptyList()",
+        "onStartFailure(int errorCode)",
+        "walletFromBytes",
+        "if (!scanning || !advertising) startBluetooth();",
+        "BLE peer resolved",
     ),
 )
 require_all(
