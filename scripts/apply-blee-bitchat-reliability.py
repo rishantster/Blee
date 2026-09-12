@@ -22,8 +22,10 @@ def once(text, old, new, label):
 def patch_service(native_dir):
     path = native_dir / "BleeMeshService.java"
     text = path.read_text()
-    if "BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1" in text:
+    if "BLEE_RADIO_ARBITRATION_V2" in text:
         return
+    if "BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1" in text:
+        raise SystemExit("BLE reliability: stale generated Android service; rerun the canonical build from a clean android directory")
     if "BLEE_BLE_TRANSPORT_V4" not in text or "BLEE_BLE_DIAGNOSTICS_V1" not in text:
         raise SystemExit("BLE reliability: transport v4 + diagnostics must run first")
     if not FRAGMENT.is_file():
@@ -44,6 +46,64 @@ def patch_service(native_dir):
 
     loop = "                if (!scanning || !advertising) startBluetooth();"
     text = once(text, loop, loop + "\n                maintainBleReliability();", "service loop")
+
+    # Do not hammer a controller that has explicitly reported no advertiser slot.
+    text = once(
+        text,
+        "            if (advertiser != null && !advertising && !advertiseStarting && now >= nextAdvertiseAttemptAt) {",
+        "            if (advertiser != null && !advertising && !advertiseStarting && now >= nextAdvertiseAttemptAt && now >= advertisingSuppressedUntil) {",
+        "advertiser suppression gate",
+    )
+
+    # Publish a tiny stable role token in the scan response. It lets two modern
+    # Blee phones deterministically choose which side opens the client GATT link,
+    # while the main advertisement stays a compact service-UUID beacon.
+    text = once(
+        text,
+        "                    advertiser.startAdvertising(settings, data, advertiseCallback);",
+        '''                    AdvertiseData scanResponse = new AdvertiseData.Builder()
+                        .addServiceData(new ParcelUuid(SERVICE_UUID), localRoleTokenPayload())
+                        .build();
+                    advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback);''',
+        "role-token scan response",
+    )
+
+    # Keep low-latency scanning out of the way while a central GATT connection is
+    # being established. Several Android vendor stacks stall if both run at once.
+    text = once(
+        text,
+        "            if (scanner != null && !scanning && now - lastScanStartAt > 900L) {",
+        "            if (scanner != null && !scanning && clientGatts.isEmpty() && bleLinkStates.isEmpty() && now - lastScanStartAt > 900L) {",
+        "GATT-exclusive scan gate",
+    )
+
+    success = '''            diagAdvertiseSuccesses++;
+            diagLastPhase = "advertising_active";
+            diagLastError = "";'''
+    text = once(text, success, success + "\n            onAdvertiseStarted();", "advertiser recovery success")
+
+    failure = '''            diagAdvertiseFailures++;
+            diagLastPhase = "advertising_failed";
+            diagLastError = "advertise_error_" + errorCode;'''
+    text = once(text, failure, failure + "\n            onAdvertiseFailed(errorCode);", "advertiser recovery failure")
+
+    scan_seen = '''            diagBleeAdvertisements++;
+            diagLastPhase = "blee_advertisement_seen";'''
+    text = once(text, scan_seen, scan_seen + "\n            rememberPeerRoleToken(result);", "peer role token")
+
+    snapshot = '            out.put("lastAdvertiseAttemptAt", service.lastAdvertiseAttemptAt);'
+    text = once(
+        text,
+        snapshot,
+        snapshot + '''
+            out.put("radioMode", service.bleRadioMode());
+            out.put("advertiserResourceFailures", service.advertiserResourceFailures);
+            out.put("advertisingSuppressedUntil", service.advertisingSuppressedUntil);
+            out.put("lastAdvertiseError", service.diagLastAdvertiseError);
+            out.put("lastGattError", service.diagLastGattError);
+            out.put("gattScanPaused", service.gattScanPaused);''',
+        "radio diagnostics",
+    )
 
     cs = text.find("        @Override public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {")
     ce = text.find("\n        @Override public void onServicesDiscovered", cs)
@@ -109,6 +169,8 @@ def patch_service(native_dir):
 
     stop = "        try { if (gattServer != null) gattServer.close(); } catch (Throwable ignored) {}"
     text = once(text, stop, stop + "\n        resetClientGattConnections();", "stopBluetooth")
+    reset = "        nextAdvertiseAttemptAt = 0L;"
+    text = once(text, reset, reset + "\n        resetAdvertiserRecovery();", "advertiser recovery reset")
     path.write_text(text)
 
 
@@ -116,21 +178,33 @@ def verify(native_dir):
     text = (native_dir / "BleeMeshService.java").read_text()
     required = (
         "BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1",
+        "BLEE_RADIO_ARBITRATION_V2",
+        "BLEE_SAFE_GATT_BOOTSTRAP_1M_V1",
         "BLE_MAX_CLIENT_LINKS = 1",
         "bleCandidateScore",
+        "localRoleTokenPayload",
+        "rememberPeerRoleToken",
+        "advertiser_slot_busy_scanner_first",
+        "pauseScanForGatt",
+        "gatt_radio_handoff",
+        "connectGattReliable",
+        "device.connectGatt(this, false, clientCallback, BluetoothDevice.TRANSPORT_LE)",
         "gatt_stall_timeout",
         "scan_watchdog_restart",
         "requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)",
         "maintainBleReliability();",
         "resetClientGattConnections",
         "touchGatt(gatt)",
+        "addServiceData(new ParcelUuid(SERVICE_UUID), localRoleTokenPayload())",
     )
     missing = [item for item in required if item not in text]
     if missing:
         raise SystemExit(f"BLE reliability verification failed: {missing}")
     if text.count("private void maybeConnect(BluetoothDevice device)") != 1:
         raise SystemExit("BLE reliability verification failed: maybeConnect is not single-owner")
-    print("Blee Bitchat-style BLE reliability installed and verified")
+    if "connectGattWithPreferredPhy" in text:
+        raise SystemExit("BLE reliability verification failed: multi-PHY negotiation returned to the initial GATT handshake")
+    print("Blee Bitchat-style BLE radio arbitration installed and verified")
 
 
 def main():
