@@ -159,13 +159,25 @@
         beginGattConnection(candidate);
     }
 
+    private BluetoothGatt connectGattWithPreferredPhy(BluetoothDevice device) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            int phyMask = BluetoothDevice.PHY_LE_1M_MASK;
+            try {
+                if (adapter != null && adapter.isLe2MPhySupported()) phyMask |= BluetoothDevice.PHY_LE_2M_MASK;
+                if (adapter != null && adapter.isLeCodedPhySupported()) phyMask |= BluetoothDevice.PHY_LE_CODED_MASK;
+            } catch (Throwable ignored) {}
+            return device.connectGatt(this, false, clientCallback, BluetoothDevice.TRANSPORT_LE, phyMask);
+        }
+        return device.connectGatt(this, false, clientCallback, BluetoothDevice.TRANSPORT_LE);
+    }
+
     private void beginGattConnection(BleCandidate c) {
         final long now = System.currentTimeMillis();
         if (clientGatts.containsKey(c.address)) { bleLinkStates.remove(c.address); requestConnectionPump(250L); return; }
         lastConnect.put(c.address, now);
         diagGattAttempts++; diagLastPhase = "gatt_connect_attempt"; diagLastTransportId = c.address;
         try {
-            BluetoothGatt gatt = c.device.connectGatt(this, false, clientCallback, BluetoothDevice.TRANSPORT_LE);
+            BluetoothGatt gatt = connectGattWithPreferredPhy(c.device);
             if (gatt == null) { markBleFailure(c.address, now); diagLastError = "connectGatt returned null"; requestConnectionPump(1_000L); return; }
             clientGatts.put(c.address, gatt); touchGatt(gatt);
         } catch (Throwable error) {
@@ -267,4 +279,3 @@
             handler.postDelayed(() -> startBluetooth(), 350L);
         }
     }
-
