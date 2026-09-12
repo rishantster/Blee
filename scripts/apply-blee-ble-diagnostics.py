@@ -233,14 +233,14 @@ def patch_service(native_dir: Path) -> None:
 
     bad_identity = '''            if (wallet == null || !wallet.matches("^0x[0-9a-fA-F]{40}$")) {
                 Log.w(TAG, "BLE identity read returned no wallet (bytes=" + value.length + ")");
-                return;
+                return false;
             }'''
     bad_identity_new = '''            if (wallet == null || !wallet.matches("^0x[0-9a-fA-F]{40}$")) {
                 diagIdentityFailures++;
                 diagLastPhase = "identity_invalid";
                 diagLastError = "identity_bytes_" + value.length;
                 Log.w(TAG, "BLE identity read returned no wallet (bytes=" + value.length + ")");
-                return;
+                return false;
             }'''
     text = replace_once(text, bad_identity, bad_identity_new, "identity failure instrumentation")
     text = replace_once(

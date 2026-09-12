@@ -29,7 +29,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
+          # Gradle files are also materialized during the canonical build, so
+          # setup-java cannot discover them at this point in the job.
 
       - uses: android-actions/setup-android@v3
 
