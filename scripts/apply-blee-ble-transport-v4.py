@@ -109,6 +109,7 @@ def patch_service(native_dir: Path) -> None:
     text = ensure_field(text, "    private volatile long lastScanStartAt = 0L;", "    private volatile long lastAdvertiseAttemptAt = 0L;")
     text = ensure_field(text, "    private volatile long lastBleHitAt = 0L;", "    private volatile long lastScanStartAt = 0L;")
     text = ensure_field(text, "    private volatile int advertiseRetryCount = 0;", "    private volatile long lastBleHitAt = 0L;")
+    text = ensure_field(text, "    private volatile long nextAdvertiseAttemptAt = 0L;", "    private volatile int advertiseRetryCount = 0;")
 
     if "if (!scanning) startBluetooth();" in text:
         text = text.replace("if (!scanning) startBluetooth();", "if (!scanning || !advertising) startBluetooth();", 1)
@@ -127,7 +128,7 @@ def patch_service(native_dir: Path) -> None:
             scanner = adapter.getBluetoothLeScanner();
 
             long now = System.currentTimeMillis();
-            if (advertiser != null && !advertising && !advertiseStarting && now - lastAdvertiseAttemptAt > 1200L) {
+            if (advertiser != null && !advertising && !advertiseStarting && now >= nextAdvertiseAttemptAt) {
                 advertiseStarting = true;
                 lastAdvertiseAttemptAt = now;
                 AdvertiseSettings settings = new AdvertiseSettings.Builder()
@@ -145,6 +146,7 @@ def patch_service(native_dir: Path) -> None:
                 } catch (Throwable error) {
                     advertiseStarting = false;
                     advertising = false;
+                    nextAdvertiseAttemptAt = now + 2_000L;
                     Log.w(TAG, "BLE advertising start threw: " + error.getMessage());
                 }
             } else if (advertiser == null) {
@@ -193,6 +195,7 @@ def patch_service(native_dir: Path) -> None:
         scanning = false;
         advertising = false;
         advertiseStarting = false;
+        nextAdvertiseAttemptAt = 0L;
         gattServer = null;
     }
 
@@ -204,6 +207,7 @@ def patch_service(native_dir: Path) -> None:
             advertiseStarting = false;
             advertising = true;
             advertiseRetryCount = 0;
+            nextAdvertiseAttemptAt = 0L;
             Log.i(TAG, "BLE advertising active");
         }
 
@@ -215,6 +219,7 @@ def patch_service(native_dir: Path) -> None:
                 // caused an endless 1.5-second restart loop on physical phones.
                 advertising = true;
                 advertiseRetryCount = 0;
+                nextAdvertiseAttemptAt = 0L;
                 Log.i(TAG, "BLE advertising already active");
                 return;
             }
@@ -225,6 +230,7 @@ def patch_service(native_dir: Path) -> None:
             final long retryDelay = errorCode == AdvertiseCallback.ADVERTISE_FAILED_TOO_MANY_ADVERTISERS
                 ? Math.min(60_000L, 10_000L * advertiseRetryCount)
                 : Math.min(30_000L, 2_000L * advertiseRetryCount);
+            nextAdvertiseAttemptAt = System.currentTimeMillis() + retryDelay;
             handler.postDelayed(new Runnable() {
                 @Override public void run() { startBluetooth(); }
             }, retryDelay);
@@ -555,6 +561,8 @@ def verify(native_dir: Path) -> None:
         "ADVERTISE_FAILED_ALREADY_STARTED",
         "ADVERTISE_FAILED_TOO_MANY_ADVERTISERS",
         "advertiseRetryCount",
+        "nextAdvertiseAttemptAt",
+        "now >= nextAdvertiseAttemptAt",
         "BLE advertising already active",
         "BLE advertising active",
         "Collections.<ScanFilter>emptyList()",

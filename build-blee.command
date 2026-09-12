@@ -21,7 +21,13 @@ case "$(uname -m)" in
   *) echo "Unsupported architecture: $(uname -m)"; exit 1 ;;
 esac
 
-if [ "$(uname -s)" = "Darwin" ]; then
+case "$(uname -s)" in
+  Darwin) ADOPTIUM_OS="mac" ;;
+  Linux) ADOPTIUM_OS="linux" ;;
+  *) echo "Unsupported operating system: $(uname -s)"; exit 1 ;;
+esac
+
+if [ "$ADOPTIUM_OS" = "mac" ]; then
   case "$(uname -m)" in
     arm64)
       CLI_ARCHIVE="commandlinetools-mac_arm64-${CLI_VERSION}_latest.zip"
@@ -58,16 +64,16 @@ if command -v java >/dev/null 2>&1 && java -version >/tmp/blee-java-version.txt 
   if [ "${JAVA_MAJOR:-0}" -ge 21 ] 2>/dev/null; then JAVA_OK=1; fi
 fi
 if [ "$JAVA_OK" -ne 1 ]; then
-  JDK_DIR="$TOOLS_ROOT/jdk-21"
+  JDK_DIR="$TOOLS_ROOT/jdk-21-${ADOPTIUM_OS}-${ADOPTIUM_ARCH}"
   if [ ! -x "$JDK_DIR/bin/java" ] && [ ! -x "$JDK_DIR/Contents/Home/bin/java" ]; then
     echo "Java 21 not found. Installing a private Temurin JDK 21 (no sudo)..."
     TMP_JDK="$(mktemp -d)"
     trap 'rm -rf "${TMP_JDK:-}" "${TMP_SDK:-}"' EXIT
     CACHE_DIR="$TOOLS_ROOT/cache"; mkdir -p "$CACHE_DIR"
-    JDK_ARCHIVE="$CACHE_DIR/temurin21-${ADOPTIUM_ARCH}.tar.gz"
+    JDK_ARCHIVE="$CACHE_DIR/temurin21-${ADOPTIUM_OS}-${ADOPTIUM_ARCH}.tar.gz"
     if [ ! -s "$JDK_ARCHIVE" ]; then
       curl --fail --location --retry 4 --retry-delay 2 \
-        "https://api.adoptium.net/v3/binary/latest/21/ga/mac/${ADOPTIUM_ARCH}/jdk/hotspot/normal/eclipse" \
+        "https://api.adoptium.net/v3/binary/latest/21/ga/${ADOPTIUM_OS}/${ADOPTIUM_ARCH}/jdk/hotspot/normal/eclipse" \
         --output "$JDK_ARCHIVE"
     fi
     tar -xzf "$JDK_ARCHIVE" -C "$TMP_JDK"

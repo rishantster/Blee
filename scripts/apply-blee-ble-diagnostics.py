@@ -171,8 +171,8 @@ def patch_service(native_dir: Path) -> None:
     )
     text = replace_once(
         text,
-        "            advertiseStarting = false;\n            advertising = true;\n            advertiseRetryCount = 0;\n            Log.i(TAG, \"BLE advertising active\");",
-        "            advertiseStarting = false;\n            advertising = true;\n            advertiseRetryCount = 0;\n            diagAdvertiseSuccesses++;\n            diagLastPhase = \"advertising_active\";\n            diagLastError = \"\";\n            Log.i(TAG, \"BLE advertising active\");",
+        "            advertiseStarting = false;\n            advertising = true;\n            advertiseRetryCount = 0;\n            nextAdvertiseAttemptAt = 0L;\n            Log.i(TAG, \"BLE advertising active\");",
+        "            advertiseStarting = false;\n            advertising = true;\n            advertiseRetryCount = 0;\n            nextAdvertiseAttemptAt = 0L;\n            diagAdvertiseSuccesses++;\n            diagLastPhase = \"advertising_active\";\n            diagLastError = \"\";\n            Log.i(TAG, \"BLE advertising active\");",
         "advertising success",
     )
     text = replace_once(
