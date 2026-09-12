@@ -177,8 +177,8 @@ def patch_service(native_dir: Path) -> None:
     )
     text = replace_once(
         text,
-        "            advertiseStarting = false;\n            advertising = false;\n            Log.w(TAG, \"BLE advertising failed: \" + errorCode + \"; rearming\");",
-        "            advertiseStarting = false;\n            advertising = false;\n            diagAdvertiseFailures++;\n            diagLastPhase = \"advertising_failed\";\n            diagLastError = \"advertise_error_\" + errorCode;\n            Log.w(TAG, \"BLE advertising failed: \" + errorCode + \"; rearming\");",
+        "            advertising = false;\n            Log.w(TAG, \"BLE advertising failed: \" + errorCode + \"; rearming\");",
+        "            advertising = false;\n            diagAdvertiseFailures++;\n            diagLastPhase = \"advertising_failed\";\n            diagLastError = \"advertise_error_\" + errorCode;\n            Log.w(TAG, \"BLE advertising failed: \" + errorCode + \"; rearming\");",
         "advertising failure",
     )
     text = replace_once(

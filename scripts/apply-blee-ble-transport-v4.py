@@ -207,8 +207,17 @@ def patch_service(native_dir: Path) -> None:
 
         @Override public void onStartFailure(int errorCode) {
             advertiseStarting = false;
+            if (errorCode == AdvertiseCallback.ADVERTISE_FAILED_ALREADY_STARTED) {
+                // Android reports code 3 when this exact callback is already
+                // registered. The advertiser is healthy; treating it as down
+                // caused an endless 1.5-second restart loop on physical phones.
+                advertising = true;
+                Log.i(TAG, "BLE advertising already active");
+                return;
+            }
             advertising = false;
             Log.w(TAG, "BLE advertising failed: " + errorCode + "; rearming");
+            try { if (advertiser != null) advertiser.stopAdvertising(this); } catch (Throwable ignored) {}
             handler.postDelayed(new Runnable() {
                 @Override public void run() { startBluetooth(); }
             }, 1500L);
@@ -453,6 +462,8 @@ def verify(native_dir: Path) -> None:
         "advertising = false",
         "advertiseStarting",
         "onStartFailure(int errorCode)",
+        "ADVERTISE_FAILED_ALREADY_STARTED",
+        "BLE advertising already active",
         "BLE advertising active",
         "Collections.<ScanFilter>emptyList()",
         "isBleeAdvertisement",

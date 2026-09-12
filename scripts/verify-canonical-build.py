@@ -159,6 +159,8 @@ require_all(
         "BLEE_ACTIVE_WALLET_RESOLUTION_V4",
         "Collections.<ScanFilter>emptyList()",
         "onStartFailure(int errorCode)",
+        "ADVERTISE_FAILED_ALREADY_STARTED",
+        "BLE advertising already active",
         "walletFromBytes",
         "identity read completes before any payment MTU negotiation begins",
         "private boolean handleIdentityRead",
