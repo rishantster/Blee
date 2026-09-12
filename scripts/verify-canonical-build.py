@@ -26,6 +26,8 @@ build = require_all(
     (
         "CANONICAL_BLEE_BUILDER_V2",
         'FINAL_APK="$ROOT/dist/Blee.apk"',
+        "command -v sdkmanager",
+        'if [ "$(uname -s)" != "Darwin" ]',
         "--exclude 'ARCHITECTURE.md'",
         "--exclude 'UI_ARCHITECTURE.md'",
         "--exclude 'scripts/apply-blee-*.py'",
