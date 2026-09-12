@@ -35,6 +35,20 @@ def patch_service(native_dir):
     marker = "    // BLEE_BLE_DIAGNOSTICS_V1\n"
     text = once(text, marker, marker + fragment, "diagnostics")
 
+    text = once(
+        text,
+        '    private volatile String diagLastGattError = "";\n',
+        '''    private volatile String diagLastGattError = "";
+    // BLEE_GATT_SERVER_READINESS_V1
+    private volatile boolean gattServerReady = false;
+    private volatile long diagServerConnections = 0L;
+    private volatile String diagLastServerPeer = "";
+    private volatile int diagLastServerStatus = 0;
+    private volatile int diagLastServerState = BluetoothProfile.STATE_DISCONNECTED;
+''',
+        "GATT server readiness fields",
+    )
+
     # The fragment owns candidate admission now; remove the earlier direct-connect implementation.
     start = text.find("    private void maybeConnect(BluetoothDevice device) {", text.find("BLEE_BLE_DIAGNOSTICS_V1"))
     start = text.find("    private void maybeConnect(BluetoothDevice device) {", start + 1)
@@ -49,8 +63,8 @@ def patch_service(native_dir):
     text = once(
         text,
         "            if (advertiser != null && !advertising && !advertiseStarting && now >= nextAdvertiseAttemptAt) {",
-        "            if (advertiser != null && !advertising && !advertiseStarting && now >= nextAdvertiseAttemptAt && now >= advertisingSuppressedUntil) {",
-        "advertiser suppression gate",
+        "            if (advertiser != null && gattServerReady && !advertising && !advertiseStarting && now >= nextAdvertiseAttemptAt && now >= advertisingSuppressedUntil) {",
+        "advertiser suppression/readiness gate",
     )
 
     text = once(
@@ -83,6 +97,16 @@ def patch_service(native_dir):
             diagLastPhase = "blee_advertisement_seen";'''
     text = once(text, scan_seen, scan_seen + "\n            rememberPeerRoleToken(result);", "peer role token")
 
+    # The server object existing is not enough. Android's addService() is
+    # asynchronous; only advertise after onServiceAdded(GATT_SUCCESS), exactly
+    # like Bitchat's server-first sequencing.
+    text = once(
+        text,
+        "        gattServer = bluetoothManager.openGattServer(this, serverCallback);",
+        "        gattServerReady = false;\n        gattServer = bluetoothManager.openGattServer(this, serverCallback);",
+        "GATT server open readiness reset",
+    )
+
     snapshot = '            out.put("lastAdvertiseAttemptAt", service.lastAdvertiseAttemptAt);'
     text = once(
         text,
@@ -93,7 +117,12 @@ def patch_service(native_dir):
             out.put("advertisingSuppressedUntil", service.advertisingSuppressedUntil);
             out.put("lastAdvertiseError", service.diagLastAdvertiseError);
             out.put("lastGattError", service.diagLastGattError);
-            out.put("gattScanPaused", service.gattScanPaused);''',
+            out.put("gattScanPaused", service.gattScanPaused);
+            out.put("gattServerReady", service.gattServerReady);
+            out.put("serverConnections", service.diagServerConnections);
+            out.put("lastServerPeer", service.diagLastServerPeer);
+            out.put("lastServerStatus", service.diagLastServerStatus);
+            out.put("lastServerState", service.diagLastServerState);''',
         "radio diagnostics",
     )
 
@@ -159,8 +188,42 @@ def patch_service(native_dir):
     }
 ''' + text[close_end:]
 
+    server_anchor = "    private final BluetoothGattServerCallback serverCallback = new BluetoothGattServerCallback() {"
+    server_callbacks = '''    private final BluetoothGattServerCallback serverCallback = new BluetoothGattServerCallback() {
+        @Override public void onServiceAdded(final int status, final BluetoothGattService service) {
+            handler.post(() -> {
+                if (service == null || !SERVICE_UUID.equals(service.getUuid())) return;
+                if (status == BluetoothGatt.GATT_SUCCESS && gattServer != null) {
+                    gattServerReady = true;
+                    diagLastPhase = "gatt_server_ready";
+                    diagLastError = "";
+                    startBluetooth();
+                    return;
+                }
+                gattServerReady = false;
+                diagLastPhase = "gatt_server_service_failed";
+                diagLastError = "gatt_server_service_" + status;
+                try { if (gattServer != null) gattServer.close(); } catch (Throwable ignored) {}
+                gattServer = null;
+                handler.postDelayed(() -> startBluetooth(), 1_000L);
+            });
+        }
+
+        @Override public void onConnectionStateChange(final BluetoothDevice device, final int status, final int newState) {
+            handler.post(() -> {
+                diagLastServerStatus = status;
+                diagLastServerState = newState;
+                try { diagLastServerPeer = device == null ? "" : device.getAddress(); } catch (Throwable ignored) { diagLastServerPeer = ""; }
+                if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
+                    diagServerConnections++;
+                    diagLastPhase = "gatt_server_connected";
+                }
+            });
+        }'''
+    text = once(text, server_anchor, server_callbacks, "GATT server readiness callbacks")
+
     stop = "        try { if (gattServer != null) gattServer.close(); } catch (Throwable ignored) {}"
-    text = once(text, stop, stop + "\n        resetClientGattConnections();", "stopBluetooth")
+    text = once(text, stop, "        gattServerReady = false;\n" + stop + "\n        resetClientGattConnections();", "stopBluetooth")
     reset = "        nextAdvertiseAttemptAt = 0L;"
     text = once(text, reset, reset + "\n        resetAdvertiserRecovery();", "advertiser recovery reset")
     path.write_text(text)
@@ -208,10 +271,15 @@ def patch_runtime_diagnostics():
   ['radioMode', 'Radio mode'],
   ['advertiserResourceFailures', 'Advertiser slot failures'],
   ['gattScanPaused', 'Scan paused for GATT'],
-  ['gattServerActive', 'GATT server active'],"""
+  ['gattServerActive', 'GATT server active'],
+  ['gattServerReady', 'Blee GATT service ready'],
+  ['serverConnections', 'Incoming GATT connections'],"""
     text = once(text, rows, replacement, "runtime diagnostic rows")
     errors = "  ['lastPhase', 'Last BLE phase'],\n  ['lastError', 'Last BLE error'],"
     error_replacement = """  ['lastPhase', 'Last BLE phase'],
+  ['lastServerPeer', 'Last incoming BLE device'],
+  ['lastServerStatus', 'Last incoming GATT status'],
+  ['lastServerState', 'Last incoming GATT state'],
   ['lastAdvertiseError', 'Last advertise error'],
   ['lastGattError', 'Last GATT error'],
   ['lastError', 'Last BLE error'],"""
@@ -225,6 +293,7 @@ def verify(native_dir):
         "BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1",
         "BLEE_RADIO_ARBITRATION_V2",
         "BLEE_BITCHAT_ANDROID_GATT_PARITY_V1",
+        "BLEE_GATT_SERVER_READINESS_V1",
         "BLEE_SAFE_GATT_BOOTSTRAP_1M_V1",
         "BLE_MAX_CLIENT_LINKS = 1",
         "BLE_CONNECT_FRESHNESS_MS = 4_000L",
@@ -233,6 +302,9 @@ def verify(native_dir):
         "localRoleTokenPayload",
         "rememberPeerRoleToken",
         "advertiser_slot_busy_scanner_first",
+        "gattServerReady",
+        "onServiceAdded",
+        "gatt_server_ready",
         "connectGattReliable",
         "device.connectGatt(this, false, clientCallback, BluetoothDevice.TRANSPORT_LE)",
         "scheduleGattConnectTimeout",
@@ -261,9 +333,9 @@ def verify(native_dir):
         raise SystemExit("BLE reliability verification failed: operation watchdog starts before STATE_CONNECTED")
 
     runtime = (ROOT / "src/components/BleeRuntime.tsx").read_text()
-    if "BLEE_RADIO_ARBITRATION_DIAGNOSTICS_V2" not in runtime or "lastGattError" not in runtime:
+    if "BLEE_RADIO_ARBITRATION_DIAGNOSTICS_V2" not in runtime or "lastGattError" not in runtime or "gattServerReady" not in runtime:
         raise SystemExit("BLE reliability verification failed: radio-arbitration diagnostics UI missing")
-    print("Blee Bitchat-style Android GATT lifecycle installed and verified")
+    print("Blee Bitchat-style Android GATT lifecycle + server readiness installed and verified")
 
 
 def main():
