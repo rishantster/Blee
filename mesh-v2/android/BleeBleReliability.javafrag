@@ -1,0 +1,264 @@
+    // BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1
+    private static final int BLE_MAX_CLIENT_LINKS = 1;
+    private static final int BLE_MAX_CANDIDATES = 24;
+    private static final long BLE_CONNECT_RATE_MS = 650L;
+    private static final long BLE_CANDIDATE_STALE_MS = 30_000L;
+    private static final long BLE_DISCONNECT_SETTLE_MS = 1_800L;
+    private static final long BLE_GATT_STALL_MS = 15_000L;
+    private static final long BLE_SCAN_STALL_MS = 25_000L;
+    private static final long BLE_SCAN_RESTART_COOLDOWN_MS = 60_000L;
+    private final Map<String, BleCandidate> bleCandidates = Collections.synchronizedMap(new HashMap<String, BleCandidate>());
+    private final Map<String, String> bleLinkStates = Collections.synchronizedMap(new HashMap<String, String>());
+    private final Map<String, Integer> bleFailures = Collections.synchronizedMap(new HashMap<String, Integer>());
+    private final Map<String, Long> bleCooldownUntil = Collections.synchronizedMap(new HashMap<String, Long>());
+    private final Map<String, Long> bleDisconnectUntil = Collections.synchronizedMap(new HashMap<String, Long>());
+    private final Map<String, BluetoothGatt> clientGatts = Collections.synchronizedMap(new HashMap<String, BluetoothGatt>());
+    private final Map<String, Long> gattProgressAt = Collections.synchronizedMap(new HashMap<String, Long>());
+    private final Map<String, Long> gattWatchdogDueAt = Collections.synchronizedMap(new HashMap<String, Long>());
+    private volatile long bleLastGlobalConnectAt = 0L;
+    private volatile boolean connectionPumpScheduled = false;
+    private volatile long connectionPumpDueAt = Long.MAX_VALUE;
+    private volatile long lastScanWatchdogRestartAt = 0L;
+    private volatile boolean bluetoothStopping = false;
+
+    private static final class BleCandidate {
+        final BluetoothDevice device;
+        final String address;
+        final int rssi;
+        final long seenAt;
+        final boolean needsIdentity;
+        final boolean hasPacket;
+        BleCandidate(BluetoothDevice device, String address, int rssi, long seenAt, boolean needsIdentity, boolean hasPacket) {
+            this.device = device; this.address = address; this.rssi = rssi; this.seenAt = seenAt;
+            this.needsIdentity = needsIdentity; this.hasPacket = hasPacket;
+        }
+    }
+
+    private void maybeConnect(BluetoothDevice device) {
+        if (!bluetoothPermissionsGranted() || device == null || db == null) return;
+        long now = System.currentTimeMillis();
+        String address;
+        try { address = device.getAddress(); } catch (Throwable ignored) { return; }
+        Long identityAt = peerIdentityAt.get(address);
+        boolean needsIdentity = identityAt == null || now - identityAt > 45_000L;
+        boolean hasPacket = !db.duePacketsForPeer(now, address, 1).isEmpty();
+        if (!needsIdentity && !hasPacket) return;
+        int rssi = peerRssi.containsKey(address) ? peerRssi.get(address) : -100;
+        long seenAt = peerSeen.containsKey(address) ? peerSeen.get(address) : now;
+        bleCandidates.put(address, new BleCandidate(device, address, rssi, seenAt, needsIdentity, hasPacket));
+        pruneBleCandidates(now);
+        trimBleCandidates(now);
+        requestConnectionPump(0L);
+    }
+
+    private void pruneBleCandidates(long now) {
+        synchronized (bleCandidates) {
+            List<String> stale = new ArrayList<String>();
+            for (Map.Entry<String, BleCandidate> entry : bleCandidates.entrySet()) {
+                if (now - entry.getValue().seenAt > BLE_CANDIDATE_STALE_MS) stale.add(entry.getKey());
+            }
+            for (String key : stale) bleCandidates.remove(key);
+        }
+    }
+
+    private int bleCandidateScore(BleCandidate c, long now) {
+        int failures = bleFailures.containsKey(c.address) ? bleFailures.get(c.address) : 0;
+        int work = c.hasPacket ? 500 : 0;
+        int identity = c.needsIdentity ? 160 : 0;
+        int strength = Math.max(-100, Math.min(-20, c.rssi)) + 100;
+        int recency = -Math.min(300, (int) Math.max(0L, now - c.seenAt) / 100);
+        return work + identity + strength * 3 + recency - failures * 45;
+    }
+
+    private void trimBleCandidates(long now) {
+        synchronized (bleCandidates) {
+            if (bleCandidates.size() <= BLE_MAX_CANDIDATES) return;
+            List<BleCandidate> ranked = new ArrayList<BleCandidate>(bleCandidates.values());
+            Collections.sort(ranked, (a, b) -> Integer.compare(bleCandidateScore(b, now), bleCandidateScore(a, now)));
+            bleCandidates.clear();
+            for (int i = 0; i < Math.min(BLE_MAX_CANDIDATES, ranked.size()); i++) bleCandidates.put(ranked.get(i).address, ranked.get(i));
+        }
+    }
+
+    private BleCandidate nextBleCandidate(long now) {
+        pruneBleCandidates(now);
+        if (bleLinkStates.size() >= BLE_MAX_CLIENT_LINKS) return null;
+        if (bleLastGlobalConnectAt > 0L && now - bleLastGlobalConnectAt < BLE_CONNECT_RATE_MS) return null;
+        List<BleCandidate> ranked;
+        synchronized (bleCandidates) { ranked = new ArrayList<BleCandidate>(bleCandidates.values()); }
+        Collections.sort(ranked, (a, b) -> Integer.compare(bleCandidateScore(b, now), bleCandidateScore(a, now)));
+        for (BleCandidate c : ranked) {
+            if (bleLinkStates.containsKey(c.address)) continue;
+            long cool = bleCooldownUntil.containsKey(c.address) ? bleCooldownUntil.get(c.address) : 0L;
+            long settle = bleDisconnectUntil.containsKey(c.address) ? bleDisconnectUntil.get(c.address) : 0L;
+            if (now < cool || now < settle) continue;
+            bleCandidates.remove(c.address);
+            bleLinkStates.put(c.address, "CONNECTING");
+            bleLastGlobalConnectAt = now;
+            return c;
+        }
+        return null;
+    }
+
+    private long nextBleReadyDelay(long now) {
+        if (bleCandidates.isEmpty() || bleLinkStates.size() >= BLE_MAX_CLIENT_LINKS) return -1L;
+        long best = Long.MAX_VALUE;
+        long global = Math.max(now, bleLastGlobalConnectAt + BLE_CONNECT_RATE_MS);
+        synchronized (bleCandidates) {
+            for (BleCandidate c : bleCandidates.values()) {
+                if (bleLinkStates.containsKey(c.address)) continue;
+                long at = global;
+                if (bleCooldownUntil.containsKey(c.address)) at = Math.max(at, bleCooldownUntil.get(c.address));
+                if (bleDisconnectUntil.containsKey(c.address)) at = Math.max(at, bleDisconnectUntil.get(c.address));
+                best = Math.min(best, at);
+            }
+        }
+        return best == Long.MAX_VALUE ? -1L : Math.max(0L, best - now + 25L);
+    }
+
+    private void markBleFailure(String address, long now) {
+        bleLinkStates.remove(address);
+        int failures = Math.min(6, (bleFailures.containsKey(address) ? bleFailures.get(address) : 0) + 1);
+        bleFailures.put(address, failures);
+        long base = Math.min(20_000L, 1_000L * (1L << Math.min(4, failures - 1)));
+        bleCooldownUntil.put(address, now + base + Math.abs(address.hashCode() % 700));
+    }
+
+    private void requestConnectionPump(final long delayMs) {
+        handler.post(() -> {
+            long now = System.currentTimeMillis();
+            long due = now + Math.max(0L, delayMs);
+            if (connectionPumpScheduled && due >= connectionPumpDueAt - 25L) return;
+            if (connectionPumpScheduled) handler.removeCallbacks(connectionPump);
+            connectionPumpScheduled = true; connectionPumpDueAt = due;
+            handler.postDelayed(connectionPump, Math.max(0L, due - now));
+        });
+    }
+
+    private final Runnable connectionPump = new Runnable() {
+        @Override public void run() {
+            connectionPumpScheduled = false; connectionPumpDueAt = Long.MAX_VALUE;
+            drainConnectionQueue();
+        }
+    };
+
+    private void drainConnectionQueue() {
+        if (bluetoothStopping || !bluetoothPermissionsGranted() || adapter == null || !adapter.isEnabled()) return;
+        long now = System.currentTimeMillis();
+        BleCandidate candidate = nextBleCandidate(now);
+        if (candidate == null) {
+            long delay = nextBleReadyDelay(now);
+            if (delay >= 0L) requestConnectionPump(delay);
+            return;
+        }
+        beginGattConnection(candidate);
+    }
+
+    private void beginGattConnection(BleCandidate c) {
+        final long now = System.currentTimeMillis();
+        if (clientGatts.containsKey(c.address)) { bleLinkStates.remove(c.address); requestConnectionPump(250L); return; }
+        lastConnect.put(c.address, now);
+        diagGattAttempts++; diagLastPhase = "gatt_connect_attempt"; diagLastTransportId = c.address;
+        try {
+            BluetoothGatt gatt = c.device.connectGatt(this, false, clientCallback, BluetoothDevice.TRANSPORT_LE);
+            if (gatt == null) { markBleFailure(c.address, now); diagLastError = "connectGatt returned null"; requestConnectionPump(1_000L); return; }
+            clientGatts.put(c.address, gatt); touchGatt(gatt);
+        } catch (Throwable error) {
+            markBleFailure(c.address, now); diagLastPhase = "gatt_connect_exception";
+            diagLastError = error.getMessage() == null ? error.toString() : error.getMessage();
+            requestConnectionPump(1_000L);
+        }
+    }
+
+    private void handleClientConnectionState(BluetoothGatt gatt, int status, int newState) {
+        if (gatt == null || gatt.getDevice() == null) return;
+        String address = gatt.getDevice().getAddress();
+        BluetoothGatt tracked = clientGatts.get(address);
+        if (tracked != null && tracked != gatt) { try { gatt.close(); } catch (Throwable ignored) {} return; }
+        if (tracked == null) {
+            if (bluetoothStopping || !bleLinkStates.containsKey(address)) { try { gatt.close(); } catch (Throwable ignored) {} return; }
+            clientGatts.put(address, gatt);
+        }
+        if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
+            bleLinkStates.put(address, "CONNECTED"); bleFailures.remove(address); bleCooldownUntil.remove(address); bleDisconnectUntil.remove(address);
+            touchGatt(gatt); diagGattConnected++; diagLastPhase = "gatt_connected"; diagLastError = "";
+            try { gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH); } catch (Throwable ignored) {}
+            try { if (!gatt.discoverServices()) failGatt(gatt, "discoverServices rejected"); }
+            catch (Throwable error) { failGatt(gatt, "discoverServices threw"); }
+            return;
+        }
+        if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+            boolean established = "CONNECTED".equals(bleLinkStates.get(address));
+            finishGatt(gatt, !established, "disconnect status=" + status); return;
+        }
+        if (status != BluetoothGatt.GATT_SUCCESS) failGatt(gatt, "connection status=" + status);
+        else touchGatt(gatt);
+    }
+
+    private void touchGatt(final BluetoothGatt gatt) {
+        if (gatt == null || gatt.getDevice() == null) return;
+        final String address = gatt.getDevice().getAddress();
+        long now = System.currentTimeMillis(); gattProgressAt.put(address, now);
+        if (gattWatchdogDueAt.containsKey(address)) return;
+        gattWatchdogDueAt.put(address, now + BLE_GATT_STALL_MS);
+        scheduleGattWatchdog(gatt, address, BLE_GATT_STALL_MS);
+    }
+
+    private void scheduleGattWatchdog(final BluetoothGatt gatt, final String address, long delay) {
+        handler.postDelayed(() -> {
+            if (clientGatts.get(address) != gatt) { gattWatchdogDueAt.remove(address); return; }
+            long now = System.currentTimeMillis(); Long progress = gattProgressAt.get(address);
+            if (progress != null && now - progress < BLE_GATT_STALL_MS) {
+                long next = Math.max(250L, BLE_GATT_STALL_MS - (now - progress));
+                gattWatchdogDueAt.put(address, now + next); scheduleGattWatchdog(gatt, address, next); return;
+            }
+            gattWatchdogDueAt.remove(address); diagLastPhase = "gatt_stall_timeout";
+            diagLastError = "No GATT progress for " + BLE_GATT_STALL_MS + "ms"; failGatt(gatt, "GATT progress timeout");
+        }, Math.max(250L, delay));
+    }
+
+    private void failGatt(BluetoothGatt gatt, String reason) {
+        diagLastPhase = "gatt_failed"; diagLastError = reason == null ? "GATT failure" : reason;
+        finishGatt(gatt, true, reason);
+    }
+
+    private void finishGatt(BluetoothGatt gatt, boolean failed, String reason) {
+        if (gatt == null) return;
+        String address = ""; try { if (gatt.getDevice() != null) address = gatt.getDevice().getAddress(); } catch (Throwable ignored) {}
+        boolean owned = !address.isEmpty() && clientGatts.get(address) == gatt;
+        boolean established = "CONNECTED".equals(bleLinkStates.get(address));
+        if (owned) {
+            clientGatts.remove(address); gattProgressAt.remove(address); gattWatchdogDueAt.remove(address); SendState.clear(gatt);
+            long now = System.currentTimeMillis();
+            if (failed && !established) markBleFailure(address, now);
+            else { bleLinkStates.remove(address); if (established) bleDisconnectUntil.put(address, now + BLE_DISCONNECT_SETTLE_MS); }
+        }
+        try { gatt.disconnect(); } catch (Throwable ignored) {} try { gatt.close(); } catch (Throwable ignored) {}
+        if (!bluetoothStopping) { long delay = nextBleReadyDelay(System.currentTimeMillis()); requestConnectionPump(delay < 0L ? 200L : delay); }
+    }
+
+    private void resetClientGattConnections() {
+        bluetoothStopping = true;
+        List<BluetoothGatt> snapshot; synchronized (clientGatts) { snapshot = new ArrayList<BluetoothGatt>(clientGatts.values()); }
+        clientGatts.clear(); gattProgressAt.clear(); gattWatchdogDueAt.clear(); bleCandidates.clear(); bleLinkStates.clear();
+        for (BluetoothGatt gatt : snapshot) { try { SendState.clear(gatt); } catch (Throwable ignored) {} try { gatt.disconnect(); } catch (Throwable ignored) {} try { gatt.close(); } catch (Throwable ignored) {} }
+        bluetoothStopping = false;
+    }
+
+    private void maintainBleReliability() {
+        long now = System.currentTimeMillis(); pruneBleCandidates(now);
+        if (adapter == null || !adapter.isEnabled()) {
+            scanning = false; advertising = false; advertiseStarting = false; scanner = null; advertiser = null;
+            if (gattServer != null) { try { gattServer.close(); } catch (Throwable ignored) {} gattServer = null; }
+            if (!clientGatts.isEmpty()) resetClientGattConnections(); return;
+        }
+        requestConnectionPump(0L);
+        boolean noRawProgress = diagLastSeenAt <= 0L || now - diagLastSeenAt > BLE_SCAN_STALL_MS;
+        boolean scanOld = scanning && lastScanStartAt > 0L && now - lastScanStartAt > BLE_SCAN_STALL_MS;
+        if (scanOld && noRawProgress && now - lastScanWatchdogRestartAt > BLE_SCAN_RESTART_COOLDOWN_MS && scanner != null) {
+            lastScanWatchdogRestartAt = now; diagLastPhase = "scan_watchdog_restart"; diagLastError = "";
+            try { scanner.stopScan(scanCallback); } catch (Throwable ignored) {} scanning = false;
+            handler.postDelayed(() -> startBluetooth(), 350L);
+        }
+    }
+
