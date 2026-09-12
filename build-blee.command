@@ -200,6 +200,7 @@ python3 scripts/apply-blee-2.5-ui.py
 python3 scripts/apply-blee-original-brand.py
 python3 scripts/apply-blee-2.5.py
 python3 scripts/apply-blee-final-hardening.py --web
+python3 scripts/apply-blee-single-ble-owner.py
 
 npm install --no-audit --no-fund
 npm run check

@@ -36,6 +36,7 @@ build = require_all(
         'apply-blee-launcher-1.4.py',
         'verify-blee-original-brand.py',
         'apply-blee-final-hardening.py --web',
+        'apply-blee-single-ble-owner.py',
         'apply-blee-final-hardening.py --android',
         'apply-blee-final-hardening-2.py',
         'apply-blee-runtime-reliability.py',
@@ -136,6 +137,14 @@ require_all(
         "BLEE_ADVERTISER_RECOVERY_V1",
         "duePacketsForPeer",
         "recordPeerDelivery",
+    ),
+)
+require_all(
+    "scripts/apply-blee-single-ble-owner.py",
+    (
+        "BLEE_MESH_SERVICE_SOLE_BLE_OWNER_V1",
+        'ret.put("ble", false)',
+        "legacy Nearby is LAN-only",
     ),
 )
 require_all(
