@@ -92,7 +92,13 @@ grep -q 'BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1' mesh-v2/android/BleeBleReliabili
   || fail "Bitchat BLE reliability fragment marker missing"
 grep -q 'BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1' scripts/apply-blee-bitchat-reliability.py \
   || fail "Bitchat reliability patcher marker missing"
-pass "Bitchat-derived reliability layer pinned"
+grep -q 'connectGattWithPreferredPhy' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "adaptive BLE PHY connection helper missing"
+grep -q 'PHY_LE_CODED_MASK' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "LE Coded PHY fallback support missing"
+grep -q 'isLeCodedPhySupported' mesh-v2/android/BleeBleReliability.javafrag \
+  || fail "LE Coded PHY capability gate missing"
+pass "Bitchat-derived reliability + adaptive PHY layer pinned"
 
 for forbidden in \
   'dist/*.apk' \
