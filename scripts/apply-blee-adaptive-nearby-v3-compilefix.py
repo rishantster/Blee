@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+ANDROID_JAVA = ROOT / "android/app/src/main/java"
+
+
+def locate_service() -> Path:
+    hits = list(ANDROID_JAVA.rglob("BleeMeshService.java"))
+    if len(hits) != 1:
+        raise SystemExit(f"Blee adaptive v3 compilefix: expected one BleeMeshService.java, found {len(hits)}")
+    return hits[0]
+
+
+def main() -> None:
+    path = locate_service()
+    text = path.read_text()
+    if "BLEE_ADAPTIVE_NEARBY_V3" not in text:
+        raise SystemExit("Blee adaptive v3 compilefix: adaptive transport must run first")
+
+    start = text.index("    // BLEE_ADAPTIVE_NEARBY_V3", text.index("class BleeMeshService"))
+    end = text.index("    // BLEE_TRANSPORT_CORE_V2\n    // One runtime owner", start)
+    adaptive = text[start:end]
+
+    # AdaptiveNearbyV3 is a sibling of BleTransportV2, so it must not call the
+    # latter's private message(Throwable) helper unqualified.
+    adaptive = adaptive.replace("message(error)", "nearbyError(error)")
+
+    helper_anchor = '''        String mode() {
+            if (fallbackStarting) return "nearby_starting";'''
+    helper = '''        private String nearbyError(Throwable error) {
+            if (error == null) return "unknown";
+            String value = error.getMessage();
+            return value == null || value.isEmpty() ? error.toString() : value;
+        }
+
+        String mode() {
+            if ("permission_required".equals(lastNearbyStatus)) return "permission_required";
+            if (fallbackStarting) return "nearby_starting";'''
+    if helper_anchor not in adaptive:
+        raise SystemExit("Blee adaptive v3 compilefix: mode helper anchor missing")
+    adaptive = adaptive.replace(helper_anchor, helper, 1)
+
+    if "message(error)" in adaptive:
+        raise SystemExit("Blee adaptive v3 compilefix: cross-inner helper call remains")
+    if "nearbyError(Throwable error)" not in adaptive:
+        raise SystemExit("Blee adaptive v3 compilefix: local error helper missing")
+
+    text = text[:start] + adaptive + text[end:]
+    path.write_text(text)
+    print("Blee adaptive transport v3 Java compile path hardened")
+
+
+if __name__ == "__main__":
+    main()
