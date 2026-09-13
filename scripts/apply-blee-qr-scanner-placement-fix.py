@@ -139,13 +139,12 @@ def main() -> None:
     if not (send_start < recipient < input_start < button_at < amount < review):
         fail("QR scanner is not scoped to Send Recipient before Amount/Review")
 
-    # Build-time regression guards for the exact screenshot failure.
-    create_passphrase = final.find("Create passphrase")
-    confirm_passphrase = final.find("Confirm passphrase")
-    if create_passphrase >= 0 and abs(button_at - create_passphrase) < 2500:
-        fail("QR scanner leaked into Create passphrase UI")
-    if confirm_passphrase >= 0 and abs(button_at - confirm_passphrase) < 2500:
-        fail("QR scanner leaked into Confirm passphrase UI")
+    # The selected input itself must be the non-secret recipient address field.
+    # This structural check catches the exact PasswordField regression without
+    # relying on source-code distance between unrelated screens/components.
+    selected = final[input_start:button_at]
+    if "password" in selected.lower() or "passphrase" in selected.lower():
+        fail("QR scanner leaked into secret/passphrase UI")
 
     print("VERIFIED: QR scanner appears exactly once and only on Send Recipient")
     if removed:
