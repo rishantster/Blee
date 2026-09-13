@@ -18,13 +18,10 @@ def patch_service() -> None:
     text = path.read_text()
     if "BLEE_ADAPTIVE_NEARBY_V3" not in text:
         raise SystemExit("Blee adaptive v3 compilefix: adaptive transport must run first")
-
     start = text.index("    // BLEE_ADAPTIVE_NEARBY_V3", text.index("class BleeMeshService"))
     end = text.index("    // BLEE_TRANSPORT_CORE_V2\n    // One runtime owner", start)
     adaptive = text[start:end]
-
     adaptive = adaptive.replace("message(error)", "nearbyError(error)")
-
     if "nearbyError(Throwable error)" not in adaptive:
         helper_anchor = '''        String mode() {
             if (fallbackStarting) return "nearby_starting";'''
@@ -40,12 +37,10 @@ def patch_service() -> None:
         if helper_anchor not in adaptive:
             raise SystemExit("Blee adaptive v3 compilefix: mode helper anchor missing")
         adaptive = adaptive.replace(helper_anchor, helper, 1)
-
     if "message(error)" in adaptive:
         raise SystemExit("Blee adaptive v3 compilefix: cross-inner helper call remains")
     if "nearbyError(Throwable error)" not in adaptive:
         raise SystemExit("Blee adaptive v3 compilefix: local error helper missing")
-
     text = text[:start] + adaptive + text[end:]
     path.write_text(text)
 
@@ -83,22 +78,18 @@ def apply_production_polish() -> None:
     # BLEE_PRODUCTION_POLISH_CHAIN_V1
     run_stage("apply-blee-production-polish.py")
     run_stage("apply-blee-production-raw-wakeup.py")
-    # Generated BleeMeshDb uses the atomic recipient/ACK transaction. Prepare
-    # notification summary fields against that structure before the general
-    # notification stage runs; the latter then sees its DB marker and skips its
-    # legacy pre-atomic anchor path.
     run_stage("apply-blee-payment-notifications-dbfix.py")
     run_stage("apply-blee-payment-notifications.py")
     run_stage("apply-blee-payment-notifications-v2.py")
 
     # BLEE_GLOBAL_STORE_FORWARD_RELAY_CHAIN_V1
-    # Relay is deliberately last. Adaptive V3 and production payment behavior
-    # are already materialized; this stage only adds the validated transit queue
-    # and replaces the old native relay broadcaster with a no-signer raw-tx path.
+    # Relay is deliberately last so the working Adaptive V3 transport remains
+    # untouched and the community relay only layers on top of canonical packets.
     run_stage("apply-blee-store-forward-relay-v1.py")
     run_stage("apply-blee-store-forward-relay-v1-compilefix.py")
     run_stage("apply-blee-store-forward-relay-v1-sender-compat.py")
     run_stage("apply-blee-store-forward-relay-v1-ingress.py")
+    run_stage("verify-store-forward-relay.py")
 
 
 def main() -> None:
