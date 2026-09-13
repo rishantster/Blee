@@ -1,4 +1,4 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
 import {
   createPublicClient,
   createWalletClient,
@@ -26,6 +26,7 @@ import {
 import { getActiveNetwork } from './networkConfig';
 import type { TransferAuthorization } from '../types/domain';
 import { createAtomicAuthorization, refreshAtomicSigningProfile } from './atomicSigning';
+import { BleeStore } from './bleeStore';
 
 export const AUTH_TTL_SECONDS = 24 * 60 * 60;
 const CLOCK_SKEW_SECONDS = 60;
@@ -35,13 +36,6 @@ const BPS = 10_000n;
 const OFFLINE_GAS_LIMIT = 250_000n;
 const PROFILE_VERSION = 1;
 const FRESH_FEE_WINDOW_MS = 6 * 60 * 60 * 1000;
-
-type StorePlugin = {
-  init(): Promise<{ ready: boolean }>;
-  getValue(options: { key: string }): Promise<{ value?: string | null }>;
-  setValue(options: { key: string; value: string }): Promise<void>;
-  loadPayments(): Promise<{ payments?: string[] }>;
-};
 
 type SettlementProfile = {
   version: number;
@@ -71,7 +65,6 @@ type AuthorizationWithBroadcast = TransferAuthorization & {
   broadcast?: SenderFundedBroadcast | { mode: 'AUTH_ONLY'; reason: string };
 };
 
-const BleeStore = registerPlugin<StorePlugin>('BleeStore');
 const inMemoryReservations = new Map<string, Set<number>>();
 let reservationQueue: Promise<unknown> = Promise.resolve();
 
