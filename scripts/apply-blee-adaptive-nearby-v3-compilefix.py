@@ -94,6 +94,7 @@ def apply_production_polish() -> None:
     # Run last so it can canonicalize the full production identity/event path
     # without changing payment signing, settlement, or Adaptive V3 selection.
     run_stage("apply-blee-nearby-stability-v1.py")
+    run_stage("apply-blee-nearby-stability-heartbeat-v1.py")
     run_stage("apply-blee-nearby-stability-hook-v1.py")
 
 
