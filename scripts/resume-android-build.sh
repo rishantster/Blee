@@ -83,15 +83,17 @@ if ! grep -q 'BLEE_ADAPTIVE_NEARBY_V3' "$SERVICE_FILE"; then
   python3 scripts/apply-blee-adaptive-nearby-v3.py
 fi
 python3 scripts/apply-blee-adaptive-nearby-v3-compilefix.py
+python3 scripts/verify-store-forward-relay.py
 
-# The adaptive patch also adds diagnostics to the web runtime. Rebuild/sync the
-# already-materialized web app before Gradle so the APK and native transport are
-# guaranteed to describe the same runtime.
+# The adaptive + production + relay patches also update the web runtime. Rebuild
+# and sync the already-materialized app before Gradle so native and web transport
+# contracts are guaranteed to describe the same APK.
 npm run check
 npm run build
 npx cap sync android
 
 python3 scripts/verify-blee-mesh-v2.py
+python3 scripts/verify-store-forward-relay.py
 python3 scripts/verify-canonical-build.py
 
 (
