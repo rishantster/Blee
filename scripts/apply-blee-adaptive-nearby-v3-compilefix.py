@@ -72,12 +72,17 @@ def patch_runtime_copy() -> None:
     path.write_text(text)
 
 
+def run_stage(script_name: str) -> None:
+    script = ROOT / "scripts" / script_name
+    if not script.is_file():
+        raise SystemExit(f"Blee adaptive v3 compilefix: missing chained stage {script_name}")
+    runpy.run_path(str(script), run_name="__main__")
+
+
 def apply_production_polish() -> None:
     # BLEE_PRODUCTION_POLISH_CHAIN_V1
-    script = ROOT / "scripts/apply-blee-production-polish.py"
-    if not script.is_file():
-        raise SystemExit("Blee adaptive v3 compilefix: production polish stage is missing")
-    runpy.run_path(str(script), run_name="__main__")
+    run_stage("apply-blee-production-polish.py")
+    run_stage("apply-blee-production-raw-wakeup.py")
 
 
 def main() -> None:
