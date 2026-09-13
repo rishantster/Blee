@@ -84,6 +84,7 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-production-polish.py")
     run_stage("apply-blee-production-raw-wakeup.py")
     run_stage("apply-blee-payment-notifications.py")
+    run_stage("apply-blee-payment-notifications-v2.py")
 
 
 def main() -> None:
