@@ -6,7 +6,7 @@ import { useBlee } from './useBlee';
 import { loadPayments } from '../lib/persistence';
 import { notifyPaymentReceived } from '../lib/nativeNotifications';
 import type { PaymentRecord } from '../types/domain';
-import { ARC_USDC_DECIMALS } from '../lib/networkConfig';
+import { ARC_USDC_DECIMALS } from '../lib/arc';
 
 function mergePayments(...groups: PaymentRecord[][]): PaymentRecord[] {
   const byKey = new Map<string, PaymentRecord>();
