@@ -16,7 +16,41 @@ def locate(name: str) -> Path:
     return hits[0]
 
 
-def main() -> None:
+def patch_db() -> None:
+    path = locate("BleeMeshDb.java")
+    text = path.read_text()
+    marker = "BLEE_LOCAL_SENDER_SETTLEMENT_SOURCE_V1"
+    if marker in text:
+        return
+
+    anchor = "    synchronized List<String> settlementCandidates(long now, int limit) {"
+    helper = r'''    // BLEE_LOCAL_SENDER_SETTLEMENT_SOURCE_V1
+    // Only packets backed by this installation's durable OUTGOING payment journal
+    // are eligible for the sender recovery path. Foreign inbox/transit packets
+    // must use BleeRelayStore after cryptographic promotion.
+    synchronized List<String> localSenderSettlementCandidates(long now, int limit) {
+        List<String> rows = new ArrayList<>();
+        int bounded = Math.max(1, Math.min(limit, 64));
+        try (Cursor c = db().rawQuery(
+            "SELECT o.packet FROM mesh_outbox o "
+                + "INNER JOIN payments p ON p.payment_id=o.payment_id AND p.direction='outgoing' "
+                + "WHERE o.packet_type='PAYMENT_ENVELOPE' AND o.expires_at>? "
+                + "ORDER BY o.created_at ASC LIMIT ?",
+            new String[] { String.valueOf(now), String.valueOf(bounded) }
+        )) {
+            while (c.moveToNext()) rows.add(c.getString(0));
+        }
+        return rows;
+    }
+
+'''
+    if anchor not in text:
+        fail("settlementCandidates anchor missing")
+    text = text.replace(anchor, helper + anchor, 1)
+    path.write_text(text)
+
+
+def patch_service() -> None:
     path = locate("BleeMeshService.java")
     text = path.read_text()
     marker = "BLEE_RELAY_LOCAL_SENDER_COMPAT_V1"
@@ -29,9 +63,8 @@ def main() -> None:
         List<BleeRelayStore.RelayCandidate> candidates = relayStore.broadcastCandidates(now, 64);'''
     call_replacement = '''        long now = System.currentTimeMillis();
         // BLEE_RELAY_LOCAL_SENDER_COMPAT_V1
-        // Preserve the pre-existing OFFLINE -> ONLINE sender recovery path. It is
-        // restricted to packets originated by this exact device; foreign packets
-        // may settle only after the validated community-relay promotion gate.
+        // Preserve the pre-existing OFFLINE -> ONLINE sender recovery path while
+        // keeping it completely separate from foreign community-relay packets.
         attemptLocalSenderSettlement(now);
         List<BleeRelayStore.RelayCandidate> candidates = relayStore.broadcastCandidates(now, 64);'''
     if call_anchor not in text:
@@ -43,10 +76,14 @@ def main() -> None:
         fail("confirmRelay anchor missing")
 
     helper = r'''    private void attemptLocalSenderSettlement(long now) {
-        List<String> localCandidates = db.settlementCandidates(now, 64);
+        List<String> localCandidates = db.localSenderSettlementCandidates(now, 64);
+        String localWallet = db.activeWallet();
+        if (localWallet == null || localWallet.isEmpty()) return;
         for (String raw : localCandidates) {
             try {
                 JSONObject packet = new JSONObject(raw);
+                // Defense in depth: local outbox/journal provenance is primary;
+                // the device id check rejects a colliding foreign packet as well.
                 if (!deviceId.equals(packet.optString("originDeviceId", ""))) continue;
                 String paymentId = packet.optString("paymentId", "");
                 if (paymentId.isEmpty()) continue;
@@ -60,6 +97,7 @@ def main() -> None:
                 if (broadcast.optLong("chainId", -1L) != TRUSTED_CHAIN_ID) continue;
 
                 String sender = auth.optString("from", "");
+                if (!localWallet.equalsIgnoreCase(sender)) continue;
                 String rawTx = broadcast.optString("rawTransaction", "");
                 String expectedHash = broadcast.optString("txHash", "");
                 String nonce = auth.optString("nonce", "");
@@ -132,18 +170,40 @@ def main() -> None:
     text = text.replace(method_anchor, helper + method_anchor, 1)
     path.write_text(text)
 
-    verified = path.read_text()
-    start = verified.index("private void attemptLocalSenderSettlement")
-    end = verified.index("private void confirmRelay", start)
-    block = verified[start:end]
+
+def verify() -> None:
+    db = locate("BleeMeshDb.java").read_text()
+    service = locate("BleeMeshService.java").read_text()
+    for required in (
+        "BLEE_LOCAL_SENDER_SETTLEMENT_SOURCE_V1",
+        "localSenderSettlementCandidates",
+        "INNER JOIN payments p",
+        "p.direction='outgoing'",
+    ):
+        if required not in db:
+            fail(f"local sender DB source missing {required}")
+
+    start = service.index("private void attemptLocalSenderSettlement")
+    end = service.index("private void confirmRelay", start)
+    block = service[start:end]
     for forbidden in ("createWalletClient", "writeContract", "PrivateKeyAccount"):
         if forbidden in block:
             fail(f"local sender background path unexpectedly contains signing primitive: {forbidden}")
-    if 'deviceId.equals(packet.optString("originDeviceId", ""))' not in block:
-        fail("local sender path is not origin-device restricted")
-    if "sendRawTransaction(rawTx)" not in block:
-        fail("local sender path does not broadcast existing raw transaction")
-    print("Blee Relay V1 preserves sender background auto-settlement without opening community signer fallback")
+    for required in (
+        "db.localSenderSettlementCandidates(now, 64)",
+        'deviceId.equals(packet.optString("originDeviceId", ""))',
+        "localWallet.equalsIgnoreCase(sender)",
+        "sendRawTransaction(rawTx)",
+    ):
+        if required not in block:
+            fail(f"local sender background path missing {required}")
+    print("Blee Relay V1 preserves sender background auto-settlement from local outgoing journal only")
+
+
+def main() -> None:
+    patch_db()
+    patch_service()
+    verify()
 
 
 if __name__ == "__main__":
