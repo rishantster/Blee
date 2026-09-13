@@ -1,10 +1,9 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { formatUnits } from 'viem';
 import { useBlee } from './useBlee';
 import { loadPayments } from '../lib/persistence';
-import { notifyPaymentReceived } from '../lib/nativeNotifications';
 import type { PaymentRecord } from '../types/domain';
 import { ARC_USDC_DECIMALS } from '../lib/arc';
 
@@ -35,12 +34,12 @@ function pendingIncomingAmount(payments: PaymentRecord[]): number {
  * Native background mesh and the foreground wallet intentionally write to the
  * same SQLite database. This hook listens for native ledger changes and merges
  * those durable rows with the wallet engine's live state without changing the
- * signing/settlement engine itself.
+ * signing/settlement engine itself. Native Android owns payment notifications;
+ * this projection owns presentation only.
  */
 export function useBleeView() {
   const core = useBlee();
   const [durablePayments, setDurablePayments] = useState<PaymentRecord[]>([]);
-  const coreIncomingSeen = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -69,24 +68,6 @@ export function useBleeView() {
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
-
-  useEffect(() => {
-    const currentIds = new Set(
-      core.payments.filter((row) => row.direction === 'in').map((row) => row.id),
-    );
-    if (coreIncomingSeen.current === null) {
-      coreIncomingSeen.current = currentIds;
-      return;
-    }
-
-    for (const row of core.payments) {
-      if (row.direction !== 'in' || row.state === 'failed' || row.state === 'settled') continue;
-      if (coreIncomingSeen.current.has(row.id)) continue;
-      const sender = row.counterpartyAlias || `${row.counterparty.slice(0, 6)}…${row.counterparty.slice(-4)}`;
-      void notifyPaymentReceived(row.id, row.amount, sender).catch(() => undefined);
-    }
-    coreIncomingSeen.current = currentIds;
-  }, [core.payments]);
 
   const payments = useMemo(
     () => mergePayments(core.payments, durablePayments),
