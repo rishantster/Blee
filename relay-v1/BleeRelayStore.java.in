@@ -1,0 +1,469 @@
+package __BLEE_APP_PACKAGE__;
+
+// BLEE_GLOBAL_STORE_FORWARD_RELAY_V1
+import android.content.ContentValues;
+import android.content.Context;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
+final class BleeRelayStore {
+    static final long TRUSTED_CHAIN_ID = 5042002L;
+    static final String TRUSTED_USDC = "0x3600000000000000000000000000000000000000";
+    static final int MAX_QUEUE = 256;
+    static final int MAX_PACKET_BYTES = 128 * 1024;
+    static final int MAX_HOPS = 16;
+
+    private final Context context;
+    private SQLiteDatabase database;
+
+    BleeRelayStore(Context context) {
+        this.context = context.getApplicationContext();
+    }
+
+    private synchronized SQLiteDatabase db() {
+        if (database == null || !database.isOpen()) {
+            File file = context.getDatabasePath("blee.db");
+            File parent = file.getParentFile();
+            if (parent != null) parent.mkdirs();
+            database = SQLiteDatabase.openOrCreateDatabase(file, null);
+            database.enableWriteAheadLogging();
+            ensureSchema(database);
+        }
+        return database;
+    }
+
+    synchronized void close() {
+        if (database != null) database.close();
+        database = null;
+    }
+
+    private static void ensureSchema(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS relay_envelopes ("
+            + "message_id TEXT PRIMARY KEY NOT NULL,"
+            + "payment_id TEXT,"
+            + "tx_hash TEXT UNIQUE,"
+            + "sender TEXT,"
+            + "recipient TEXT,"
+            + "authorization_nonce TEXT,"
+            + "token_contract TEXT,"
+            + "chain_id INTEGER,"
+            + "raw_payload TEXT,"
+            + "state TEXT NOT NULL,"
+            + "created_at INTEGER NOT NULL,"
+            + "expires_at INTEGER NOT NULL,"
+            + "received_at INTEGER NOT NULL,"
+            + "last_forwarded_at INTEGER,"
+            + "last_broadcast_at INTEGER,"
+            + "confirmed_at INTEGER,"
+            + "hop_count INTEGER NOT NULL DEFAULT 0,"
+            + "max_hops INTEGER NOT NULL DEFAULT 0,"
+            + "broadcast_attempts INTEGER NOT NULL DEFAULT 0,"
+            + "next_attempt_at INTEGER NOT NULL,"
+            + "last_error TEXT,"
+            + "source_device TEXT)"
+        );
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS relay_sender_nonce_idx ON relay_envelopes(sender,authorization_nonce) WHERE sender IS NOT NULL AND authorization_nonce IS NOT NULL");
+        db.execSQL("CREATE INDEX IF NOT EXISTS relay_state_due_idx ON relay_envelopes(state,next_attempt_at,expires_at)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS relay_payment_idx ON relay_envelopes(payment_id)");
+    }
+
+    synchronized List<String> pendingCandidates(long now, int limit) {
+        List<String> rows = new ArrayList<>();
+        int bounded = Math.max(1, Math.min(limit, 64));
+        try (Cursor c = db().rawQuery(
+            "SELECT i.packet FROM mesh_inbox i LEFT JOIN relay_envelopes r ON r.message_id=i.message_id "
+                + "WHERE i.packet_type='PAYMENT_ENVELOPE' AND i.expires_at>? AND r.message_id IS NULL "
+                + "ORDER BY i.received_at ASC LIMIT ?",
+            new String[] { String.valueOf(now), String.valueOf(bounded) }
+        )) {
+            while (c.moveToNext()) rows.add(c.getString(0));
+        }
+        return rows;
+    }
+
+    synchronized PromotionResult promoteVerified(JSONObject proof, String localDeviceId) {
+        long now = System.currentTimeMillis();
+        try {
+            String messageId = proof.optString("messageId", "");
+            String paymentId = proof.optString("paymentId", "");
+            String txHash = proof.optString("txHash", "").toLowerCase(Locale.ROOT);
+            String sender = proof.optString("sender", "").toLowerCase(Locale.ROOT);
+            String recipient = proof.optString("recipient", "").toLowerCase(Locale.ROOT);
+            String nonce = proof.optString("authorizationNonce", "").toLowerCase(Locale.ROOT);
+            String token = proof.optString("tokenContract", "").toLowerCase(Locale.ROOT);
+            long chainId = proof.optLong("chainId", -1L);
+
+            if (messageId.isEmpty() || paymentId.isEmpty() || !isTxHash(txHash)) return PromotionResult.reject("invalid validation proof");
+            if (!isAddress(sender) || !isAddress(recipient) || !isBytes32(nonce)) return PromotionResult.reject("invalid authorization identity");
+            if (chainId != TRUSTED_CHAIN_ID || !TRUSTED_USDC.equals(token)) return PromotionResult.reject("unsupported relay rail");
+
+            String raw = packetForMessage(messageId);
+            if (raw == null) return PromotionResult.reject("relay packet missing");
+            if (raw.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > MAX_PACKET_BYTES) {
+                rejectCandidate(messageId, "packet too large");
+                return PromotionResult.reject("packet too large");
+            }
+
+            JSONObject packet = new JSONObject(raw);
+            if (packet.optInt("version", 0) != 2 || !"PAYMENT_ENVELOPE".equals(packet.optString("type", ""))) {
+                rejectCandidate(messageId, "unsupported packet");
+                return PromotionResult.reject("unsupported packet");
+            }
+            long expiresAt = packet.optLong("expiresAt", 0L);
+            int hopCount = packet.optInt("hopCount", 0);
+            int hopLimit = packet.optInt("hopLimit", 0);
+            int copyBudget = packet.optInt("copyBudget", 0);
+            if (expiresAt <= now || hopCount < 0 || hopLimit < 1 || hopLimit > MAX_HOPS || hopCount > hopLimit || copyBudget < 1 || copyBudget > MAX_HOPS) {
+                rejectCandidate(messageId, expiresAt <= now ? "expired" : "invalid routing metadata");
+                return PromotionResult.reject(expiresAt <= now ? "expired" : "invalid routing metadata");
+            }
+
+            JSONObject payment = new JSONObject(packet.optString("payload", "{}"));
+            JSONObject auth = payment.optJSONObject("authorization");
+            if (auth == null) auth = payment.optJSONObject("auth");
+            if (auth == null) return PromotionResult.reject("authorization missing");
+            JSONObject broadcast = auth.optJSONObject("broadcast");
+            if (broadcast == null || !"SENDER_FUNDED_RAW_TX".equals(broadcast.optString("mode", ""))) {
+                return PromotionResult.reject("sender-funded transaction missing");
+            }
+
+            String packetPaymentId = firstNonEmpty(payment.optString("id", ""), packet.optString("paymentId", ""));
+            String destination = packet.optString("destinationWallet", "").toLowerCase(Locale.ROOT);
+            if (!paymentId.equals(packetPaymentId)) return PromotionResult.reject("payment id mismatch");
+            if (!sender.equals(auth.optString("from", "").toLowerCase(Locale.ROOT))) return PromotionResult.reject("sender mismatch");
+            if (!recipient.equals(auth.optString("to", "").toLowerCase(Locale.ROOT)) || !recipient.equals(destination)) return PromotionResult.reject("recipient mismatch");
+            if (!nonce.equals(auth.optString("nonce", "").toLowerCase(Locale.ROOT))) return PromotionResult.reject("authorization nonce mismatch");
+            if (broadcast.optLong("chainId", -1L) != TRUSTED_CHAIN_ID) return PromotionResult.reject("chain mismatch");
+            if (!txHash.equals(broadcast.optString("txHash", "").toLowerCase(Locale.ROOT))) return PromotionResult.reject("transaction hash mismatch");
+            if (!isHex(broadcast.optString("rawTransaction", ""), 4, 131074)) return PromotionResult.reject("invalid raw transaction");
+
+            long authExpiry;
+            try { authExpiry = Long.parseLong(auth.optString("validBefore", "0")) * 1000L; }
+            catch (Throwable ignored) { authExpiry = 0L; }
+            if (authExpiry <= now || expiresAt > authExpiry + 1000L) {
+                rejectCandidate(messageId, "authorization expired");
+                return PromotionResult.reject("authorization expired");
+            }
+
+            if (activeQueueCount() >= MAX_QUEUE && !relayExists(messageId)) {
+                return PromotionResult.reject("relay queue full");
+            }
+
+            ContentValues row = new ContentValues();
+            row.put("message_id", messageId);
+            row.put("payment_id", paymentId);
+            row.put("tx_hash", txHash);
+            row.put("sender", sender);
+            row.put("recipient", recipient);
+            row.put("authorization_nonce", nonce);
+            row.put("token_contract", token);
+            row.put("chain_id", chainId);
+            row.put("raw_payload", raw);
+            row.put("state", "FORWARDABLE");
+            row.put("created_at", packet.optLong("createdAt", now));
+            row.put("expires_at", expiresAt);
+            row.put("received_at", now);
+            row.put("hop_count", hopCount);
+            row.put("max_hops", hopLimit);
+            row.put("broadcast_attempts", 0);
+            row.put("next_attempt_at", now);
+            row.putNull("last_error");
+            row.put("source_device", packet.optString("originDeviceId", ""));
+
+            long inserted = db().insertWithOnConflict("relay_envelopes", null, row, SQLiteDatabase.CONFLICT_IGNORE);
+            if (inserted == -1L) {
+                String existing = existingMessageForTxHash(txHash);
+                if (existing != null) return PromotionResult.duplicate(existing);
+                return PromotionResult.reject("relay deduplication conflict");
+            }
+
+            boolean queued = enqueueForward(packet, now);
+            if (queued) {
+                ContentValues forwarded = new ContentValues();
+                forwarded.put("last_forwarded_at", now);
+                db().update("relay_envelopes", forwarded, "message_id=?", new String[] { messageId });
+            }
+            return PromotionResult.accept(messageId, queued);
+        } catch (Throwable error) {
+            return PromotionResult.reject(error.getMessage() == null ? "relay promotion failed" : error.getMessage());
+        }
+    }
+
+    synchronized void rejectCandidate(String messageId, String reason) {
+        if (messageId == null || messageId.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        String raw = packetForMessage(messageId);
+        long expiresAt = now + 60_000L;
+        String paymentId = "";
+        long createdAt = now;
+        int hopCount = 0;
+        int hopLimit = 0;
+        try {
+            if (raw != null) {
+                JSONObject packet = new JSONObject(raw);
+                paymentId = packet.optString("paymentId", "");
+                expiresAt = Math.max(now + 1000L, packet.optLong("expiresAt", expiresAt));
+                createdAt = packet.optLong("createdAt", now);
+                hopCount = packet.optInt("hopCount", 0);
+                hopLimit = packet.optInt("hopLimit", 0);
+            }
+        } catch (Throwable ignored) {}
+
+        ContentValues row = new ContentValues();
+        row.put("message_id", messageId);
+        row.put("payment_id", paymentId);
+        row.put("state", "INVALID");
+        row.put("created_at", createdAt);
+        row.put("expires_at", expiresAt);
+        row.put("received_at", now);
+        row.put("hop_count", hopCount);
+        row.put("max_hops", hopLimit);
+        row.put("broadcast_attempts", 0);
+        row.put("next_attempt_at", Long.MAX_VALUE);
+        row.put("last_error", safeError(reason));
+        db().insertWithOnConflict("relay_envelopes", null, row, SQLiteDatabase.CONFLICT_IGNORE);
+        db().delete("mesh_outbox", "message_id=?", new String[] { messageId });
+    }
+
+    synchronized List<RelayCandidate> broadcastCandidates(long now, int limit) {
+        cleanup(now);
+        List<RelayCandidate> rows = new ArrayList<>();
+        int bounded = Math.max(1, Math.min(limit, 64));
+        try (Cursor c = db().rawQuery(
+            "SELECT message_id,payment_id,tx_hash,raw_payload,broadcast_attempts,state FROM relay_envelopes "
+                + "WHERE state IN ('FORWARDABLE','BROADCAST_PENDING','BROADCASTED','RETRY_LATER') "
+                + "AND expires_at>? AND next_attempt_at<=? ORDER BY received_at ASC LIMIT ?",
+            new String[] { String.valueOf(now), String.valueOf(now), String.valueOf(bounded) }
+        )) {
+            while (c.moveToNext()) {
+                rows.add(new RelayCandidate(c.getString(0), c.getString(1), c.getString(2), c.getString(3), c.getInt(4), c.getString(5)));
+            }
+        }
+        return rows;
+    }
+
+    synchronized void markBroadcastPending(String messageId) {
+        updateAttempt(messageId, "BROADCAST_PENDING", null, System.currentTimeMillis() + 5000L, false);
+    }
+
+    synchronized void markBroadcasted(String messageId) {
+        updateAttempt(messageId, "BROADCASTED", null, System.currentTimeMillis() + 5000L, true);
+    }
+
+    synchronized void markRetry(String messageId, String error) {
+        int attempts = attempts(messageId) + 1;
+        long[] schedule = new long[] { 5000L, 15000L, 45000L, 120000L, 300000L, 900000L, 3600000L };
+        long base = schedule[Math.min(schedule.length - 1, Math.max(0, attempts - 1))];
+        long jitter = Math.abs(messageId.hashCode() % 1200);
+        updateAttempt(messageId, "RETRY_LATER", error, System.currentTimeMillis() + base + jitter, true);
+    }
+
+    synchronized void markInvalid(String messageId, String error) {
+        updateAttempt(messageId, "INVALID", error, Long.MAX_VALUE, false);
+        db().delete("mesh_outbox", "message_id=?", new String[] { messageId });
+    }
+
+    synchronized void markExpired(String messageId, String error) {
+        updateAttempt(messageId, "EXPIRED", error, Long.MAX_VALUE, false);
+        db().delete("mesh_outbox", "message_id=?", new String[] { messageId });
+    }
+
+    synchronized void markAlreadySettled(String messageId, String error) {
+        updateAttempt(messageId, "ALREADY_SETTLED", error, Long.MAX_VALUE, false);
+        db().delete("mesh_outbox", "message_id=?", new String[] { messageId });
+    }
+
+    synchronized void markNeedsSenderRefresh(String messageId, String error) {
+        updateAttempt(messageId, "NEEDS_SENDER_REFRESH", error, Long.MAX_VALUE, false);
+        db().delete("mesh_outbox", "message_id=?", new String[] { messageId });
+    }
+
+    synchronized void markConfirmed(String messageId, long confirmedAt) {
+        ContentValues cv = new ContentValues();
+        cv.put("state", "CONFIRMED");
+        cv.put("confirmed_at", confirmedAt);
+        cv.put("next_attempt_at", Long.MAX_VALUE);
+        cv.putNull("last_error");
+        db().update("relay_envelopes", cv, "message_id=?", new String[] { messageId });
+        db().delete("mesh_outbox", "message_id=?", new String[] { messageId });
+    }
+
+    synchronized JSONObject diagnostics() {
+        JSONObject out = new JSONObject();
+        try {
+            out.put("relayQueueSize", count("state NOT IN ('CONFIRMED','ALREADY_SETTLED','EXPIRED','INVALID','NEEDS_SENDER_REFRESH')"));
+            out.put("relayPacketsValidated", count("state NOT IN ('INVALID')"));
+            out.put("relayBroadcastPending", count("state IN ('FORWARDABLE','BROADCAST_PENDING','BROADCASTED','RETRY_LATER')"));
+            out.put("relayConfirmed", count("state='CONFIRMED'"));
+            out.put("relayExpired", count("state='EXPIRED'"));
+            out.put("relayRejected", count("state='INVALID'"));
+            out.put("relayNeedsSenderRefresh", count("state='NEEDS_SENDER_REFRESH'"));
+            try (Cursor c = db().rawQuery("SELECT last_error FROM relay_envelopes WHERE last_error IS NOT NULL AND last_error<>'' ORDER BY received_at DESC LIMIT 1", null)) {
+                out.put("lastRelayError", c.moveToFirst() ? c.getString(0) : "");
+            }
+        } catch (Throwable ignored) {}
+        return out;
+    }
+
+    synchronized void cleanup(long now) {
+        try (Cursor c = db().rawQuery(
+            "SELECT message_id FROM relay_envelopes WHERE expires_at<=? AND state NOT IN ('CONFIRMED','ALREADY_SETTLED','EXPIRED','INVALID','NEEDS_SENDER_REFRESH')",
+            new String[] { String.valueOf(now) }
+        )) {
+            List<String> ids = new ArrayList<>();
+            while (c.moveToNext()) ids.add(c.getString(0));
+            for (String id : ids) markExpired(id, "authorization expired");
+        }
+        long purgeBefore = now - 7L * 24L * 60L * 60L * 1000L;
+        db().delete("relay_envelopes", "received_at<? AND state IN ('CONFIRMED','ALREADY_SETTLED','EXPIRED','INVALID')", new String[] { String.valueOf(purgeBefore) });
+    }
+
+    private boolean enqueueForward(JSONObject packet, long now) {
+        try {
+            int hopCount = packet.optInt("hopCount", 0);
+            int hopLimit = packet.optInt("hopLimit", 0);
+            int copyBudget = packet.optInt("copyBudget", 0);
+            if (hopCount >= hopLimit || copyBudget <= 1) return false;
+
+            JSONObject forwarded = new JSONObject(packet.toString());
+            forwarded.put("hopCount", hopCount + 1);
+            forwarded.put("copyBudget", copyBudget - 1);
+            String raw = forwarded.toString();
+            ContentValues cv = new ContentValues();
+            cv.put("message_id", forwarded.optString("messageId", ""));
+            cv.put("packet_type", "PAYMENT_ENVELOPE");
+            cv.put("payment_id", forwarded.optString("paymentId", ""));
+            cv.put("created_at", forwarded.optLong("createdAt", now));
+            cv.put("expires_at", forwarded.optLong("expiresAt", now + 3600000L));
+            cv.put("hop_count", hopCount + 1);
+            cv.put("hop_limit", hopLimit);
+            cv.put("copy_budget", copyBudget - 1);
+            cv.put("attempts", 0);
+            cv.put("next_attempt_at", now);
+            cv.put("packet", raw);
+            return db().insertWithOnConflict("mesh_outbox", null, cv, SQLiteDatabase.CONFLICT_IGNORE) != -1L;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private void updateAttempt(String messageId, String state, String error, long nextAttemptAt, boolean increment) {
+        long now = System.currentTimeMillis();
+        ContentValues cv = new ContentValues();
+        cv.put("state", state);
+        cv.put("next_attempt_at", nextAttemptAt);
+        cv.put("last_broadcast_at", now);
+        if (error == null || error.isEmpty()) cv.putNull("last_error");
+        else cv.put("last_error", safeError(error));
+        if (increment) cv.put("broadcast_attempts", attempts(messageId) + 1);
+        db().update("relay_envelopes", cv, "message_id=?", new String[] { messageId });
+    }
+
+    private int attempts(String messageId) {
+        try (Cursor c = db().query("relay_envelopes", new String[] { "broadcast_attempts" }, "message_id=?", new String[] { messageId }, null, null, null)) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        }
+    }
+
+    private int activeQueueCount() {
+        return count("state NOT IN ('CONFIRMED','ALREADY_SETTLED','EXPIRED','INVALID')");
+    }
+
+    private int count(String where) {
+        try (Cursor c = db().rawQuery("SELECT COUNT(*) FROM relay_envelopes WHERE " + where, null)) {
+            return c.moveToFirst() ? c.getInt(0) : 0;
+        }
+    }
+
+    private boolean relayExists(String messageId) {
+        try (Cursor c = db().rawQuery("SELECT 1 FROM relay_envelopes WHERE message_id=? LIMIT 1", new String[] { messageId })) {
+            return c.moveToFirst();
+        }
+    }
+
+    private String existingMessageForTxHash(String txHash) {
+        try (Cursor c = db().query("relay_envelopes", new String[] { "message_id" }, "tx_hash=?", new String[] { txHash }, null, null, null)) {
+            return c.moveToFirst() ? c.getString(0) : null;
+        }
+    }
+
+    private String packetForMessage(String messageId) {
+        try (Cursor c = db().query("mesh_inbox", new String[] { "packet" }, "message_id=? AND packet_type=?", new String[] { messageId, "PAYMENT_ENVELOPE" }, null, null, null)) {
+            return c.moveToFirst() ? c.getString(0) : null;
+        }
+    }
+
+    private static String safeError(String error) {
+        if (error == null) return "";
+        String value = error.trim();
+        return value.length() > 480 ? value.substring(0, 480) : value;
+    }
+
+    private static String firstNonEmpty(String... values) {
+        for (String value : values) if (value != null && !value.trim().isEmpty()) return value.trim();
+        return "";
+    }
+
+    private static boolean isAddress(String value) {
+        return value != null && value.matches("^0x[0-9a-fA-F]{40}$");
+    }
+
+    private static boolean isBytes32(String value) {
+        return value != null && value.matches("^0x[0-9a-fA-F]{64}$");
+    }
+
+    private static boolean isTxHash(String value) {
+        return isBytes32(value);
+    }
+
+    private static boolean isHex(String value, int minChars, int maxChars) {
+        return value != null && value.length() >= minChars && value.length() <= maxChars
+            && value.matches("^0x[0-9a-fA-F]+$") && ((value.length() - 2) % 2 == 0);
+    }
+
+    static final class RelayCandidate {
+        final String messageId;
+        final String paymentId;
+        final String txHash;
+        final String packet;
+        final int attempts;
+        final String state;
+
+        RelayCandidate(String messageId, String paymentId, String txHash, String packet, int attempts, String state) {
+            this.messageId = messageId;
+            this.paymentId = paymentId;
+            this.txHash = txHash;
+            this.packet = packet;
+            this.attempts = attempts;
+            this.state = state;
+        }
+    }
+
+    static final class PromotionResult {
+        final boolean accepted;
+        final boolean duplicate;
+        final boolean forwardQueued;
+        final String messageId;
+        final String error;
+
+        PromotionResult(boolean accepted, boolean duplicate, boolean forwardQueued, String messageId, String error) {
+            this.accepted = accepted;
+            this.duplicate = duplicate;
+            this.forwardQueued = forwardQueued;
+            this.messageId = messageId == null ? "" : messageId;
+            this.error = error == null ? "" : error;
+        }
+
+        static PromotionResult accept(String messageId, boolean queued) { return new PromotionResult(true, false, queued, messageId, ""); }
+        static PromotionResult duplicate(String messageId) { return new PromotionResult(true, true, false, messageId, ""); }
+        static PromotionResult reject(String error) { return new PromotionResult(false, false, false, "", error); }
+    }
+}
