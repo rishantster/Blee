@@ -1,5 +1,5 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
-import type { PaymentRecord } from '../types/domain';
+import type { PaymentRecord, PaymentState } from '../types/domain';
 
 interface BleeStorePlugin {
   init(): Promise<{ ready: boolean; journalMode: string }>;
@@ -12,6 +12,99 @@ interface BleeStorePlugin {
 
 const BleeStore = registerPlugin<BleeStorePlugin>('BleeStore');
 let ready = false;
+
+type StoredPayment = Record<string, unknown>;
+
+function wallet(value: unknown): string | undefined {
+  const clean = String(value || '').trim();
+  return /^0x[0-9a-fA-F]{40}$/.test(clean) ? clean.toLowerCase() : undefined;
+}
+
+function canonicalDirection(value: unknown): PaymentRecord['direction'] | null {
+  const direction = String(value || '').trim().toLowerCase();
+  if (direction === 'out' || direction === 'outgoing' || direction === 'sent') return 'out';
+  if (direction === 'in' || direction === 'incoming' || direction === 'received') return 'in';
+  if (direction === 'relay' || direction === 'courier') return 'relay';
+  return null;
+}
+
+function canonicalState(value: unknown): PaymentState {
+  const state = String(value || '').trim().toLowerCase();
+  if (state === 'settled' || state.includes('chain_confirmed') || state.includes('chain-confirmed')) return 'settled';
+  if (state === 'failed' || state.includes('expired') || state.includes('revert') || state.includes('cancel')) return 'failed';
+  if (state === 'submitted' || state.includes('settlement_submitted') || state.includes('settlement-submitted')) return 'submitted';
+  if (state === 'mesh-delivered' || state.includes('delivered_offline') || state.includes('acknowledged') || state.includes('delivered')) return 'mesh-delivered';
+  if (state === 'mesh-broadcast' || state.includes('broadcast')) return 'mesh-broadcast';
+  return 'queued-local';
+}
+
+function canonicalRoute(value: unknown, state: PaymentState, originalState: unknown): PaymentRecord['route'] {
+  const route = String(value || '').trim();
+  if (state === 'mesh-delivered' || String(originalState || '').toLowerCase().includes('delivered_offline')) return 'ble-mesh';
+  if (route === 'arc-direct' || route === 'ble-mesh' || route === 'local-queue') return route;
+  if (state === 'submitted' || state === 'settled') return 'arc-direct';
+  return 'local-queue';
+}
+
+/**
+ * SQLite is shared by the WebView journal and the native background mesh.
+ * The native mesh historically used `outgoing` / `incoming`, while the React
+ * domain uses `out` / `in`. Normalize that difference at this single storage
+ * boundary so UI, notifications and background transport all describe the same
+ * payment without leaking legacy names into application code.
+ */
+function canonicalPayment(input: StoredPayment): PaymentRecord | null {
+  const id = String(input.id || input.paymentId || '').trim();
+  const direction = canonicalDirection(input.direction);
+  if (!id || !direction) return null;
+
+  const authorization = (input.authorization || input.auth) as PaymentRecord['authorization'] | undefined;
+  const state = canonicalState(input.state);
+  const authFrom = wallet(authorization?.from);
+  const authTo = wallet(authorization?.to);
+  const rawCounterparty = wallet(input.counterparty || input.counterpartyWallet);
+  const counterparty = direction === 'out'
+    ? (authTo || rawCounterparty)
+    : direction === 'in'
+      ? (authFrom || rawCounterparty)
+      : (rawCounterparty || authTo || authFrom);
+  if (!counterparty) return null;
+
+  const incomingAlias = String(
+    input.senderName || input.contactName || input.peerName || input.counterpartyName || '',
+  ).trim();
+  const outgoingAlias = String(
+    input.counterpartyAlias || input.recipientName || input.receiverName || input.contactName || input.peerName || input.counterpartyName || '',
+  ).trim();
+  const counterpartyAlias = direction === 'in' ? incomingAlias : outgoingAlias;
+
+  const createdAt = Number(input.createdAt || Date.now());
+  const updatedAt = Number(input.updatedAt || createdAt);
+  const amount = String(input.amount || input.displayAmount || input.tokenAmount || '0');
+  const route = canonicalRoute(input.route, state, input.state);
+
+  return {
+    ...(input as unknown as PaymentRecord),
+    id,
+    direction,
+    counterparty: counterparty as PaymentRecord['counterparty'],
+    counterpartyAlias: counterpartyAlias || undefined,
+    amount,
+    createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+    updatedAt: Number.isFinite(updatedAt) ? updatedAt : undefined,
+    state,
+    route,
+    authorization,
+  };
+}
+
+/** Native mesh storage keys remain outgoing/incoming for compatibility. */
+function storagePayment(row: PaymentRecord): StoredPayment {
+  return {
+    ...row,
+    direction: row.direction === 'out' ? 'outgoing' : row.direction === 'in' ? 'incoming' : 'relay',
+  };
+}
 
 export function nativePersistenceAvailable() {
   return Capacitor.isNativePlatform();
@@ -27,14 +120,15 @@ export async function initPersistence(): Promise<{ native: true; journalMode: st
     return { native: true, journalMode: result.journalMode || 'unknown' };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(detail.startsWith("Blee SQLite") ? detail : `Blee SQLite initialization failed: ${detail}`);
+    throw new Error(detail.startsWith('Blee SQLite') ? detail : `Blee SQLite initialization failed: ${detail}`);
   }
 }
 
-function normalizePayments(rows: PaymentRecord[]): PaymentRecord[] {
+function normalizePayments(rows: Array<PaymentRecord | StoredPayment>): PaymentRecord[] {
   const map = new Map<string, PaymentRecord>();
-  for (const row of rows) {
-    if (!row?.id || !row?.direction || !row?.state || !row?.route) continue;
+  for (const source of rows) {
+    const row = canonicalPayment(source as StoredPayment);
+    if (!row) continue;
     const key = `${row.direction}:${row.id}`;
     const existing = map.get(key);
     if (!existing || (row.updatedAt || 0) >= (existing.updatedAt || 0)) map.set(key, row);
@@ -48,9 +142,9 @@ function normalizePayments(rows: PaymentRecord[]): PaymentRecord[] {
 export async function loadPayments(): Promise<PaymentRecord[]> {
   await initPersistence();
   const { payments } = await BleeStore.loadPayments();
-  const rows: PaymentRecord[] = [];
+  const rows: StoredPayment[] = [];
   for (const raw of payments) {
-    try { rows.push(JSON.parse(raw) as PaymentRecord); } catch {}
+    try { rows.push(JSON.parse(raw) as StoredPayment); } catch {}
   }
   return normalizePayments(rows);
 }
@@ -60,7 +154,9 @@ export async function savePayments(rows: PaymentRecord[]): Promise<PaymentRecord
   await initPersistence();
   const now = Date.now();
   const safe = normalizePayments(rows).map((row) => ({ ...row, updatedAt: row.updatedAt || now }));
-  await BleeStore.replacePayments({ payments: safe.map((row) => JSON.stringify(row)) });
+  await BleeStore.replacePayments({
+    payments: safe.map((row) => JSON.stringify(storagePayment(row))),
+  });
   return safe;
 }
 
