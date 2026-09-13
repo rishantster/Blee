@@ -82,6 +82,39 @@ function parseBleeRecipientQr(rawValue: string): string {
 '''
 
 
+def recipient_input_bounds(text: str, start: int, end: int) -> tuple[int, int]:
+    input_start = text.find("<input", start, end)
+    if input_start < 0:
+        fail("Recipient input not found")
+    # React input elements are self-closing in the production Blee UI. Prefer />
+    # because arrow handlers contain the '>' character in '=>'.
+    close = text.find("/>", input_start, end)
+    if close >= 0:
+        return input_start, close + 2
+    # Defensive fallback: scan until a tag-closing > that is outside quotes and
+    # JSX brace expressions rather than stopping on an arrow function.
+    quote = None
+    brace_depth = 0
+    for i in range(input_start + 6, end):
+        ch = text[i]
+        if quote:
+            if ch == quote and text[i - 1] != "\\":
+                quote = None
+            continue
+        if ch in ('"', "'"):
+            quote = ch
+            continue
+        if ch == "{":
+            brace_depth += 1
+            continue
+        if ch == "}" and brace_depth:
+            brace_depth -= 1
+            continue
+        if ch == ">" and brace_depth == 0:
+            return input_start, i + 1
+    fail("Recipient input tag is unterminated")
+
+
 def patch_web() -> None:
     app = ROOT / "src/components/BleeApp.tsx"
     css = ROOT / "app/globals.css"
@@ -103,13 +136,8 @@ def patch_web() -> None:
         amount = text.find("Amount", recipient)
         if amount < 0:
             amount = min(len(text), recipient + 8000)
-        input_start = text.find("<input", recipient, amount)
-        if input_start < 0:
-            fail("Recipient input not found")
-        input_end = text.find(">", input_start, amount)
-        if input_end < 0:
-            fail("Recipient input tag is unterminated")
-        input_tag = text[input_start:input_end + 1]
+        input_start, input_end = recipient_input_bounds(text, recipient, amount)
+        input_tag = text[input_start:input_end]
 
         value_match = re.search(r"\bvalue\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}", input_tag)
         state_name = value_match.group(1) if value_match else None
@@ -124,8 +152,6 @@ def patch_web() -> None:
             if change_match:
                 setter = change_match.group(2)
         if not setter:
-            # Last-resort Send-screen convention. Fail rather than silently wiring
-            # a scanner to the wrong field.
             candidates = re.findall(r"const\s*\[\s*(?:recipient|to|sendTo|recipientAddress)\s*,\s*([A-Za-z_$][\w$]*)\s*\]\s*=\s*useState", text, re.I)
             if len(candidates) == 1:
                 setter = candidates[0]
@@ -154,7 +180,7 @@ def patch_web() -> None:
           </svg>
           <span>Scan QR</span>
         </button>'''
-        text = text[:input_end + 1] + scanner_button + text[input_end + 1:]
+        text = text[:input_end] + scanner_button + text[input_end:]
         app.write_text(text)
 
     css_text = css.read_text()
