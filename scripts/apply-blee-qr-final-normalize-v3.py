@@ -12,20 +12,20 @@ def fail(message: str) -> None:
     raise SystemExit(f"Blee final QR normalize v3: {message}")
 
 
-def input_bounds(text: str, start: int, end: int) -> tuple[int, int]:
-    input_start = text.find("<input", start, end)
-    if input_start < 0:
-        fail("Send Recipient input not found")
-    close = text.find("/>", input_start, end)
-    if close >= 0:
-        return input_start, close + 2
+def input_end(text: str, start: int) -> int:
+    close = text.find("/>", start)
+    gt = text.find(">", start)
+    if close >= 0 and (gt < 0 or close < gt):
+        return close + 2
     quote = None
     braces = 0
-    for i in range(input_start + 6, end):
+    i = start + 6
+    while i < len(text):
         ch = text[i]
         if quote:
             if ch == quote and text[i - 1] != "\\":
                 quote = None
+            i += 1
             continue
         if ch in ('"', "'"):
             quote = ch
@@ -34,62 +34,111 @@ def input_bounds(text: str, start: int, end: int) -> tuple[int, int]:
         elif ch == "}" and braces:
             braces -= 1
         elif ch == ">" and braces == 0:
-            return input_start, i + 1
-    fail("Send Recipient input tag is unterminated")
-    return -1, -1
+            return i + 1
+        i += 1
+    fail("input tag is unterminated")
+    return -1
 
 
-def find_recipient_region(text: str) -> tuple[int, int]:
-    """Find the editable Send Recipient field structurally.
-
-    Do not depend on screen/button copy such as "Review payment". Activity detail
-    can also contain Recipient/Amount labels, but it has no editable input between
-    them. The Send form is therefore identified as the unique Recipient -> Amount
-    region containing a non-secret input.
-    """
-    candidates: list[tuple[int, int]] = []
-    for match in re.finditer(r">\s*Recipient\s*<", text, re.I):
-        recipient = match.end()
-        search_end = min(len(text), recipient + 12000)
-        amount_match = re.search(r">\s*Amount\s*<", text[recipient:search_end], re.I)
-        if not amount_match:
-            continue
-        amount = recipient + amount_match.start()
-        input_start = text.find("<input", recipient, amount)
-        if input_start < 0:
-            continue
-        try:
-            start, end = input_bounds(text, recipient, amount)
-        except SystemExit:
-            continue
-        input_tag = text[start:end].lower()
-        if "password" in input_tag or "passphrase" in input_tag:
-            continue
-        candidates.append((recipient, amount))
-
-    if len(candidates) != 1:
-        fail(f"expected one editable Recipient -> Amount region, found {len(candidates)}")
-    return candidates[0]
-
-
-def recipient_setter(text: str, input_tag: str) -> str:
-    value_match = re.search(r"\bvalue\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}", input_tag)
-    if value_match:
-        state_name = value_match.group(1)
-        state_match = re.search(
-            r"const\s*\[\s*" + re.escape(state_name) + r"\s*,\s*([A-Za-z_$][\w$]*)\s*\]\s*=\s*useState",
-            text,
-        )
-        if state_match:
-            return state_match.group(1)
-    change_match = re.search(
-        r"onChange\s*=\s*\{\s*\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>\s*([A-Za-z_$][\w$]*)\s*\(\s*\1\.target\.value\s*\)\s*\}",
-        input_tag,
+def state_map(text: str) -> dict[str, str]:
+    result: dict[str, str] = {}
+    pattern = re.compile(
+        r"const\s*\[\s*([A-Za-z_$][\w$]*)\s*,\s*([A-Za-z_$][\w$]*)\s*\]\s*=\s*useState"
     )
-    if change_match:
-        return change_match.group(2)
-    fail("Recipient setter missing")
-    return ""
+    for match in pattern.finditer(text):
+        result[match.group(1)] = match.group(2)
+    return result
+
+
+def recipient_input(text: str) -> tuple[int, int, str, str]:
+    states = state_map(text)
+    candidates: list[tuple[int, int, int, str, str]] = []
+
+    for match in re.finditer(r"<input\b", text):
+        start = match.start()
+        end = input_end(text, start)
+        tag = text[start:end]
+        lower = tag.lower()
+        if "password" in lower or "passphrase" in lower:
+            continue
+        if re.search(r'type\s*=\s*["\'](?:number|file|email|date|time)["\']', tag, re.I):
+            continue
+
+        score = 0
+        state_name = ""
+        setter = ""
+
+        value_match = re.search(r"\bvalue\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}", tag)
+        if value_match:
+            state_name = value_match.group(1)
+            setter = states.get(state_name, "")
+            name_lower = state_name.lower()
+            if "recipient" in name_lower:
+                score += 60
+            if "send" in name_lower and any(token in name_lower for token in ("to", "address", "wallet")):
+                score += 45
+            if name_lower in ("to", "recipient", "recipientaddress", "sendto"):
+                score += 60
+            if "address" in name_lower or "wallet" in name_lower:
+                score += 22
+            if "amount" in name_lower or "note" in name_lower or "name" == name_lower:
+                score -= 35
+
+        change_match = re.search(
+            r"onChange\s*=\s*\{\s*\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>\s*([A-Za-z_$][\w$]*)\s*\(\s*\1\.target\.value\s*\)\s*\}",
+            tag,
+        )
+        if change_match and not setter:
+            setter = change_match.group(2)
+        if setter:
+            setter_lower = setter.lower()
+            if "recipient" in setter_lower:
+                score += 45
+            if "send" in setter_lower and any(token in setter_lower for token in ("to", "address", "wallet")):
+                score += 30
+
+        semantic = " ".join(
+            re.findall(
+                r'(?:placeholder|aria-label|name|id)\s*=\s*["\']([^"\']+)["\']',
+                tag,
+                re.I,
+            )
+        ).lower()
+        if "recipient" in semantic:
+            score += 45
+        if "wallet" in semantic or "address" in semantic:
+            score += 25
+        if "amount" in semantic:
+            score -= 35
+
+        before = text[max(0, start - 900):start].lower()
+        after = text[end:min(len(text), end + 900)].lower()
+        context = before + " " + after
+        if "recipient" in context:
+            score += 16
+        if "wallet address" in context:
+            score += 10
+        if "amount" in after:
+            score += 5
+        if "send" in context:
+            score += 4
+
+        if setter:
+            candidates.append((score, start, end, tag, setter))
+
+    if not candidates:
+        fail("no editable text input with a React setter was found")
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    top = candidates[0]
+    if top[0] < 25:
+        summary = ", ".join(str(item[0]) for item in candidates[:5])
+        fail(f"could not identify recipient input semantically; top scores={summary}")
+
+    if len(candidates) > 1 and candidates[1][0] == top[0]:
+        fail(f"recipient input is ambiguous; tied semantic score={top[0]}")
+
+    return top[1], top[2], top[3], top[4]
 
 
 def scanner_button(setter: str) -> str:
@@ -118,10 +167,8 @@ def scanner_button(setter: str) -> str:
 def main() -> None:
     if not APP.is_file():
         fail("materialized BleeApp.tsx missing")
-    text = APP.read_text()
 
-    # Only durable module-level QR plumbing must exist before normalization.
-    # The rendered control may be absent because this stage reconstructs it.
+    text = APP.read_text()
     for marker in (
         "BLEE_SEND_QR_SCANNER_V1",
         "registerPlugin<BleeQrScannerPlugin>('BleeQrScanner')",
@@ -130,9 +177,8 @@ def main() -> None:
         if marker not in text:
             fail(f"QR implementation missing {marker}")
 
-    # Remove any rendered legacy/final scanner control globally first. Later
-    # React stages are allowed to reshape the Send form; the final tree gets one
-    # canonical control rebuilt below.
+    # Remove only scanner controls/markers from previous stages. Nothing else in
+    # the Send form is rewritten until the actual recipient input is identified.
     text = re.sub(
         r'\s*<button\b(?=[^>]*\bclassName="(?:blee-recipient-qr-scan|blee-recipient-qr-icon)")[\s\S]*?</button>',
         '',
@@ -140,58 +186,51 @@ def main() -> None:
     )
     text = text.replace('{/* BLEE_QR_INPUT_SHELL_V2 */}', '')
 
-    recipient, amount = find_recipient_region(text)
-    segment = text[recipient:amount]
-    input_start, input_end = input_bounds(segment, 0, len(segment))
-    input_tag = segment[input_start:input_end]
-    if "password" in input_tag.lower() or "passphrase" in input_tag.lower():
+    start, end, tag, setter = recipient_input(text)
+    if "password" in tag.lower() or "passphrase" in tag.lower():
         fail("refusing to install scanner on secret input")
 
-    setter = recipient_setter(text, input_tag)
     button = scanner_button(setter)
     wrapper_token = '<div className="blee-recipient-input-shell">'
-    wrapper_count = segment.count(wrapper_token)
-    if wrapper_count > 1:
-        fail(f"Recipient contains {wrapper_count} QR input wrappers")
+    wrapper_start = text.rfind(wrapper_token, max(0, start - 700), start + 1)
 
-    if wrapper_count == 1:
-        wrapper_start = segment.find(wrapper_token)
-        if wrapper_start > input_start:
-            fail("QR input wrapper begins after Recipient input")
-        wrapper_close = segment.find("</div>", input_end)
-        if wrapper_close < 0:
-            fail("existing QR input wrapper has no closing div")
-        segment = segment[:wrapper_close] + button + "\n        " + segment[wrapper_close:]
-        close_end = wrapper_close + len(button) + len("\n        ") + len("</div>")
-        segment = segment[:close_end] + "{/* BLEE_QR_INPUT_SHELL_V2 */}" + segment[close_end:]
+    if wrapper_start >= 0:
+        wrapper_close = text.find("</div>", end)
+        if wrapper_close < 0 or wrapper_close - end > 1200:
+            fail("existing recipient input wrapper is malformed")
+        text = text[:end] + button + text[end:]
+        wrapper_close = text.find("</div>", end + len(button))
+        close_end = wrapper_close + len("</div>")
+        text = text[:close_end] + "{/* BLEE_QR_INPUT_SHELL_V2 */}" + text[close_end:]
     else:
-        shell = wrapper_token + "\n" + input_tag + button + '\n        </div>{/* BLEE_QR_INPUT_SHELL_V2 */}'
-        segment = segment[:input_start] + shell + segment[input_end:]
+        shell = wrapper_token + "\n" + tag + button + '\n        </div>{/* BLEE_QR_INPUT_SHELL_V2 */}'
+        text = text[:start] + shell + text[end:]
 
-    text = text[:recipient] + segment + text[amount:]
-    marker = "// BLEE_FINAL_QR_NORMALIZE_V3"
+    marker = "// BLEE_FINAL_QR_NORMALIZE_V4_SEMANTIC"
     if marker not in text:
         text = marker + "\n" + text
     APP.write_text(text)
 
     final = APP.read_text()
-    recipient, amount = find_recipient_region(final)
-    recipient_region = final[recipient:amount]
+    final_start, final_end, _final_tag, _final_setter = recipient_input(final)
+    window = final[max(0, final_start - 250):min(len(final), final_end + 1800)]
+
     total = final.count('className="blee-recipient-qr-icon"')
-    in_recipient = recipient_region.count('className="blee-recipient-qr-icon"')
     legacy = final.count('className="blee-recipient-qr-scan"')
-    if total != 1 or in_recipient != 1 or legacy != 0:
-        fail(f"scanner cardinality invalid total={total} recipient={in_recipient} legacy={legacy}")
+    if total != 1 or legacy != 0:
+        fail(f"scanner cardinality invalid total={total} legacy={legacy}")
+    if 'className="blee-recipient-qr-icon"' not in window:
+        fail("QR icon is not adjacent to the semantic recipient input")
+    if "BleeQrScanner.scan()" not in window:
+        fail("recipient QR control is not wired to the native scanner")
+    if "parseBleeRecipientQr(result.value)" not in window:
+        fail("recipient QR control does not validate scanned recipient data")
     if '<span>Scan QR</span>' in final or '>Scan QR<' in final:
         fail("visible Scan QR text survived")
-    if recipient_region.count('BLEE_QR_INPUT_SHELL_V2') != 1:
-        fail("final Recipient QR input shell marker is missing or duplicated")
-    if "BleeQrScanner.scan()" not in recipient_region:
-        fail("final Recipient QR control is not wired to the native scanner")
-    if "parseBleeRecipientQr(result.value)" not in recipient_region:
-        fail("final Recipient QR control does not validate scanned recipient data")
+    if final.count('BLEE_QR_INPUT_SHELL_V2') != 1:
+        fail("recipient QR input shell marker is missing or duplicated")
 
-    print("VERIFIED: final React tree contains exactly one native QR icon in the editable Send Recipient field")
+    print("VERIFIED: final React tree has one native QR icon bound to the semantic Send recipient input")
 
 
 if __name__ == "__main__":
