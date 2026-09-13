@@ -10,55 +10,10 @@ import {
   importPrivateKey,
   revealPrivateKey,
 } from '../lib/walletRecovery';
-import { useBlee } from '../hooks/useBlee';
+import { useBleeView } from '../hooks/useBleeView';
 import { BleeBiometric, type BiometricStatus } from '../lib/biometric';
 import type { MeshPeer, PaymentRecord } from '../types/domain';
-
-import { registerPlugin } from '@capacitor/core';
-
-// BLEE_SEND_QR_SCANNER_V1
-interface BleeQrScannerPlugin {
-  scan(): Promise<{ value?: string; cancelled?: boolean }>;
-}
-
-const BleeQrScanner = registerPlugin<BleeQrScannerPlugin>('BleeQrScanner');
-
-function parseBleeRecipientQr(rawValue: string): string {
-  const raw = String(rawValue || '').trim();
-  const address = (value: unknown) => {
-    const candidate = String(value || '').trim();
-    const direct = candidate.match(/^0x[0-9a-fA-F]{40}$/);
-    if (direct) return direct[0];
-    const embedded = candidate.match(/0x[0-9a-fA-F]{40}/);
-    return embedded ? embedded[0] : '';
-  };
-
-  const direct = address(raw);
-  if (direct && /^0x[0-9a-fA-F]{40}$/.test(raw)) return direct;
-
-  try {
-    const parsed = JSON.parse(raw);
-    for (const key of ['wallet', 'address', 'recipient', 'to', 'walletAddress']) {
-      const candidate = address(parsed?.[key]);
-      if (candidate) return candidate;
-    }
-  } catch {}
-
-  try {
-    const normalized = raw.replace(/^ethereum:/i, 'blee://pay/');
-    const url = new URL(normalized);
-    for (const key of ['to', 'address', 'wallet', 'recipient']) {
-      const candidate = address(url.searchParams.get(key));
-      if (candidate) return candidate;
-    }
-    const candidate = address(url.pathname) || address(url.hostname);
-    if (candidate) return candidate;
-  } catch {}
-
-  const embedded = address(raw);
-  if (embedded && /^(?:blee:|ethereum:|https?:)/i.test(raw)) return embedded;
-  throw new Error('This QR code does not contain a valid Blee recipient address.');
-}
+import { RecipientField } from './RecipientField';
 
 type PrimaryTab = 'home' | 'nearby' | 'activity' | 'profile';
 type Screen =
@@ -314,13 +269,14 @@ function BottomNav({ active, onChange }: { active: PrimaryTab; onChange: (tab: P
 }
 
 export function BleeApp() {
-  const app = useBlee();
+  const app = useBleeView();
   const network = getActiveNetwork();
   const [screen, setScreen] = useState<Screen>('home');
   const historyRef = useRef<Screen[]>([]);
   const [activityFilter, setActivityFilter] = useState<'all' | 'sent' | 'received'>('all');
   const [selectedPayment, setSelectedPayment] = useState<PaymentRecord | null>(null);
   const [payPeer, setPayPeer] = useState<MeshPeer | null>(null);
+  const [payAlias, setPayAlias] = useState('');
   const [payAddress, setPayAddress] = useState('');
   const [payAmount, setPayAmount] = useState('');
   const [payError, setPayError] = useState('');
@@ -434,6 +390,7 @@ export function BleeApp() {
 
   const openSend = (peer?: MeshPeer) => {
     setPayPeer(peer || null);
+    setPayAlias(peer?.alias || '');
     setPayAddress(peer?.address || '');
     setPayAmount('');
     setPayError('');
@@ -455,7 +412,7 @@ export function BleeApp() {
   const submitSend = async () => {
     setPayError('');
     try {
-      const result = await app.sendPayment(payAddress, payAmount, payPeer?.alias);
+      const result = await app.sendPayment(payAddress, payAmount, payAlias || payPeer?.alias);
       setPayResult(result);
       navigate('send-success');
     } catch (error) {
@@ -465,6 +422,7 @@ export function BleeApp() {
 
   const resetSend = () => {
     setPayPeer(null);
+    setPayAlias('');
     setPayAddress('');
     setPayAmount('');
     setPayError('');
@@ -627,7 +585,7 @@ export function BleeApp() {
         <div className="balance-number">{formatAmount(app.available)} <span>USDC</span></div>
         <div className="balance-subline"><span>{app.reserved > 0 ? `${formatAmount(app.reserved)} reserved` : 'Confirmed spendable'}</span><span>{app.balanceAt ? `Updated ${new Date(app.balanceAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Awaiting sync'}</span></div>
       </section>
-      {app.pendingIncoming > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>{formatAmount(app.pendingIncoming)} USDC received nearby</strong><small>Pending settlement; not spendable yet.</small></div></div>}
+      {app.pendingIncoming > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>+{formatAmount(app.pendingIncoming)} USDC pending</strong><small>Received nearby. Not spendable until Arc settlement is confirmed.</small></div></div>}
       <div className="primary-actions"><button className="action-button send" onClick={() => openSend()}><Icon name="send"/><span>Send</span></button><button className="action-button" onClick={() => navigate('receive')}><Icon name="receive"/><span>Receive</span></button></div>
       <section className="home-section"><div className="section-title"><div><span className="kicker">NEARBY</span><h2>People nearby</h2></div><button onClick={() => selectTab('nearby')}>See all</button></div>
         {nearbyPeers.length ? <div className="surface-list">{nearbyPeers.map((peer) => <button className="peer-row" key={`${peer.address}:${peer.transportId}`} onClick={() => openSend(peer)}><PersonAvatar name={peer.alias} src={app.identityFor(peer.address)?.avatar}/><span><strong>{peer.alias}</strong><small>{short(peer.address)}</small></span><span className="row-action">Pay</span></button>)}</div> : <EmptyState icon="nearby" title={app.meshStarted ? 'Looking for people nearby' : 'Nearby payments are off'} copy={app.meshStarted ? 'Blee is scanning over Bluetooth LE.' : 'Turn on Nearby to find other Blee users.'}/>}</section>
@@ -666,29 +624,7 @@ export function BleeApp() {
 
   const renderSend = () => (
     <div className="screen-content"><ScreenHeader title="Send" onBack={() => goBack('home')}/>
-      {payPeer ? <div className="recipient-summary"><PersonAvatar name={payPeer.alias} src={app.identityFor(payPeer.address)?.avatar}/><span><small>TO</small><strong>{payPeer.alias}</strong><code>{short(payPeer.address)}</code></span></div> : <label className="field-block"><span>Recipient</span><div className="input-with-icon"><div className="blee-recipient-input-shell">
-<input value={payAddress} onChange={(e) => setPayAddress(e.target.value)} placeholder="0x…" autoCapitalize="none" autoCorrect="off"/>
-          <button
-            type="button"
-            className="blee-recipient-qr-icon"
-            aria-label="Scan recipient QR code"
-            title="Scan QR"
-            onClick={async () => {
-              try {
-                const result = await BleeQrScanner.scan();
-                if (result?.cancelled || !result?.value) return;
-                setPayAddress(parseBleeRecipientQr(result.value));
-              } catch (error) {
-                const message = error instanceof Error ? error.message : 'Unable to scan this QR code.';
-                window.alert(message);
-              }
-            }}
-          >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" />
-            </svg>
-          </button>
-        </div>{/* BLEE_QR_INPUT_SHELL_V2 */}<Icon name="person"/></div></label>}
+      {payPeer ? <div className="recipient-summary"><PersonAvatar name={payPeer.alias} src={app.identityFor(payPeer.address)?.avatar}/><span><small>TO</small><strong>{payPeer.alias}</strong><code>{short(payPeer.address)}</code></span></div> : <label className="field-block"><span>Recipient</span><RecipientField value={payAddress} onChange={(value) => { setPayAddress(value); setPayAlias(''); }} onSelectContact={(contact) => setPayAlias(contact.displayName || '')}/></label>}
       <label className="field-block"><span>Amount</span><div className="amount-entry"><input inputMode="decimal" value={payAmount} onChange={(e) => setPayAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00"/><strong>USDC</strong></div><small>{formatAmount(app.available)} USDC available</small></label>
       <div className="route-summary"><span className={`status-dot ${app.arcReachable ? 'online' : 'offline'}`}/><div><strong>{app.arcReachable ? 'Ready to settle on Arc Testnet' : payPeer && app.meshStarted ? 'Ready for nearby delivery' : 'Will queue safely until a route is available'}</strong><small>{app.arcReachable ? 'Sender-funded settlement' : 'Signed payment remains durable on this phone.'}</small></div></div>
       {payError && <div className="inline-alert error"><Icon name="info"/><span>{payError}</span></div>}
@@ -697,9 +633,9 @@ export function BleeApp() {
   );
 
   const renderConfirmSend = () => {
-    const recipientName = payPeer?.alias || short(payAddress);
+    const recipientName = payAlias || payPeer?.alias || app.identityFor(payAddress)?.alias || short(payAddress);
     return <div className="screen-content"><ScreenHeader title="Confirm send" onBack={() => goBack('send')}/>
-      <div className="confirm-recipient"><PersonAvatar name={recipientName} src={payPeer ? app.identityFor(payPeer.address)?.avatar : undefined} size="lg"/><strong>{recipientName}</strong><small>{short(payAddress)}</small></div>
+      <div className="confirm-recipient"><PersonAvatar name={recipientName} src={payPeer ? app.identityFor(payPeer.address)?.avatar : app.identityFor(payAddress)?.avatar} size="lg"/><strong>{recipientName}</strong><small>{short(payAddress)}</small></div>
       <section className="confirm-card"><div><span>Amount</span><strong>{formatAmount(payAmount)} USDC</strong></div><div><span>Network</span><strong>Arc Testnet</strong></div><div><span>Settlement</span><strong>Sender-funded</strong></div><div><span>Delivery</span><strong>{app.arcReachable ? 'Online' : payPeer && app.meshStarted ? 'Nearby first' : 'Durable queue'}</strong></div></section>
       <div className="quiet-note"><Icon name="shield"/><span>The amount, recipient and settlement authorization are signed by your wallet. Courier phones cannot change them or spend their own gas for your payment.</span></div>
       {payError && <div className="inline-alert error"><Icon name="info"/><span>{payError}</span></div>}
@@ -743,7 +679,7 @@ export function BleeApp() {
   );
 
   const renderSettings = () => (
-    <div className="screen-content"><ScreenHeader title="Settings" onBack={() => goBack('profile')}/><div className="menu-list"><button onClick={() => navigate('backup-recovery')}><span className="menu-icon"><Icon name="backup"/></span><span><strong>Backup & recovery</strong><small>Encrypted backup, restore and private key</small></span><Icon name="chevron"/></button><button onClick={() => navigate('network-security')}><span className="menu-icon"><Icon name="network"/></span><span><strong>Network & security</strong><small>Arc Testnet, nearby payments and security</small></span><Icon name="chevron"/></button></div><div className="settings-toggle-list biometric-settings"><div><span className="menu-icon"><Icon name="fingerprint"/></span><span><strong>Fingerprint unlock</strong><small>{biometricStatus.enabled ? 'Enabled on this device' : biometricStatus.available ? 'Use fingerprint instead of typing your passphrase' : 'Not available on this device'}</small></span>{biometricStatus.enabled ? <button className="text-action" onClick={async () => { await BleeBiometric.disable(); await refreshBiometricStatus(); }}>Disable</button> : biometricStatus.available ? <button className="text-action" onClick={() => { window.localStorage.setItem('blee.biometric.setup', '1'); setUseBiometricNext(true); void app.lock(); }}>Set up</button> : <span className="status-badge">OFF</span>}</div></div><button className="logout-button" onClick={() => void app.lock()}><Icon name="logout"/>Log out</button><p className="build-note">Blee 2.5 · Mesh v2</p></div>
+    <div className="screen-content"><ScreenHeader title="Settings" onBack={() => goBack('profile')}/><div className="menu-list"><button onClick={() => navigate('backup-recovery')}><span className="menu-icon"><Icon name="backup"/></span><span><strong>Backup & recovery</strong><small>Encrypted backup, restore and private key</small></span><Icon name="chevron"/></button><button onClick={() => navigate('network-security')}><span className="menu-icon"><Icon name="network"/></span><span><strong>Network & security</strong><small>Arc Testnet, nearby payments and security</small></span><Icon name="chevron"/></button></div><div className="settings-toggle-list biometric-settings"><div><span className="menu-icon"><Icon name="fingerprint"/></span><span><strong>Fingerprint unlock</strong><small>{biometricStatus.enabled ? 'Enabled on this device' : biometricStatus.available ? 'Use fingerprint instead of typing your passphrase' : 'Not available on this device'}</small></span>{biometricStatus.enabled ? <button className="text-action" onClick={async () => { await BleeBiometric.disable(); await refreshBiometricStatus(); }}>Disable</button> : biometricStatus.available ? <button className="text-action" onClick={() => { window.localStorage.setItem('blee.biometric.setup', '1'); setUseBiometricNext(true); void app.lock(); }}>Set up</button> : <span className="status-badge">OFF</span>}</div></div><button className="logout-button" onClick={() => void app.lock()}><Icon name="logout"/>Log out</button><p className="build-note">Blee 2.7 · Source-first</p></div>
   );
 
   const renderBackupRecovery = () => (
