@@ -99,13 +99,17 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-nearby-stability-v1.py")
     run_stage("apply-blee-nearby-stability-heartbeat-v1.py")
     run_stage("apply-blee-nearby-stability-hook-v1.py")
+    # BLEE_SEND_QR_SCANNER_CHAIN_V1
+    # Scanner is a UI/native-recipient convenience only. It feeds the existing
+    # recipient state and never bypasses review, signing, balance or settlement.
+    run_stage("apply-blee-qr-scanner-v1.py")
 
 
 def main() -> None:
     patch_service()
     patch_runtime_copy()
     apply_production_polish()
-    print("Blee adaptive transport v3 + production UI/notifications + nearby stability hardened")
+    print("Blee adaptive transport v3 + production UI/notifications + nearby stability + Send QR scanner hardened")
 
 
 if __name__ == "__main__":
