@@ -46,7 +46,6 @@ public class BleeMeshPlugin extends Plugin {
                     event.put("wallet", intent.getStringExtra(BleeMeshService.EXTRA_PEER_WALLET));
                     event.put("displayName", intent.getStringExtra(BleeMeshService.EXTRA_PEER_DISPLAY_NAME));
                     event.put("avatar", intent.getStringExtra(BleeMeshService.EXTRA_PEER_AVATAR));
-                    // BLEE_PRODUCTION_PEER_EVENT_V1
                     event.put("rssi", intent.getIntExtra(BleeMeshService.EXTRA_PEER_RSSI, 0));
                     event.put("lastSeen", intent.getLongExtra(BleeMeshService.EXTRA_PEER_LAST_SEEN, 0L));
                     event.put("present", intent.getBooleanExtra(BleeMeshService.EXTRA_PEER_PRESENT, true));
@@ -57,7 +56,6 @@ public class BleeMeshPlugin extends Plugin {
         };
         IntentFilter filter = new IntentFilter(BleeMeshService.ACTION_LEDGER_CHANGED);
         filter.addAction(BleeMeshService.ACTION_PEER_CHANGED);
-        // BLEE_NATIVE_PEER_BRIDGE_V1
         if (Build.VERSION.SDK_INT >= 33) getContext().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else getContext().registerReceiver(receiver, filter);
         BleeMeshService.start(getContext());
@@ -101,10 +99,6 @@ public class BleeMeshPlugin extends Plugin {
         call.resolve(result);
     }
 
-    // BLEE_NONDESTRUCTIVE_MANUAL_REFRESH_V2
-    // Refresh is deliberately a state re-query, never a logout, vault reset or
-    // WebView restart. Existing listeners already know how to rebuild UI state
-    // when ACTION_LEDGER_CHANGED is emitted.
     @PluginMethod
     public void manualRefresh(PluginCall call) {
         try {
@@ -127,82 +121,6 @@ public class BleeMeshPlugin extends Plugin {
         }
     }
 
-    // BLEE_CONTACTS_PLUGIN_V1
-    @PluginMethod
-    public void listContacts(PluginCall call) {
-        BleeMeshDb db = new BleeMeshDb(getContext());
-        try {
-            JSArray contacts = new JSArray();
-            for (org.json.JSONObject item : db.listContacts()) contacts.put(item);
-            JSObject result = new JSObject();
-            result.put("contacts", contacts);
-            call.resolve(result);
-        } catch (Throwable error) {
-            call.reject("Unable to load Blee contacts: " + error.getMessage());
-        } finally {
-            db.close();
-        }
-    }
-
-    @PluginMethod
-    public void contactCandidates(PluginCall call) {
-        BleeMeshDb db = new BleeMeshDb(getContext());
-        try {
-            JSArray contacts = new JSArray();
-            for (org.json.JSONObject item : db.contactCandidates()) contacts.put(item);
-            JSObject result = new JSObject();
-            result.put("contacts", contacts);
-            call.resolve(result);
-        } catch (Throwable error) {
-            call.reject("Unable to load contact candidates: " + error.getMessage());
-        } finally {
-            db.close();
-        }
-    }
-
-    @PluginMethod
-    public void saveContact(PluginCall call) {
-        String wallet = call.getString("wallet", "");
-        String displayName = call.getString("displayName", "");
-        String avatar = call.getString("avatar", "");
-        BleeMeshDb db = new BleeMeshDb(getContext());
-        try {
-            org.json.JSONObject saved = db.saveContact(wallet, displayName, avatar);
-            if (saved == null) {
-                call.reject("Invalid Blee contact");
-                return;
-            }
-            JSObject result = new JSObject();
-            result.put("contact", saved);
-            // BLEE_CONTACT_ACTIVITY_WAKE_V1
-            Intent refresh = new Intent(BleeMeshService.ACTION_LEDGER_CHANGED);
-            refresh.setPackage(getContext().getPackageName());
-            refresh.putExtra(BleeMeshService.EXTRA_PAYMENT_ID, "");
-            refresh.putExtra(BleeMeshService.EXTRA_EVENT_TYPE, "CONTACT_UPDATED");
-            getContext().sendBroadcast(refresh);
-            call.resolve(result);
-        } catch (Throwable error) {
-            call.reject("Unable to save Blee contact: " + error.getMessage());
-        } finally {
-            db.close();
-        }
-    }
-
-    @PluginMethod
-    public void deleteContact(PluginCall call) {
-        String wallet = call.getString("wallet", "");
-        BleeMeshDb db = new BleeMeshDb(getContext());
-        try {
-            JSObject result = new JSObject();
-            result.put("deleted", db.deleteContact(wallet));
-            call.resolve(result);
-        } catch (Throwable error) {
-            call.reject("Unable to remove Blee contact: " + error.getMessage());
-        } finally {
-            db.close();
-        }
-    }
-
     @PluginMethod
     public void status(PluginCall call) {
         try {
@@ -221,7 +139,6 @@ public class BleeMeshPlugin extends Plugin {
         }
     }
 
-    // BLEE_BLE_DIAGNOSTICS_PLUGIN_V1
     @PluginMethod
     public void diagnostics(PluginCall call) {
         try {
@@ -310,7 +227,6 @@ public class BleeMeshPlugin extends Plugin {
                 event.put("paymentId", accepted.paymentId);
                 event.put("eventType", "RECIPIENT_RECEIVED");
                 notifyListeners("ledgerChanged", event, true);
-                // BLEE_VERIFIED_RECEIVE_NOTIFICATION_V1
                 if (accepted.newlyAccepted) {
                     BleePaymentNotifier.received(getContext(), accepted.paymentId, accepted.amount, accepted.counterparty);
                 }
