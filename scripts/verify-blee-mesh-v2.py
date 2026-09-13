@@ -34,9 +34,46 @@ def verify_ble_transport(service: str) -> str:
     )
     require_text(service, "BleeMeshService.java common transport contract", common)
 
+    if "BLEE_ADAPTIVE_NEARBY_V3" in service:
+        adaptive_v3 = (
+            "BLEE_ADAPTIVE_NEARBY_V3",
+            "class AdaptiveNearbyV3",
+            "BLEE_TRANSPORT_CORE_V2",
+            "class BleTransportV2",
+            "adaptive_v3",
+            "Strategy.P2P_CLUSTER",
+            "Nearby.getConnectionsClient",
+            "startAdvertising(localPeerIdBytes()",
+            "startDiscovery(NEARBY_SERVICE_ID",
+            "requestConnection(localPeerIdBytes()",
+            "acceptConnection(endpointId, nearbyPayloadCallback)",
+            "Payload.fromBytes",
+            "blee_identity_v3",
+            "blee_packet_v3",
+            "db.receive(raw, deviceId, publicKey)",
+            "db.recordPeerDelivery",
+            "GATT_TIMEOUT_THRESHOLD = 2",
+            "status == 147",
+            "BLE_GRACE_MS = 15_000L",
+            "DUAL_SCAN_ON_MS = 8_000L",
+            "DUAL_SCAN_OFF_MS = 2_000L",
+            "setAdaptiveScanEnabled",
+            "ScanSettings.SCAN_MODE_BALANCED",
+            "adaptiveNearbyV3.maintain()",
+            "address.startsWith(\"nc:\") ? \"nearby\" : \"ble\"",
+            "nearbyError(Throwable error)",
+            "direct_scan_result",
+            "setConnectable(true)",
+            "addServiceData(new ParcelUuid(SERVICE_UUID), localPeerId)",
+            "device.connectGatt(BleeMeshService.this, false, coreClientCallback, BluetoothDevice.TRANSPORT_LE)",
+            "requestMtu(PREFERRED_MTU)",
+            "duePacketsForPeer",
+            "coreServerCallback",
+        )
+        require_text(service, "BleeMeshService.java adaptive v3 transport contract", adaptive_v3)
+        return "adaptive_v3"
+
     if "BLEE_TRANSPORT_CORE_V2" in service:
-        # Transport Core V2 is the sole live radio owner. Do not require legacy
-        # scheduler/advertiser markers that remain only as compatibility material.
         core_v2 = (
             "BLEE_TRANSPORT_CORE_V2",
             "class BleTransportV2",
@@ -135,7 +172,6 @@ def main() -> None:
     splash_nodes = re.findall(r'<[^>]*\bsplash-logo\b[^>]*>', app, flags=re.I | re.S)
     if len(splash_nodes) < 1:
         raise SystemExit("VERIFY ERROR: cold-launch splash element is missing")
-
     direct_splash_imgs = [node for node in splash_nodes if node.lstrip().lower().startswith('<img')]
     if direct_splash_imgs:
         if not any('/brand/blee-logo.svg' in node for node in direct_splash_imgs):
@@ -144,11 +180,8 @@ def main() -> None:
             raise SystemExit("VERIFY ERROR: direct cold-launch image regressed to the Blee wordmark")
     else:
         for marker in (
-            'BLEE_STANDALONE_LAUNCH_LOGO_V2',
-            '.splash-screen .splash-logo:not(img)',
-            'background-image: url("/brand/blee-logo.svg")',
-            '.splash-screen .splash-logo:not(img) > *',
-            'visibility: hidden',
+            'BLEE_STANDALONE_LAUNCH_LOGO_V2', '.splash-screen .splash-logo:not(img)',
+            'background-image: url("/brand/blee-logo.svg")', '.splash-screen .splash-logo:not(img) > *', 'visibility: hidden',
         ):
             if marker not in css:
                 raise SystemExit(f"VERIFY ERROR: wrapper-based cold launch is missing {marker}")
@@ -193,6 +226,20 @@ def main() -> None:
         "FOREGROUND_SERVICE_CONNECTED_DEVICE", "RECEIVE_BOOT_COMPLETED", "BleeMeshService", "BleeBootReceiver",
         'android:icon="@drawable/blee_launcher"', 'android:roundIcon="@drawable/blee_launcher"',
     ))
+    if transport_engine == "adaptive_v3":
+        for marker in ("ACCESS_WIFI_STATE", "CHANGE_WIFI_STATE", "NEARBY_WIFI_DEVICES", "BLEE_ADAPTIVE_NEARBY_V3"):
+            if marker not in manifest:
+                raise SystemExit(f"VERIFY ERROR: adaptive v3 manifest missing {marker}")
+        gradle = (ROOT / "android/app/build.gradle").read_text(errors="replace")
+        if "com.google.android.gms:play-services-nearby:19.5.0" not in gradle:
+            raise SystemExit("VERIFY ERROR: adaptive v3 Nearby Connections dependency missing")
+        if "BLEE_ADAPTIVE_NEARBY_PERMISSION_V3" not in activity.read_text(errors="replace"):
+            raise SystemExit("VERIFY ERROR: adaptive v3 Nearby Wi-Fi runtime permission missing")
+        runtime = (ROOT / "src/components/BleeRuntime.tsx").read_text(errors="replace")
+        for marker in ("BLEE_ADAPTIVE_NEARBY_V3_DIAGNOSTICS", "fallbackMode", "nearbyConnections", "gatt147Count"):
+            if marker not in runtime:
+                raise SystemExit(f"VERIFY ERROR: adaptive v3 runtime diagnostics missing {marker}")
+
     launcher = ROOT / "android/app/src/main/res/drawable/blee_launcher.xml"
     if not launcher.is_file():
         raise SystemExit("VERIFY ERROR: standalone Blee Android launcher icon is missing")
@@ -226,7 +273,11 @@ def main() -> None:
     print("- wallet backup import is size/format/KDF bounded")
     print("- sender-funded raw settlement retained; courier never signs or pays gas")
     print("- stale React journal writes cannot downgrade native payment state")
-    if transport_engine == "ble_core_v2":
+    if transport_engine == "adaptive_v3":
+        print("- Adaptive Transport V3 keeps raw BLE primary and falls back after repeated GATT 147/no-peer failure")
+        print("- Nearby Connections P2P_CLUSTER carries the same signed mesh packets without changing payment semantics")
+        print("- dual-role BLE scan windows reduce scan/advertise controller contention before fallback")
+    elif transport_engine == "ble_core_v2":
         print("- BLE Transport Core V2 is sole live radio owner with stable peer identity + direct scan-result GATT")
         print("- connectable advertising, scanner-first recovery, MTU/service sequencing and durable peer delivery verified")
     else:
