@@ -28,6 +28,7 @@ def main() -> None:
     css = (ROOT / "app/globals.css").read_text()
     db = locate("BleeMeshDb.java").read_text()
     plugin = locate("BleeMeshPlugin.java").read_text()
+    service = locate("BleeMeshService.java").read_text()
 
     if "window.location.reload" in runtime:
         fail("destructive WebView reload remains in refresh path")
@@ -69,6 +70,30 @@ def main() -> None:
         "blee-recipient-qr-icon",
     ), "BleeApp")
 
+    # BLEE_NEARBY_STABLE_TIMINGS_PIN_V1
+    # These are the last values that were physically proven on the working
+    # two-phone build. Do not shorten them in a UI/latency stabilization pass.
+    require(service, (
+        "private static final long BLE_GRACE_MS = 15_000L",
+        "private static final int GATT_TIMEOUT_THRESHOLD = 2",
+        "NEARBY_HEARTBEAT_MS = 5_000L",
+        "NEARBY_IDLE_REARM_MS = 30_000L",
+        "NEARBY_REARM_COOLDOWN_MS = 15_000L",
+        "now - lastNearbyPumpAt >= 2_000L",
+    ), "BleeMeshService stable nearby timings")
+
+    aggressive = (
+        "private static final long BLE_GRACE_MS = 3_000L",
+        "private static final int GATT_TIMEOUT_THRESHOLD = 1",
+        "NEARBY_HEARTBEAT_MS = 1_000L",
+        "NEARBY_IDLE_REARM_MS = 12_000L",
+        "NEARBY_REARM_COOLDOWN_MS = 6_000L",
+        "now - lastNearbyPumpAt >= 250L",
+    )
+    for marker in aggressive:
+        if marker in service:
+            fail(f"aggressive Nearby timing regression returned: {marker}")
+
     if app.count('className="blee-recipient-qr-icon"') != 1:
         fail("Send must render exactly one QR scanner icon")
     if '<span>Scan QR</span>' in app or '>Scan QR<' in app:
@@ -82,6 +107,7 @@ def main() -> None:
     print("- Send Recipient has one QR action and no overlapping contact button")
     print("- contacts are durable SQLite records and Activity can filter by saved contact")
     print("- saved aliases remain local display metadata; signed payments are untouched")
+    print("- last-known-working BLE/Nearby transport timings are pinned")
     print("============================================================")
 
 
