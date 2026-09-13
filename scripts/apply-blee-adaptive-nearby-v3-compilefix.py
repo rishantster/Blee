@@ -111,11 +111,12 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-nearby-speed-profile-v2.py")
     run_stage("apply-blee-activity-identity-v2.py")
 
-    # Keep durable contact storage/API for later, but immediately remove its
-    # mutation-observer UI. Contacts will be reintroduced only inside the real
-    # React Activity component after the shell is stable again.
-    run_stage("apply-blee-contacts-v1.py")
+    # Contacts remain durable backend data/API only. Do not install the previous
+    # mutation-observer Activity/Home UI. A deterministic preclean removes that
+    # exact legacy block from partially patched resume trees before the freeze.
+    run_stage("apply-blee-contacts-backend-only-v2.py")
     run_stage("apply-blee-contacts-sync-v1.py")
+    run_stage("apply-blee-contacts-ui-preclean-v2.py")
     run_stage("apply-blee-stability-freeze-v1.py")
 
     run_stage("apply-blee-notification-permission-v1.py")
