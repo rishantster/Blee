@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# CANONICAL_BLEE_BUILDER_V2
+# CANONICAL_BLEE_BUILDER_V3 — Blee 2.7 clean production build
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-APP_VERSION="2.6.0"
+APP_VERSION="2.7.0"
 FINAL_APK="$ROOT/dist/Blee-${APP_VERSION}.apk"
 SDK_ROOT="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 TOOLS_ROOT="$ROOT/.blee-tools"
 CLI_VERSION="15859902"
 mkdir -p "$TOOLS_ROOT" "$ROOT/dist"
 
+# A production build never inherits generated Android/Next state from a prior
+# build. Canonical source archives and patch stages below are the only inputs.
+rm -rf "$ROOT/android" "$ROOT/.next" "$ROOT/out"
 rm -f "$ROOT/dist"/*.apk "$ROOT/dist"/*.apk.sha256 2>/dev/null || true
 
 python3 scripts/verify-canonical-build.py
@@ -88,7 +91,8 @@ if [ "$JAVA_OK" -ne 1 ]; then
 fi
 
 echo "============================================================"
-echo "Building Blee"
+echo "Building Blee ${APP_VERSION} from canonical source"
+echo "Generated Android/Next state was removed before this build"
 echo "Canonical artifact: dist/Blee-${APP_VERSION}.apk"
 echo "============================================================"
 echo "Node: $(node --version)"
@@ -150,8 +154,8 @@ PY
     "$SOURCE_TMP/" "$ROOT/"
   rm -rf "$SOURCE_TMP"
 
-  grep -q 'CANONICAL_BLEE_BUILDER_V2' "$ROOT/build-blee.command" || {
-    echo "ERROR: canonical build entrypoint was replaced during source materialization"
+  grep -q 'CANONICAL_BLEE_BUILDER_V3' "$ROOT/build-blee.command" || {
+    echo "ERROR: canonical Blee 2.7 build entrypoint was replaced during source materialization"
     exit 1
   }
   python3 scripts/verify-canonical-build.py
@@ -213,6 +217,7 @@ npm install --no-audit --no-fund
 npm run check
 npm run build
 
+# Android is always generated from zero for Blee 2.7.
 rm -rf android
 npm run android:prepare
 
@@ -221,8 +226,8 @@ from pathlib import Path
 import re
 gradle=Path('android/app/build.gradle')
 g=gradle.read_text()
-g=re.sub(r'versionCode\s+\d+', 'versionCode 16', g)
-g=re.sub(r'versionName\s+"[^"]+"', 'versionName "2.6.0"', g)
+g=re.sub(r'versionCode\s+\d+', 'versionCode 17', g)
+g=re.sub(r'versionName\s+"[^"]+"', 'versionName "2.7.0"', g)
 gradle.write_text(g)
 PY
 
@@ -242,16 +247,20 @@ python3 scripts/apply-blee-transport-core-v2.py
 python3 scripts/apply-blee-adaptive-nearby-v3.py
 python3 scripts/apply-blee-adaptive-nearby-v3-compilefix.py
 
+# The final production stack has now modified the real React app and native tree.
+# It must typecheck/build cleanly before Capacitor packaging.
 npm run check
 npm run build
 npx cap sync android
 
 python3 scripts/verify-blee-mesh-v2.py
+python3 scripts/verify-production-final-v5.py
 python3 scripts/verify-canonical-build.py
 
 (
   cd android
   chmod +x gradlew
+  ./gradlew --stop >/dev/null 2>&1 || true
   ./gradlew --no-daemon assembleDebug --stacktrace
 )
 
@@ -269,11 +278,20 @@ cp "$APK" "$FINAL_APK"
   exit 1
 }
 
+# Do not call an artifact successful until the binary itself contains the final
+# payment, mesh, contacts, refresh, notification and QR implementation.
+chmod +x scripts/verify-apk-integrity.sh
+bash scripts/verify-apk-integrity.sh "$FINAL_APK"
+
 if command -v shasum >/dev/null 2>&1; then
   shasum -a 256 "$FINAL_APK" > "$FINAL_APK.sha256"
 elif command -v sha256sum >/dev/null 2>&1; then
   sha256sum "$FINAL_APK" > "$FINAL_APK.sha256"
 fi
 
-printf '\nBlee APK built successfully\n%s\n' "$FINAL_APK"
+printf '\n============================================================\n'
+printf 'Blee 2.7 canonical production build completed\n'
+printf '%s\n' "$FINAL_APK"
+[ -f "$FINAL_APK.sha256" ] && cat "$FINAL_APK.sha256"
+printf '============================================================\n'
 open "$ROOT/dist" 2>/dev/null || true
