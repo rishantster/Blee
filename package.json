@@ -5,7 +5,6 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
     "check": "tsc --noEmit",
     "verify": "bash scripts/verify-source.sh",
     "android:sync": "npm run build && npx cap sync android",
