@@ -37,7 +37,12 @@ for path in "${required[@]}"; do
 done
 
 PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+LOCK_VERSION="$(node -p "require('./package-lock.json').version")"
+LOCK_ROOT_VERSION="$(node -p "require('./package-lock.json').packages[''].version")"
+
 [ "$PACKAGE_VERSION" = "2.7.0" ] || fail "package version is $PACKAGE_VERSION, expected 2.7.0"
+[ "$LOCK_VERSION" = "$PACKAGE_VERSION" ] || fail "package-lock version is $LOCK_VERSION, expected $PACKAGE_VERSION"
+[ "$LOCK_ROOT_VERSION" = "$PACKAGE_VERSION" ] || fail "package-lock root package version is $LOCK_ROOT_VERSION, expected $PACKAGE_VERSION"
 
 grep -Eq 'versionCode[[:space:]]+17' android/app/build.gradle || fail "Android versionCode must be 17"
 grep -Eq 'versionName[[:space:]]+"2[.]7[.]0"' android/app/build.gradle || fail "Android versionName must be 2.7.0"
