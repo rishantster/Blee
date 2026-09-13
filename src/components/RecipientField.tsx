@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { registerPlugin } from '@capacitor/core';
 import { isAddress } from 'viem';
 import { useContacts, type BleeContact } from '../hooks/useContacts';
+import styles from './RecipientField.module.css';
 
 type QrScannerPlugin = {
   scan(): Promise<{ value?: string; cancelled?: boolean }>;
@@ -73,10 +74,10 @@ function QrIcon() {
 
 function ContactAvatar({ contact }: { contact: BleeContact }) {
   if (contact.avatar) {
-    return <img className="recipient-contact-avatar" src={contact.avatar} alt="" />;
+    return <img className={styles.avatar} src={contact.avatar} alt="" />;
   }
   const initial = (contact.displayName || shortWallet(contact.wallet)).trim().charAt(0).toUpperCase() || 'B';
-  return <span className="recipient-contact-avatar fallback">{initial}</span>;
+  return <span className={styles.avatar}>{initial}</span>;
 }
 
 export function RecipientField({
@@ -136,7 +137,7 @@ export function RecipientField({
 
   return (
     <>
-      <div className="recipient-entry">
+      <div className={styles.entry}>
         <input
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -146,7 +147,7 @@ export function RecipientField({
           spellCheck={false}
           aria-label="Recipient wallet address"
         />
-        <div className="recipient-entry-actions" aria-label="Recipient actions">
+        <div className={styles.actions} aria-label="Recipient actions">
           <button type="button" onClick={() => setOpen(true)} aria-label="Choose saved contact" title="Contacts">
             <ContactsIcon />
           </button>
@@ -155,46 +156,42 @@ export function RecipientField({
           </button>
         </div>
       </div>
-      {action && !open && <small className="recipient-field-message">{action}</small>}
+      {action && !open && <small className={styles.message}>{action}</small>}
 
       {open && (
-        <div className="recipient-contact-overlay" role="dialog" aria-modal="true" aria-label="Blee contacts" onClick={(event) => {
+        <div className={styles.overlay} role="dialog" aria-modal="true" aria-label="Blee contacts" onClick={(event) => {
           if (event.currentTarget === event.target) setOpen(false);
         }}>
-          <div className="recipient-contact-sheet">
-            <div className="recipient-contact-sheet-header">
+          <div className={styles.sheet}>
+            <div className={styles.header}>
               <div>
                 <small>RECIPIENTS</small>
                 <h2>Contacts</h2>
               </div>
-              <button type="button" className="recipient-contact-close" onClick={() => setOpen(false)} aria-label="Close contacts">×</button>
+              <button type="button" className={styles.close} onClick={() => setOpen(false)} aria-label="Close contacts">×</button>
             </div>
 
             {isAddress(value) && !currentSaved && (
-              <button
-                type="button"
-                className="recipient-save-current"
-                onClick={() => void save({ wallet: value })}
-              >
+              <button type="button" className={styles.saveCurrent} onClick={() => void save({ wallet: value })}>
                 <span>Save current address</span>
                 <code>{shortWallet(value.toLowerCase())}</code>
               </button>
             )}
 
             {contacts.saved.length > 0 && (
-              <section className="recipient-contact-section">
+              <section className={styles.section}>
                 <h3>Saved</h3>
-                <div className="recipient-contact-list">
+                <div className={styles.list}>
                   {contacts.saved.map((contact) => (
-                    <div className="recipient-contact-row" key={contact.wallet}>
-                      <button type="button" className="recipient-contact-main" onClick={() => select(contact)}>
+                    <div className={styles.row} key={contact.wallet}>
+                      <button type="button" className={styles.main} onClick={() => select(contact)}>
                         <ContactAvatar contact={contact} />
                         <span>
                           <strong>{contact.displayName || shortWallet(contact.wallet)}</strong>
                           <code>{shortWallet(contact.wallet)}</code>
                         </span>
                       </button>
-                      <button type="button" className="recipient-contact-secondary" onClick={() => void remove(contact.wallet)} aria-label={`Remove ${contact.displayName || shortWallet(contact.wallet)}`}>
+                      <button type="button" className={styles.secondary} onClick={() => void remove(contact.wallet)} aria-label={`Remove ${contact.displayName || shortWallet(contact.wallet)}`}>
                         Remove
                       </button>
                     </div>
@@ -204,19 +201,19 @@ export function RecipientField({
             )}
 
             {contacts.recent.length > 0 && (
-              <section className="recipient-contact-section">
+              <section className={styles.section}>
                 <h3>Recent people</h3>
-                <div className="recipient-contact-list">
+                <div className={styles.list}>
                   {contacts.recent.map((contact) => (
-                    <div className="recipient-contact-row" key={contact.wallet}>
-                      <button type="button" className="recipient-contact-main" onClick={() => select(contact)}>
+                    <div className={styles.row} key={contact.wallet}>
+                      <button type="button" className={styles.main} onClick={() => select(contact)}>
                         <ContactAvatar contact={contact} />
                         <span>
                           <strong>{contact.displayName || shortWallet(contact.wallet)}</strong>
                           <code>{shortWallet(contact.wallet)}</code>
                         </span>
                       </button>
-                      <button type="button" className="recipient-contact-secondary" onClick={() => void save(contact)}>
+                      <button type="button" className={styles.secondary} onClick={() => void save(contact)}>
                         Save
                       </button>
                     </div>
@@ -226,13 +223,13 @@ export function RecipientField({
             )}
 
             {!contacts.loading && contacts.contacts.length === 0 && (
-              <div className="recipient-contact-empty">
+              <div className={styles.empty}>
                 <strong>No contacts yet</strong>
                 <p>People you discover or pay will appear here. Save them once and you can select their wallet later even when they are not nearby.</p>
               </div>
             )}
-            {contacts.loading && <div className="recipient-contact-empty">Loading contacts…</div>}
-            {(contacts.error || action) && <div className="recipient-contact-status">{contacts.error || action}</div>}
+            {contacts.loading && <div className={styles.empty}>Loading contacts…</div>}
+            {(contacts.error || action) && <div className={styles.status}>{contacts.error || action}</div>}
           </div>
         </div>
       )}
