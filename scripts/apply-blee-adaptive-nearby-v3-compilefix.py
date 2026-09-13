@@ -90,13 +90,17 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-payment-notifications-dbfix.py")
     run_stage("apply-blee-payment-notifications.py")
     run_stage("apply-blee-payment-notifications-v2.py")
+    # BLEE_NEARBY_STABILITY_CHAIN_V1
+    # Run last so it can canonicalize the full production identity/event path
+    # without changing payment signing, settlement, or Adaptive V3 selection.
+    run_stage("apply-blee-nearby-stability-v1.py")
 
 
 def main() -> None:
     patch_service()
     patch_runtime_copy()
     apply_production_polish()
-    print("Blee adaptive transport v3 compile path + production event/UI/notification polish hardened")
+    print("Blee adaptive transport v3 + production UI/notifications + nearby stability hardened")
 
 
 if __name__ == "__main__":
