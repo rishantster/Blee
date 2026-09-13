@@ -1,6 +1,5 @@
 package com.blee.payments;
 
-// BLEE_PAYMENT_NOTIFICATIONS_V1
 import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -16,7 +15,6 @@ public final class BleePaymentNotifier {
 
     private BleePaymentNotifier() {}
 
-    // BLEE_NOTIFICATION_PERMISSION_V1
     public static void ensureChannel(Context rawContext) {
         if (rawContext == null) return;
         Context context = rawContext.getApplicationContext();
@@ -40,7 +38,6 @@ public final class BleePaymentNotifier {
         post(context, paymentId, "sender", "Payment delivered", "Your nearby payment was received by the recipient.", false);
     }
 
-    // BLEE_BACKGROUND_PAYMENT_NOTIFICATION_V2
     public static void detected(Context context, String paymentId) {
         post(
             context,
@@ -56,10 +53,10 @@ public final class BleePaymentNotifier {
         String body = amountText(amount, "received");
         if (counterparty != null && !counterparty.trim().isEmpty()) body += " from " + counterparty.trim();
         body += " · Pending settlement";
-        // Update the already-alerted receiver notification silently. If the WebView
-        // was alive this follows the detection event within milliseconds; if it was
-        // suspended, the user still got the transport-level notification immediately.
-        post(context, paymentId, "receiver", "Payment received", body, false);
+        // A verified durable receipt is independently user-visible. It must alert
+        // even when no earlier transport-level detection notification was shown.
+        // Reusing the same payment-scoped notification id prevents duplicates.
+        post(context, paymentId, "receiver", "Payment received", body, true);
     }
 
     private static String amountText(String amount, String verb) {
