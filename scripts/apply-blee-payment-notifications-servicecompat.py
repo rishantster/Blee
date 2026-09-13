@@ -80,8 +80,9 @@ def main() -> None:
     start, brace, end = method_bounds(text, "private void notifyLedgerChanged(String paymentId, String type)")
     block = text[start:end]
     if "BleePaymentNotifier.delivered" not in block:
+        # Keep this exact adjacency because the V2 background-notification stage
+        # recognizes the canonical delivered+ledger pair structurally.
         delivered = '''
-        // BLEE_DELIVERED_NOTIFICATION_COMPAT_V1
         if ("DELIVERY_ACK".equals(type)) BleePaymentNotifier.delivered(this, paymentId);
 '''
         text = text[: brace + 1] + delivered + text[brace + 1 :]
@@ -94,7 +95,6 @@ def main() -> None:
         "ACTION_LOCAL_PAYMENT_SENT",
         "BLEE_SENT_NOTIFICATION_ONSTART_COMPAT_V1",
         "BleePaymentNotifier.sent",
-        "BLEE_DELIVERED_NOTIFICATION_COMPAT_V1",
         "BleePaymentNotifier.delivered",
     )
     missing = [marker for marker in required if marker not in verify]
