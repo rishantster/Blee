@@ -112,8 +112,7 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-activity-identity-v2.py")
 
     # Keep durable contacts data/native APIs, but do not mutate the React
-    # Activity/Home shell for the hackathon production build. This is the stable
-    # UI contract: original Activity tabs + original BottomNav stay untouched.
+    # Activity/Home shell. Original Activity tabs + BottomNav remain untouched.
     run_stage("apply-blee-contacts-backend-only-v2.py")
     run_stage("apply-blee-contacts-sync-v1.py")
     run_stage("apply-blee-contacts-ui-preclean-v2.py")
@@ -131,6 +130,7 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-notification-permission-v1.py")
 
     patch_release_version()
+    run_stage("apply-blee-verifier-version-v27.py")
 
     # One final source-of-truth gate for the production build.
     run_stage("verify-production-final-v5.py")
@@ -140,7 +140,7 @@ def main() -> None:
     patch_service()
     patch_runtime_copy()
     apply_production_polish()
-    print("Blee adaptive transport v3 + stable Blee 2.7 hackathon production stack finalized")
+    print("Blee adaptive transport v3 + Blee 2.7 production stack finalized")
 
 
 if __name__ == "__main__":
