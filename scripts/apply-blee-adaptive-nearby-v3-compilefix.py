@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import runpy
 
 ROOT = Path(__file__).resolve().parents[1]
 ANDROID_JAVA = ROOT / "android/app/src/main/java"
@@ -71,10 +72,19 @@ def patch_runtime_copy() -> None:
     path.write_text(text)
 
 
+def apply_production_polish() -> None:
+    # BLEE_PRODUCTION_POLISH_CHAIN_V1
+    script = ROOT / "scripts/apply-blee-production-polish.py"
+    if not script.is_file():
+        raise SystemExit("Blee adaptive v3 compilefix: production polish stage is missing")
+    runpy.run_path(str(script), run_name="__main__")
+
+
 def main() -> None:
     patch_service()
     patch_runtime_copy()
-    print("Blee adaptive transport v3 compile path + offline test guidance hardened")
+    apply_production_polish()
+    print("Blee adaptive transport v3 compile path + production event/UI polish hardened")
 
 
 if __name__ == "__main__":
