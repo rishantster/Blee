@@ -18,6 +18,29 @@ def once(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
+def method_bounds(text: str, signature: str) -> tuple[int, int, int]:
+    start = text.find(signature)
+    if start < 0:
+        raise SystemExit(f"Blee payment notifications v2: missing method {signature}")
+    brace = text.find("{", start)
+    if brace < 0:
+        raise SystemExit(f"Blee payment notifications v2: missing opening brace for {signature}")
+    depth = 0
+    end = -1
+    for i in range(brace, len(text)):
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end < 0:
+        raise SystemExit(f"Blee payment notifications v2: unterminated method {signature}")
+    return start, brace, end
+
+
 def patch_notifier() -> None:
     path = locate("BleePaymentNotifier.java")
     text = path.read_text()
@@ -61,18 +84,22 @@ def patch_service() -> None:
     if "BLEE_BACKGROUND_RECEIVE_NOTIFICATION_V2" in text:
         return
 
-    anchor = '''    private void notifyLedgerChanged(String paymentId, String type) {
-        if ("DELIVERY_ACK".equals(type)) BleePaymentNotifier.delivered(this, paymentId);
-        Intent intent = new Intent(ACTION_LEDGER_CHANGED);'''
-    replacement = '''    private void notifyLedgerChanged(String paymentId, String type) {
+    # Do not depend on the exact body produced by earlier hardening stages.
+    # Inject only the new receive-detection side effect at the top of the
+    # existing ledger notification method, preserving delivery handling and
+    # the existing ACTION_LEDGER_CHANGED broadcast verbatim.
+    signature = "private void notifyLedgerChanged(String paymentId, String type)"
+    start, brace, end = method_bounds(text, signature)
+    block = text[start:end]
+    if "BleePaymentNotifier.detected" not in block:
+        injection = '''
         // BLEE_BACKGROUND_RECEIVE_NOTIFICATION_V2
-        // PAYMENT_ENVELOPE_RECEIVED is emitted by the native transport immediately,
-        // so this works even when the WebView is backgrounded. Wording deliberately
-        // says "detected" until EIP-3009 verification promotes it to received.
+        // PAYMENT_ENVELOPE_RECEIVED is emitted by native transport immediately.
+        // Wording stays at "detected" until EIP-3009 verification promotes it.
         if ("PAYMENT_ENVELOPE_RECEIVED".equals(type)) BleePaymentNotifier.detected(this, paymentId);
-        if ("DELIVERY_ACK".equals(type)) BleePaymentNotifier.delivered(this, paymentId);
-        Intent intent = new Intent(ACTION_LEDGER_CHANGED);'''
-    text = once(text, anchor, replacement, "native receive notification hook")
+'''
+        text = text[: brace + 1] + injection + text[brace + 1 :]
+
     path.write_text(text)
 
 
@@ -94,6 +121,14 @@ def verify() -> None:
     ):
         if marker not in service:
             raise SystemExit(f"Blee payment notifications v2: service missing {marker}")
+
+    start, _, end = method_bounds(service, "private void notifyLedgerChanged(String paymentId, String type)")
+    block = service[start:end]
+    if "ACTION_LEDGER_CHANGED" not in block:
+        raise SystemExit("Blee payment notifications v2: existing ledger broadcast was not preserved")
+    if "BleePaymentNotifier.delivered" not in block:
+        raise SystemExit("Blee payment notifications v2: existing delivery notification was not preserved")
+
     print("VERIFIED: background payment detection alerts immediately, then upgrades silently after cryptographic acceptance")
 
 
