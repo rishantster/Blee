@@ -2,7 +2,7 @@
 
 Status: **canonical architecture for the Blee Android implementation**
 
-`main` is the release/source-of-truth branch. The supported build command is `bash build-blee.command`. APK artifacts are versioned from Android `versionName`; release 2.6.0 produces only `dist/Blee-2.6.0.apk`.
+`main` is the release/source-of-truth branch. The supported build command is `bash build-blee.command`. APK artifacts are versioned from Android `versionName`; release 2.7.0 produces only `dist/Blee-2.7.0.apk`.
 
 Blee is an offline-first, self-custodial payment system. Internet availability controls blockchain settlement, not whether Blee devices can create, persist, deliver, acknowledge, notify, carry or reconcile payments.
 
@@ -166,9 +166,10 @@ Core SQLite tables:
 - `settlement_jobs`
 - `settlement_receipts`
 - `peer_identities`
+- `contacts`
 - `kv`
 
-Write-ahead logging is enabled. Schema changes are additive. Payment history is never dropped as an upgrade strategy.
+Write-ahead logging is enabled. Schema changes are additive. Payment history is never dropped as an upgrade strategy. Contacts are local display metadata keyed by canonical wallet address; saving or renaming a contact never changes signed payment authorization data.
 
 ## 10. Payment state
 
@@ -277,6 +278,8 @@ A relay-reported receipt is accepted only when its transaction hash matches the 
 
 Wallet keys authorize money. Android Keystore device keys authorize mesh transport messages. Wallet addresses must not be treated as permanent public BLE advertising identifiers; rotating/authenticated peer identity is the target privacy model.
 
+Blee peer identity carries wallet, display name and avatar. The native identity cache and Activity projection may enrich payment presentation after a peer resolves. Wallet matching is case-insensitive and presentation is canonicalized so the same address never oscillates between checksum and lowercase forms.
+
 ## 17. Background model
 
 `BleeMeshService` is a native foreground service and uses Android connectivity callbacks. `START_STICKY` plus boot/package recovery re-arms ordinary service state when Android permits.
@@ -296,7 +299,7 @@ Current validated rail:
 
 ## 19. Security/release work
 
-Before a production release, Blee still requires physical multi-device regression, malicious packet/flooding tests, crash/fault-injection at atomic boundaries, Android vendor/background-kill testing, release signing/reproducible-build review and dedicated wallet/protocol security review.
+Before a public production release, Blee still requires physical multi-device regression, malicious packet/flooding tests, crash/fault-injection at atomic boundaries, Android vendor/background-kill testing, release signing/reproducible-build review and dedicated wallet/protocol security review.
 
 ## 20. Frozen invariants
 
@@ -319,4 +322,4 @@ Before a production release, Blee still requires physical multi-device regressio
 17. Recovery comes from durable SQLite/WAL state after normal process/reboot lifecycle.
 18. Stale UI state can never downgrade newer native ledger state.
 19. Fingerprint UI appears only when compatible fingerprint hardware is actually available/enrolled.
-20. The canonical public APK filename includes Android `versionName` and is `Blee-2.6.0.apk` for this release.
+20. The canonical public APK filename includes Android `versionName` and is `Blee-2.7.0.apk` for this release.
