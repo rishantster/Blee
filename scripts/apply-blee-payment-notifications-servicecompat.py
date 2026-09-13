@@ -62,8 +62,8 @@ def main() -> None:
         text = text[: ledger.start()] + addition + text[ledger.end() :]
 
     start, brace, end = method_bounds(text, "public int onStartCommand(Intent intent, int flags, int startId)")
-    block = text[start:end]
-    if "BleePaymentNotifier.sent" not in block:
+    original_on_start = text[start:end]
+    if "BleePaymentNotifier.sent" not in original_on_start:
         handler = '''
         // BLEE_SENT_NOTIFICATION_ONSTART_COMPAT_V1
         if (intent != null && ACTION_LOCAL_PAYMENT_SENT.equals(intent.getAction())) {
@@ -101,9 +101,13 @@ def main() -> None:
     if missing:
         fail(f"verification missing {missing}")
 
+    # We inserted into the existing method body rather than replacing it. Verify
+    # that the pre-existing method content remains present verbatim.
     start, _, end = method_bounds(verify, "public int onStartCommand(Intent intent, int flags, int startId)")
-    if "START_STICKY" not in verify[start:end]:
-        fail("existing START_STICKY lifecycle behavior was not preserved")
+    patched_on_start = verify[start:end]
+    original_body = original_on_start[original_on_start.find("{") + 1 : original_on_start.rfind("}")].strip()
+    if original_body and original_body not in patched_on_start:
+        fail("existing onStartCommand lifecycle body was not preserved")
 
     print("VERIFIED: payment notification action is injected into the existing service lifecycle without replacing it")
 
