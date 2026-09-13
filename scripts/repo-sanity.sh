@@ -16,6 +16,7 @@ pass() {
 required=(
   "build-blee.command"
   "scripts/verify-canonical-build.py"
+  "scripts/verify-blee-mesh-v2.py"
   "scripts/apply-blee-runtime-reliability.py"
   "scripts/apply-blee-ble-transport-v4.py"
   "scripts/apply-blee-ble-diagnostics.py"
@@ -133,6 +134,20 @@ grep -q 'PROPERTY_WRITE_NO_RESPONSE' scripts/apply-blee-transport-core-v2.py \
   || fail "Bitchat-style GATT characteristic capabilities missing"
 grep -q 'recordPeerDelivery' scripts/apply-blee-transport-core-v2.py \
   || fail "durable peer-specific packet accounting missing"
+
+# The generated-service verifier must understand that Transport Core V2 replaces
+# the old runtime advertiser/role-token implementation. Catch stale assertions
+# here before spending time materializing/building Android.
+grep -q 'if "BLEE_TRANSPORT_CORE_V2" in service:' scripts/verify-blee-mesh-v2.py \
+  || fail "mesh verifier is not transport-core-v2 aware"
+grep -q 'ADVERTISE_MODE_BALANCED' scripts/verify-blee-mesh-v2.py \
+  || fail "mesh verifier does not validate transport-core-v2 advertising"
+grep -q 'addServiceData(new ParcelUuid(SERVICE_UUID), localPeerId)' scripts/verify-blee-mesh-v2.py \
+  || fail "mesh verifier does not validate stable peer-ID advertising"
+grep -q 'direct_scan_result' scripts/verify-blee-mesh-v2.py \
+  || fail "mesh verifier does not validate direct ScanResult GATT"
+pass "Transport core v2 verifier contract pinned"
+
 if grep -q 'connectGattWithPreferredPhy' mesh-v2/android/BleeBleReliability.javafrag; then
   fail "multi-PHY negotiation must not run during initial GATT connection"
 fi
