@@ -5,17 +5,21 @@ node_modules/
 .next/
 out/
 
-# Android generated/build output
+# Android / Gradle generated output
 android/.gradle/
 android/**/build/
+android/local.properties
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
 
-# Canonical APK output
+# Release output
 dist/
 
-# Local build tools/cache
+# Local tooling/cache
 .blee-tools/
 
-# OS/editor
+# OS / editors
 .DS_Store
 *.swp
 *.swo
@@ -24,6 +28,3 @@ dist/
 
 # Logs
 *.log
-
-# Temporary generated builder files
-.blee-professional-inner.command

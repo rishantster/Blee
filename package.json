@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "start": "next start",
     "check": "tsc --noEmit",
-    "android:prepare": "npx cap add android && node scripts/configure-native.mjs && npx cap sync android",
-    "android:apk": "npm run build && npm run android:prepare && cd android && ./gradlew assembleDebug"
+    "verify": "bash scripts/verify-source.sh",
+    "android:sync": "npm run build && npx cap sync android",
+    "android:build": "bash scripts/build-android.sh"
   },
   "dependencies": {
     "@capacitor/core": "8.5.1",

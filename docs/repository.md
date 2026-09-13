@@ -1,34 +1,62 @@
-# Repository architecture
+# Repository structure
 
-Blee is a source-first repository. The checked-in application and native source are authoritative.
+Blee uses a source-first repository. The checked-in application and Android source are authoritative.
 
-## Canonical source
+## Authoritative source
 
-- `app/` — Next.js application shell and global styles
-- `src/` — React UI, wallet, payments and runtime logic
-- `plugins/` — Capacitor plugins
-- `android/` — Android project and native BLE/Nearby/SQLite implementation
-- `public/` — application assets
-- `assets/brand/` — canonical Blee identity assets
-- `website/` — marketing site, independent from the Android application when present
+- `app/` — Next.js application shell and global CSS
+- `src/` — React screens, runtime state, wallet/payment logic and TypeScript libraries
+- `plugins/` — local Capacitor plugins used by the app
+- `android/` — Android project and native transport/persistence code
+- `public/` — static runtime assets
+- `assets/brand/` — brand assets
 
-## Build rules
+A clean build must never reconstruct these directories from an archive or mutate them through a versioned patch chain.
 
-1. Builds compile the tracked source directly.
-2. Build scripts may generate output, but must never generate the application source itself.
-3. No tar/base64 source archives, UI bundles, string-rewrite patch pipelines, or alternate source snapshots may become build dependencies.
-4. There is one Android build entrypoint and one CI workflow.
-5. Version name/code are defined once and verified against the produced APK.
-6. `node_modules`, Next output, Android build output, APKs and local SDK/tool caches are never committed.
+## Build path
 
-## Historical material
+There is one supported Android build entrypoint:
 
-`legacy/` is temporary provenance from the pre-cleanup archive-and-patch architecture. It is not an active source root. Any useful behavior must be migrated into canonical source before `legacy/` is removed.
+```bash
+npm run android:build
+```
 
-## Feature branches
+This calls `scripts/build-android.sh`. It verifies the tracked source, builds the Next.js static export, runs `npx cap sync android`, assembles the Android debug APK, validates it and writes a checksum.
 
-Experimental work must live on a clearly named branch. Store-and-forward relay work is archived separately and is not part of production until deliberately reintroduced and tested.
+The Android project is already tracked. Do not use `npx cap add android`.
 
-## Change discipline
+## Generated files
 
-Transport, payment authorization and persistence changes require direct source review plus regression testing. Marker-only verification is not a substitute for compiling and exercising the real application.
+The following are generated and must remain untracked:
+
+- `node_modules/`
+- `.next/`
+- `out/`
+- `dist/`
+- Android Gradle build directories
+- `android/local.properties`
+- `android/app/src/main/assets/public/`
+- generated Capacitor metadata in `android/app/src/main/assets/`
+
+## Historical code
+
+The previous archive-and-patch build system is preserved in Git history and dedicated `archive/*` branches. It is not an input to the active build and should not be reintroduced into `main`.
+
+Experimental relay work is also archived separately rather than mixed into the direct nearby-payment production path.
+
+## Versioning
+
+The current aligned version contract is:
+
+```text
+package.json: 2.7.0
+Android versionCode: 17
+Android versionName: 2.7.0
+APK: dist/Blee-2.7.0.apk
+```
+
+When releasing a new version, update the package version, Android versionCode/versionName, build artifact name, README and CI together in one change.
+
+## Branch discipline
+
+`main` is the active source branch. New product work should branch from `main` and return through a focused pull request. Avoid long-lived branches that duplicate the same fix under multiple names.
