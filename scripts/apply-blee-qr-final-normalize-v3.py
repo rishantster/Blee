@@ -60,33 +60,7 @@ def find_send_bounds(text: str) -> tuple[int, int, int, int]:
     return send_start, recipient, amount, review
 
 
-def main() -> None:
-    if not APP.is_file():
-        fail("materialized BleeApp.tsx missing")
-    text = APP.read_text()
-    for marker in ("BLEE_SEND_QR_SCANNER_V1", "BLEE_QR_INPUT_SHELL_V2", "BleeQrScanner.scan()"):
-        if marker not in text:
-            fail(f"QR base missing {marker}")
-
-    # Remove every rendered QR control regardless of whether a previous stage
-    # left the legacy text button or the final icon button. The final React tree
-    # gets exactly one control rebuilt below.
-    text = re.sub(
-        r'\s*<button\b(?=[^>]*\bclassName="(?:blee-recipient-qr-scan|blee-recipient-qr-icon)")[\s\S]*?</button>',
-        '',
-        text,
-    )
-    # Collapse an old QR wrapper so we can reconstruct a single clean shell.
-    text = text.replace('<div className="blee-recipient-input-shell">', '')
-    text = text.replace('</div>{/* BLEE_QR_INPUT_SHELL_V2 */}', '')
-
-    send_start, recipient, amount, review = find_send_bounds(text)
-    input_start, input_end = input_bounds(text, recipient, amount)
-    input_tag = text[input_start:input_end]
-    if "password" in input_tag.lower() or "passphrase" in input_tag.lower():
-        fail("refusing to install scanner on secret input")
-
-    setter = None
+def recipient_setter(text: str, input_tag: str) -> str:
     value_match = re.search(r"\bvalue\s*=\s*\{\s*([A-Za-z_$][\w$]*)\s*\}", input_tag)
     if value_match:
         state_name = value_match.group(1)
@@ -95,18 +69,19 @@ def main() -> None:
             text,
         )
         if state_match:
-            setter = state_match.group(1)
-    if not setter:
-        change_match = re.search(
-            r"onChange\s*=\s*\{\s*\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>\s*([A-Za-z_$][\w$]*)\s*\(\s*\1\.target\.value\s*\)\s*\}",
-            input_tag,
-        )
-        if change_match:
-            setter = change_match.group(2)
-    if not setter:
-        fail("Recipient setter missing")
+            return state_match.group(1)
+    change_match = re.search(
+        r"onChange\s*=\s*\{\s*\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>\s*([A-Za-z_$][\w$]*)\s*\(\s*\1\.target\.value\s*\)\s*\}",
+        input_tag,
+    )
+    if change_match:
+        return change_match.group(2)
+    fail("Recipient setter missing")
+    return ""
 
-    button = f'''\n          <button
+
+def scanner_button(setter: str) -> str:
+    return f'''\n          <button
             type="button"
             className="blee-recipient-qr-icon"
             aria-label="Scan recipient QR code"
@@ -126,8 +101,59 @@ def main() -> None:
               <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" />
             </svg>
           </button>'''
-    shell = '<div className="blee-recipient-input-shell">\n' + input_tag + button + '\n        </div>{/* BLEE_QR_INPUT_SHELL_V2 */}'
-    text = text[:input_start] + shell + text[input_end:]
+
+
+def main() -> None:
+    if not APP.is_file():
+        fail("materialized BleeApp.tsx missing")
+    text = APP.read_text()
+
+    # The financial/scan implementation is the contract. Do not make the final
+    # production build depend on a JSX comment marker surviving later React
+    # rewrites. We reconstruct the final Recipient field structurally below.
+    for marker in ("BLEE_SEND_QR_SCANNER_V1", "BleeQrScanner.scan()", "parseBleeRecipientQr"):
+        if marker not in text:
+            fail(f"QR implementation missing {marker}")
+
+    send_start, recipient, amount, review = find_send_bounds(text)
+    segment = text[recipient:amount]
+
+    # Remove every rendered scanner control in the Recipient field. Both legacy
+    # text-button and final icon forms are normalized to one canonical icon.
+    segment = re.sub(
+        r'\s*<button\b(?=[^>]*\bclassName="(?:blee-recipient-qr-scan|blee-recipient-qr-icon)")[\s\S]*?</button>',
+        '',
+        segment,
+    )
+    segment = segment.replace('{/* BLEE_QR_INPUT_SHELL_V2 */}', '')
+
+    input_start, input_end = input_bounds(segment, 0, len(segment))
+    input_tag = segment[input_start:input_end]
+    if "password" in input_tag.lower() or "passphrase" in input_tag.lower():
+        fail("refusing to install scanner on secret input")
+    setter = recipient_setter(text, input_tag)
+    button = scanner_button(setter)
+
+    wrapper_token = '<div className="blee-recipient-input-shell">'
+    wrapper_count = segment.count(wrapper_token)
+    if wrapper_count > 1:
+        fail(f"Recipient contains {wrapper_count} QR input wrappers")
+
+    if wrapper_count == 1:
+        wrapper_start = segment.find(wrapper_token)
+        if wrapper_start > input_start:
+            fail("QR input wrapper begins after Recipient input")
+        wrapper_close = segment.find("</div>", input_end)
+        if wrapper_close < 0:
+            fail("existing QR input wrapper has no closing div")
+        segment = segment[:wrapper_close] + button + "\n        " + segment[wrapper_close:]
+        close_end = wrapper_close + len(button) + len("\n        ") + len("</div>")
+        segment = segment[:close_end] + "{/* BLEE_QR_INPUT_SHELL_V2 */}" + segment[close_end:]
+    else:
+        shell = wrapper_token + "\n" + input_tag + button + '\n        </div>{/* BLEE_QR_INPUT_SHELL_V2 */}'
+        segment = segment[:input_start] + shell + segment[input_end:]
+
+    text = text[:recipient] + segment + text[amount:]
 
     marker = "// BLEE_FINAL_QR_NORMALIZE_V3"
     if marker not in text:
@@ -135,20 +161,22 @@ def main() -> None:
     APP.write_text(text)
 
     final = APP.read_text()
-    send_start, _recipient, _amount, review = find_send_bounds(final)
+    send_start, recipient, amount, review = find_send_bounds(final)
     send_region = final[send_start:review]
+    recipient_region = final[recipient:amount]
     total = final.count('className="blee-recipient-qr-icon"')
     in_send = send_region.count('className="blee-recipient-qr-icon"')
+    in_recipient = recipient_region.count('className="blee-recipient-qr-icon"')
     legacy = final.count('className="blee-recipient-qr-scan"')
-    if total != 1 or in_send != 1 or legacy != 0:
-        fail(f"scanner cardinality invalid total={total} send={in_send} legacy={legacy}")
+    if total != 1 or in_send != 1 or in_recipient != 1 or legacy != 0:
+        fail(f"scanner cardinality invalid total={total} send={in_send} recipient={in_recipient} legacy={legacy}")
     outside = final[:send_start] + final[review:]
     if 'className="blee-recipient-qr-icon"' in outside:
         fail("QR scanner exists outside Send")
     if '<span>Scan QR</span>' in final or '>Scan QR<' in final:
         fail("visible Scan QR text survived")
-    if final.count('BLEE_QR_INPUT_SHELL_V2') != 1:
-        fail("Recipient QR input shell is missing or duplicated")
+    if recipient_region.count('BLEE_QR_INPUT_SHELL_V2') != 1:
+        fail("final Recipient QR input shell marker is missing or duplicated")
 
     print("VERIFIED: final React tree contains exactly one QR icon, inside Send Recipient only")
 
