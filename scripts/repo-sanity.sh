@@ -18,20 +18,22 @@ required=(
   "scripts/apply-blee-adaptive-nearby-v3-compilefix.py"
   "scripts/apply-blee-nearby-speed-profile-v2.py"
   "scripts/apply-blee-pull-refresh-v1.py"
+  "scripts/apply-blee-qr-scanner-v1.py"
+  "scripts/apply-blee-qr-scanner-placement-fix.py"
+  "scripts/apply-blee-qr-scanner-compilefix.py"
   "scripts/apply-blee-qr-ux-v2.py"
-  "scripts/apply-blee-qr-final-normalize-v3.py"
   "scripts/apply-blee-notification-permission-v1.py"
   "scripts/apply-blee-contacts-backend-only-v2.py"
   "scripts/apply-blee-contacts-sync-v1.py"
-  "scripts/apply-blee-contacts-react-v4.py"
-  "scripts/apply-blee-contacts-react-v4-compilefix.py"
+  "scripts/apply-blee-contacts-ui-preclean-v2.py"
+  "scripts/apply-blee-stability-freeze-v1.py"
   "scripts/resume-android-build.sh"
   "mesh-v2/android/BleeBleReliability.javafrag"
 )
 for file in "${required[@]}"; do
   [ -f "$file" ] || fail "missing required file: $file"
 done
-pass "Blee 2.7 canonical inputs exist"
+pass "Blee 2.7 canonical hackathon inputs exist"
 
 [ "$(find . -maxdepth 1 -type f -name 'build-blee*.command' | wc -l | tr -d ' ')" = "1" ] \
   || fail "more than one root Blee build entrypoint exists"
@@ -75,15 +77,12 @@ order = [
     './gradlew --no-daemon assembleDebug --stacktrace',
     'bash scripts/verify-apk-integrity.sh "$FINAL_APK"',
 ]
-positions=[]
 cursor=-1
 for token in order:
     pos=s.find(token, cursor+1)
     if pos < 0:
         raise SystemExit(f'SANITY FAIL: serialized stage missing/misplaced: {token}')
-    positions.append(pos); cursor=pos
-if positions != sorted(positions):
-    raise SystemExit('SANITY FAIL: production build stages are out of order')
+    cursor=pos
 print('SANITY OK: canonical native/web/build/binary stages are serialized')
 PY
 
@@ -100,28 +99,36 @@ grep -q 'GATT_TIMEOUT_THRESHOLD = 2' scripts/apply-blee-adaptive-nearby-v3.py ||
 grep -q 'play-services-nearby:19.5.0' scripts/apply-blee-adaptive-nearby-v3.py || fail "Nearby dependency missing"
 pass "Adaptive Nearby baseline pinned"
 
-chain="scripts/apply-blee-adaptive-nearby-v3-compilefix.py"
-for token in \
-  'apply-blee-payment-notifications.py' \
-  'apply-blee-nearby-stability-v1.py' \
-  'apply-blee-qr-ux-v2.py' \
-  'apply-blee-pull-refresh-v1.py' \
-  'apply-blee-nearby-speed-profile-v2.py' \
-  'apply-blee-activity-identity-v2.py' \
-  'apply-blee-contacts-backend-only-v2.py' \
-  'apply-blee-contacts-react-v4.py' \
-  'apply-blee-qr-final-normalize-v3.py' \
-  'apply-blee-notification-permission-v1.py' \
-  'verify-production-final-v5.py'; do
-  grep -q "$token" "$chain" || fail "final production chain missing $token"
-done
-pass "Blee 2.7 production feature chain pinned"
-
-grep -q 'BLEE_FINAL_QR_NORMALIZE_V3' scripts/apply-blee-qr-final-normalize-v3.py \
-  || fail "final QR cardinality normalizer marker missing"
-grep -q 'scanner cardinality invalid' scripts/apply-blee-qr-final-normalize-v3.py \
-  || fail "final QR cardinality guard missing"
-pass "final Send QR cardinality is pinned after React contacts"
+python3 - <<'PY'
+from pathlib import Path
+s = Path('scripts/apply-blee-adaptive-nearby-v3-compilefix.py').read_text()
+required = [
+    'apply-blee-payment-notifications.py',
+    'apply-blee-nearby-stability-v1.py',
+    'apply-blee-pull-refresh-v1.py',
+    'apply-blee-nearby-speed-profile-v2.py',
+    'apply-blee-activity-identity-v2.py',
+    'apply-blee-contacts-backend-only-v2.py',
+    'apply-blee-contacts-sync-v1.py',
+    'apply-blee-stability-freeze-v1.py',
+    'apply-blee-qr-scanner-v1.py',
+    'apply-blee-qr-ux-v2.py',
+    'apply-blee-notification-permission-v1.py',
+    'verify-production-final-v5.py',
+]
+positions=[]
+for token in required:
+    pos=s.find(token)
+    if pos < 0:
+        raise SystemExit(f'SANITY FAIL: final production chain missing {token}')
+    positions.append(pos)
+if positions != sorted(positions):
+    raise SystemExit('SANITY FAIL: stable production chain order is wrong')
+for forbidden in ('apply-blee-contacts-react-v4.py', 'apply-blee-qr-final-normalize-v3.py'):
+    if forbidden in s:
+        raise SystemExit(f'SANITY FAIL: unstable stage returned to production chain: {forbidden}')
+print('SANITY OK: stable hackathon feature chain pinned; QR installs after all UI stabilization')
+PY
 
 for forbidden in \
   'dist/*.apk' \
@@ -140,4 +147,4 @@ python3 scripts/verify-canonical-build.py
 pass "canonical Blee 2.7 repository contract"
 
 echo
-echo "Blee 2.7 repository sanity passed."
+echo "Blee 2.7 hackathon repository sanity passed."
