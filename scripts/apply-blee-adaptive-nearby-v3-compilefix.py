@@ -103,6 +103,7 @@ def apply_production_polish() -> None:
     # Scanner is a UI/native-recipient convenience only. It feeds the existing
     # recipient state and never bypasses review, signing, balance or settlement.
     run_stage("apply-blee-qr-scanner-v1.py")
+    run_stage("apply-blee-qr-scanner-compilefix.py")
 
 
 def main() -> None:
