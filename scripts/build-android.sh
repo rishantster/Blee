@@ -8,43 +8,98 @@ APP_VERSION="2.7.0"
 VERSION_CODE="17"
 FINAL_APK="$ROOT/dist/Blee-${APP_VERSION}.apk"
 
+is_java_21_home() {
+  local home="$1"
+  [ -n "$home" ] || return 1
+  [ -x "$home/bin/java" ] || return 1
+  local line=""
+  line="$("$home/bin/java" -version 2>&1 | head -n 1 || true)"
+  printf '%s' "$line" | grep -Eq 'version "21[.]|openjdk 21[.]'
+}
+
+use_java_home() {
+  local home="$1"
+  if is_java_21_home "$home"; then
+    export JAVA_HOME="$home"
+    export PATH="$JAVA_HOME/bin:$PATH"
+    return 0
+  fi
+  return 1
+}
+
 select_java_21() {
-  local current=""
-  current="$(java -version 2>&1 | head -n 1 || true)"
-  if printf '%s' "$current" | grep -Eq 'version "21[.]|openjdk 21[.]'; then
+  if [ -n "${JAVA_HOME:-}" ] && use_java_home "$JAVA_HOME"; then
     return 0
   fi
 
-  if [ "$(uname -s)" = "Darwin" ] && [ -x /usr/libexec/java_home ]; then
-    local mac_java=""
-    mac_java="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
-    if [ -n "$mac_java" ] && [ -x "$mac_java/bin/java" ]; then
-      export JAVA_HOME="$mac_java"
-      export PATH="$JAVA_HOME/bin:$PATH"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    if command -v brew >/dev/null 2>&1; then
+      local brew_prefix=""
+      brew_prefix="$(brew --prefix openjdk@21 2>/dev/null || true)"
+      if [ -n "$brew_prefix" ]; then
+        if use_java_home "$brew_prefix/libexec/openjdk.jdk/Contents/Home"; then
+          return 0
+        fi
+        if use_java_home "$brew_prefix"; then
+          return 0
+        fi
+      fi
+    fi
+
+    if use_java_home "/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"; then
+      return 0
+    fi
+    if use_java_home "/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home"; then
+      return 0
+    fi
+
+    if [ -x /usr/libexec/java_home ]; then
+      local mac_java=""
+      mac_java="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
+      if [ -n "$mac_java" ] && use_java_home "$mac_java"; then
+        return 0
+      fi
+    fi
+  fi
+
+  if command -v java >/dev/null 2>&1; then
+    local java_bin=""
+    java_bin="$(command -v java)"
+    local resolved_java="$java_bin"
+    if command -v realpath >/dev/null 2>&1; then
+      resolved_java="$(realpath "$java_bin" 2>/dev/null || printf '%s' "$java_bin")"
+    elif command -v readlink >/dev/null 2>&1; then
+      resolved_java="$(readlink -f "$java_bin" 2>/dev/null || printf '%s' "$java_bin")"
+    fi
+    local inferred_home=""
+    inferred_home="$(cd "$(dirname "$resolved_java")/.." 2>/dev/null && pwd || true)"
+    if [ -n "$inferred_home" ] && use_java_home "$inferred_home"; then
       return 0
     fi
   fi
 
-  if command -v brew >/dev/null 2>&1; then
-    local brew_java=""
-    brew_java="$(brew --prefix openjdk@21 2>/dev/null || true)"
-    if [ -n "$brew_java" ] && [ -d "$brew_java/libexec/openjdk.jdk/Contents/Home" ]; then
-      export JAVA_HOME="$brew_java/libexec/openjdk.jdk/Contents/Home"
-      export PATH="$JAVA_HOME/bin:$PATH"
+  for candidate in \
+    /usr/lib/jvm/temurin-21-jdk-amd64 \
+    /usr/lib/jvm/java-21-openjdk-amd64 \
+    /usr/lib/jvm/java-21-openjdk \
+    /opt/java/openjdk; do
+    if use_java_home "$candidate"; then
       return 0
     fi
-  fi
+  done
 
-  echo "ERROR: Java 21 is required." >&2
+  echo "ERROR: Java 21 is required, but no validated Java 21 installation was found." >&2
   echo "macOS: brew install openjdk@21" >&2
+  echo "Then rerun: npm run android:build" >&2
   exit 1
 }
 
 select_java_21
 
-JAVA_LINE="$(java -version 2>&1 | head -n 1)"
+JAVA_LINE="$("$JAVA_HOME/bin/java" -version 2>&1 | head -n 1)"
 if ! printf '%s' "$JAVA_LINE" | grep -Eq 'version "21[.]|openjdk 21[.]'; then
-  echo "ERROR: build resolved a non-Java-21 runtime: $JAVA_LINE" >&2
+  echo "ERROR: internal Java selector chose a non-Java-21 runtime: $JAVA_LINE" >&2
+  echo "JAVA_HOME=$JAVA_HOME" >&2
   exit 1
 fi
 
@@ -72,10 +127,15 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
   exit 1
 fi
 
+export GRADLE_USER_HOME="$ROOT/.blee-tools/gradle-home-v27"
+mkdir -p "$GRADLE_USER_HOME"
+
 printf '\nBlee %s source-first Android build\n' "$APP_VERSION"
 printf 'Node: %s\n' "$(node --version)"
+printf 'JAVA_HOME: %s\n' "$JAVA_HOME"
 printf 'Java: %s\n' "$JAVA_LINE"
-printf 'Android SDK: %s\n\n' "$ANDROID_SDK_ROOT"
+printf 'Android SDK: %s\n' "$ANDROID_SDK_ROOT"
+printf 'Gradle user home: %s\n\n' "$GRADLE_USER_HOME"
 
 rm -rf "$ROOT/dist"
 mkdir -p "$ROOT/dist"
@@ -87,8 +147,15 @@ npm run build
 npx cap sync android
 
 cd "$ROOT/android"
-./gradlew --no-daemon --version
-./gradlew --no-daemon assembleDebug --stacktrace
+./gradlew --stop >/dev/null 2>&1 || true
+GRADLE_VERSION_OUTPUT="$(./gradlew --no-daemon -Dorg.gradle.java.home="$JAVA_HOME" --version 2>&1)"
+printf '%s\n' "$GRADLE_VERSION_OUTPUT"
+if ! printf '%s\n' "$GRADLE_VERSION_OUTPUT" | grep -Eq 'Launcher JVM:[[:space:]]+21|Daemon JVM:[[:space:]]+21|JVM:[[:space:]]+21'; then
+  echo "ERROR: Gradle is not using Java 21 despite JAVA_HOME=$JAVA_HOME" >&2
+  exit 1
+fi
+
+./gradlew --no-daemon -Dorg.gradle.java.home="$JAVA_HOME" assembleDebug --stacktrace
 
 SOURCE_APK="$ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
 [ -f "$SOURCE_APK" ] || { echo "ERROR: Gradle completed without $SOURCE_APK" >&2; exit 1; }
