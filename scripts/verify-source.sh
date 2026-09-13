@@ -40,6 +40,7 @@ required=(
   android/app/src/main/java/com/blee/payments/BleeContactsPlugin.java
   android/app/src/main/java/com/blee/payments/BleePaymentNotifier.java
   android/app/src/main/java/com/blee/payments/BleePaymentEventReceiver.java
+  android/app/src/main/java/com/blee/payments/BleePeerProfile.java
 )
 
 for path in "${required[@]}"; do
@@ -50,12 +51,12 @@ PACKAGE_VERSION="$(node -p "require('./package.json').version")"
 LOCK_VERSION="$(node -p "require('./package-lock.json').version")"
 LOCK_ROOT_VERSION="$(node -p "require('./package-lock.json').packages[''].version")"
 
-[ "$PACKAGE_VERSION" = "2.7.0" ] || fail "package version is $PACKAGE_VERSION, expected 2.7.0"
+[ "$PACKAGE_VERSION" = "2.7.1" ] || fail "package version is $PACKAGE_VERSION, expected 2.7.1"
 [ "$LOCK_VERSION" = "$PACKAGE_VERSION" ] || fail "package-lock version is $LOCK_VERSION, expected $PACKAGE_VERSION"
 [ "$LOCK_ROOT_VERSION" = "$PACKAGE_VERSION" ] || fail "package-lock root package version is $LOCK_ROOT_VERSION, expected $PACKAGE_VERSION"
 
-grep -Eq 'versionCode[[:space:]]+17' android/app/build.gradle || fail "Android versionCode must be 17"
-grep -Eq 'versionName[[:space:]]+"2[.]7[.]0"' android/app/build.gradle || fail "Android versionName must be 2.7.0"
+grep -Eq 'versionCode[[:space:]]+18' android/app/build.gradle || fail "Android versionCode must be 18"
+grep -Eq 'versionName[[:space:]]+"2[.]7[.]1"' android/app/build.gradle || fail "Android versionName must be 2.7.1"
 grep -Eq 'sourceCompatibility[[:space:]]+JavaVersion.VERSION_21' android/app/build.gradle || fail "Android sourceCompatibility must be Java 21"
 grep -Eq 'targetCompatibility[[:space:]]+JavaVersion.VERSION_21' android/app/build.gradle || fail "Android targetCompatibility must be Java 21"
 
@@ -138,6 +139,17 @@ if grep -Eq 'listContacts|saveContact|deleteContact|contactCandidates' android/a
   fail "contacts API leaked back into transport plugin"
 fi
 
-printf 'VERIFIED: Blee 2.7 source-first repository contract\n'
+
+grep -q 'PROFILE_UUID' android/app/src/main/java/com/blee/payments/BleeMeshService.java || fail "connection-bound BLE profile characteristic missing"
+grep -q 'BleePeerProfile.decodeBound' android/app/src/main/java/com/blee/payments/BleeMeshService.java || fail "BLE profile is not bound to authenticated wallet session"
+grep -q 'verification_pending' android/app/src/main/java/com/blee/payments/BleeMeshDb.java || fail "recipient verification-pending lifecycle missing"
+grep -q 'rejectPendingEnvelope' android/app/src/main/java/com/blee/payments/BleeMeshDb.java || fail "invalid envelope rejection missing"
+grep -q 'rejectEnvelope' android/app/src/main/java/com/blee/payments/BleeMeshPlugin.java || fail "native verifier rejection bridge missing"
+grep -q 'rejectEnvelope' src/components/BleeRuntime.tsx || fail "WebView verifier rejection missing"
+grep -q "state === 'verification-pending'" src/hooks/useBleeView.ts || fail "unverified funds are not excluded from projected value"
+grep -q 'projectedBalance' src/components/BleeApp.tsx || fail "verified offline receive is not projected into displayed balance"
+grep -q 'senderName: aliasRef.current' src/hooks/useBlee.ts || fail "durable payment envelope is missing sender display identity"
+
+printf 'VERIFIED: Blee 2.7.1 source-first repository contract\n'
 printf 'VERIFIED: offline receive projection, notifications and contacts contract\n'
 printf 'VERIFIED: single plugin ownership and generated-output hygiene\n'

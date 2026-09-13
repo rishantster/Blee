@@ -138,6 +138,7 @@ function formatTimestamp(value?: number | null) {
 
 function paymentStatus(row: PaymentRecord) {
   switch (row.state) {
+    case 'verification-pending': return 'Verifying nearby';
     case 'settled': return row.direction === 'in' ? 'Received' : 'Confirmed';
     case 'submitted': return 'Settlement submitted';
     case 'mesh-delivered': return row.direction === 'in' ? 'Received nearby' : 'Delivered nearby';
@@ -149,6 +150,7 @@ function paymentStatus(row: PaymentRecord) {
 
 function paymentStatusDetail(row: PaymentRecord) {
   switch (row.state) {
+    case 'verification-pending': return 'Stored durably on this phone while the sender authorization is verified locally.';
     case 'settled': return 'Final on Arc Testnet.';
     case 'submitted': return 'Submitted to Arc and awaiting confirmation.';
     case 'mesh-delivered': return 'Stored by the recipient. Settlement is still pending.';
@@ -245,7 +247,7 @@ function PaymentRow({ row, identity, onOpen }: { row: PaymentRecord; identity?: 
   const name = row.counterpartyAlias || identity?.alias || short(row.counterparty);
   return (
     <button className="transaction-row" onClick={() => onOpen(row)}>
-      <PersonAvatar name={name} src={identity?.avatar} size="sm"/>
+      <PersonAvatar name={name} src={row.counterpartyAvatar || identity?.avatar} size="sm"/>
       <span className="transaction-main"><strong>{incoming ? `From ${name}` : `To ${name}`}</strong><small>{paymentStatus(row)}</small></span>
       <span className="transaction-value"><strong className={incoming && row.state === 'settled' ? 'positive' : ''}>{incoming ? '+' : '−'}{formatAmount(row.amount)} USDC</strong><small>{new Date(row.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></span>
       <Icon name="chevron" size={15}/>
@@ -355,6 +357,7 @@ export function BleeApp() {
   const recentPayments = visiblePayments.slice(0, 3);
   const nearbyPeers = app.peers.slice(0, 3);
   const pendingPayments = visiblePayments.filter((row) => row.state !== 'settled' && row.state !== 'failed');
+  const projectedBalance = Number(app.available || 0) + Number(app.pendingIncoming || 0);
   const activeTab: PrimaryTab = ['home', 'nearby', 'activity', 'profile'].includes(screen) ? screen as PrimaryTab : 'home';
 
   const navigate = (next: Screen) => {
@@ -582,10 +585,11 @@ export function BleeApp() {
       <div className="app-topbar"><Brand compact/><button className="status-chip" onClick={() => void app.refreshNetwork()}><span className={`status-dot ${app.arcReachable ? 'online' : app.arcReachable === null ? 'checking' : 'offline'}`}/>{app.arcReachable ? 'Online' : app.arcReachable === null ? 'Checking' : 'Offline'}</button></div>
       <section className="balance-panel">
         <div className="balance-heading"><div><span className="kicker">USDC BALANCE</span><small>Arc Testnet</small></div><button className="icon-button" onClick={() => void app.refreshNetwork()} aria-label="Refresh balance"><Icon name="refresh"/></button></div>
-        <div className="balance-number">{formatAmount(app.available)} <span>USDC</span></div>
-        <div className="balance-subline"><span>{app.reserved > 0 ? `${formatAmount(app.reserved)} reserved` : 'Confirmed spendable'}</span><span>{app.balanceAt ? `Updated ${new Date(app.balanceAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Awaiting sync'}</span></div>
+        <div className="balance-number">{formatAmount(projectedBalance)} <span>USDC</span></div>
+        <div className="balance-subline"><span>{app.pendingIncoming > 0 ? `${formatAmount(app.available)} confirmed · ${formatAmount(app.pendingIncoming)} pending` : app.reserved > 0 ? `${formatAmount(app.reserved)} reserved` : 'Confirmed spendable'}</span><span>{app.balanceAt ? `Updated ${new Date(app.balanceAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Awaiting sync'}</span></div>
       </section>
-      {app.pendingIncoming > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>+{formatAmount(app.pendingIncoming)} USDC pending</strong><small>Received nearby. Not spendable until Arc settlement is confirmed.</small></div></div>}
+      {app.verifyingIncoming > 0 && <div className="pending-strip"><Icon name="shield"/><div><strong>Verifying nearby payment{app.verifyingIncoming > 1 ? 's' : ''}</strong><small>Stored durably on this phone. Sender authorization is being checked locally.</small></div></div>}
+      {app.pendingIncoming > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>+{formatAmount(app.pendingIncoming)} USDC pending</strong><small>Received nearby and verified. Included in your displayed balance, but not spendable until Arc settlement is confirmed.</small></div></div>}
       <div className="primary-actions"><button className="action-button send" onClick={() => openSend()}><Icon name="send"/><span>Send</span></button><button className="action-button" onClick={() => navigate('receive')}><Icon name="receive"/><span>Receive</span></button></div>
       <section className="home-section"><div className="section-title"><div><span className="kicker">NEARBY</span><h2>People nearby</h2></div><button onClick={() => selectTab('nearby')}>See all</button></div>
         {nearbyPeers.length ? <div className="surface-list">{nearbyPeers.map((peer) => <button className="peer-row" key={`${peer.address}:${peer.transportId}`} onClick={() => openSend(peer)}><PersonAvatar name={peer.alias} src={app.identityFor(peer.address)?.avatar}/><span><strong>{peer.alias}</strong><small>{short(peer.address)}</small></span><span className="row-action">Pay</span></button>)}</div> : <EmptyState icon="nearby" title={app.meshStarted ? 'Looking for people nearby' : 'Nearby payments are off'} copy={app.meshStarted ? 'Blee is scanning over Bluetooth LE.' : 'Turn on Nearby to find other Blee users.'}/>}</section>

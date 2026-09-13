@@ -768,10 +768,10 @@ final class BleeMeshDb {
             String notifyBody = null;
 
             if ("PAYMENT_ENVELOPE".equals(type) && forUs) {
-                // BLEE_PAYMENT_NOTIFICATION_SUMMARY_V1
-                // Transport receipt wakes verification immediately, but the final
-                // Payment received notification is emitted only after EIP-3009
-                // verification and durable recipient acceptance succeed.
+                // Transport receipt becomes a durable, explicitly non-spendable
+                // recipient projection. Cryptographic acceptance remains owned by
+                // the local viem verifier via acceptVerifiedEnvelope().
+                changed = persistVerificationPending(packet, now) || changed;
             } else if ("DELIVERY_ACK".equals(type) && forUs) {
                 changed = updatePaymentState(
                     paymentId, "outgoing", "acknowledged", "RECIPIENT_ACKNOWLEDGED",
@@ -825,6 +825,122 @@ final class BleeMeshDb {
         }
     }
 
+    private boolean persistVerificationPending(JSONObject packet, long now) {
+        try {
+            JSONObject payment = new JSONObject(packet.optString("payload", "{}"));
+            JSONObject auth = authorization(payment);
+            String paymentId = firstNonEmpty(payment.optString("id", ""), packet.optString("paymentId", ""));
+            String wallet = activeWallet();
+            if (paymentId.isEmpty() || auth == null || wallet == null) return false;
+            if (!wallet.equalsIgnoreCase(auth.optString("to", ""))) return false;
+
+            String key = "incoming:" + paymentId;
+            String priorState = paymentState(key);
+            if (priorState != null && !priorState.toLowerCase(Locale.ROOT).contains("verification_pending")) return false;
+
+            long createdAt = payment.optLong("createdAt", packet.optLong("createdAt", now));
+            payment.put("id", paymentId);
+            payment.put("direction", "incoming");
+            payment.put("state", "verification_pending");
+            payment.put("route", "ble-mesh");
+            payment.put("createdAt", createdAt);
+            payment.put("updatedAt", now);
+            payment.put("durablyReceivedAt", now);
+
+            String sender = extractSender(payment);
+            if (!sender.isEmpty()) {
+                payment.put("counterparty", sender);
+                payment.put("counterpartyWallet", sender);
+                JSONObject known = peerIdentity(sender);
+                if (known != null) {
+                    String name = known.optString("displayName", "").trim();
+                    String avatar = known.optString("avatar", "").trim();
+                    if (!name.isEmpty()) {
+                        payment.put("counterpartyName", name);
+                        payment.put("senderName", name);
+                    }
+                    if (!avatar.isEmpty()) {
+                        payment.put("counterpartyAvatar", avatar);
+                        payment.put("senderAvatar", avatar);
+                    }
+                }
+            }
+
+            ContentValues values = new ContentValues();
+            values.put("payment_key", key);
+            values.put("payment_id", paymentId);
+            values.put("direction", "incoming");
+            values.put("state", "verification_pending");
+            values.put("created_at", createdAt);
+            values.put("updated_at", now);
+            values.put("payload", payment.toString());
+            db().insertWithOnConflict("payments", null, values, SQLiteDatabase.CONFLICT_REPLACE);
+            if (priorState == null) {
+                addEvent(paymentId, "RECIPIENT_ENVELOPE_STORED", now, packet.optString("originDeviceId", null), packet.toString());
+            }
+            return priorState == null;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private String paymentState(String key) {
+        try (Cursor c = db().query("payments", new String[] { "state" }, "payment_key=?", new String[] { key }, null, null, null, "1")) {
+            return c.moveToFirst() ? c.getString(0) : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private boolean recipientNeedsVerification(String paymentId) {
+        String state = paymentState("incoming:" + paymentId);
+        return state == null || state.toLowerCase(Locale.ROOT).contains("verification_pending");
+    }
+
+    synchronized boolean rejectPendingEnvelope(String messageId, String reason) {
+        long now = System.currentTimeMillis();
+        String raw = null;
+        try (Cursor c = db().query(
+            "mesh_inbox", new String[] { "packet" },
+            "message_id=? AND packet_type=?", new String[] { messageId, "PAYMENT_ENVELOPE" },
+            null, null, null, "1"
+        )) {
+            if (c.moveToFirst()) raw = c.getString(0);
+        }
+        if (raw == null) return false;
+
+        try {
+            JSONObject packet = new JSONObject(raw);
+            JSONObject payment = new JSONObject(packet.optString("payload", "{}"));
+            String paymentId = firstNonEmpty(payment.optString("id", ""), packet.optString("paymentId", ""));
+            if (!paymentId.isEmpty()) {
+                String key = "incoming:" + paymentId;
+                String state = paymentState(key);
+                if (state != null && state.toLowerCase(Locale.ROOT).contains("verification_pending")) {
+                    payment.put("id", paymentId);
+                    payment.put("direction", "incoming");
+                    payment.put("state", "verification_failed");
+                    payment.put("error", reason == null || reason.trim().isEmpty()
+                        ? "Payment authorization could not be verified" : reason.trim());
+                    payment.put("updatedAt", now);
+                    ContentValues values = new ContentValues();
+                    values.put("state", "verification_failed");
+                    values.put("updated_at", now);
+                    values.put("payload", payment.toString());
+                    db().update("payments", values, "payment_key=?", new String[] { key });
+                    addEvent(paymentId, "RECIPIENT_VERIFICATION_FAILED", now, packet.optString("originDeviceId", null), payment.toString());
+                }
+            }
+            // Do not continue gossiping something this phone proved invalid.
+            db().delete("mesh_inbox", "message_id=?", new String[] { messageId });
+            db().delete("mesh_outbox", "message_id=?", new String[] { messageId });
+            db().delete("courier_envelopes", "message_id=?", new String[] { messageId });
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
     synchronized List<String> pendingEnvelopes() {
         List<String> rows = new ArrayList<>();
         String wallet = activeWallet();
@@ -839,7 +955,7 @@ final class BleeMeshDb {
         )) {
             while (c.moveToNext()) {
                 String paymentId = c.getString(1);
-                if (paymentExists("incoming:" + paymentId)) continue;
+                if (!recipientNeedsVerification(paymentId)) continue;
                 String raw = c.getString(2);
                 try {
                     JSONObject packet = new JSONObject(raw);
@@ -873,7 +989,11 @@ final class BleeMeshDb {
             if (!wallet.equals(auth.optString("to", "").toLowerCase(Locale.ROOT))) return AcceptedPayment.reject();
 
             String senderWalletForNotification = extractSender(payment);
-            final boolean newlyAccepted = !paymentExists("incoming:" + paymentId);
+            String priorState = paymentState("incoming:" + paymentId);
+            if (priorState != null && isFinalState(priorState) && !priorState.toLowerCase(Locale.ROOT).contains("chain_confirmed")) {
+                return AcceptedPayment.reject();
+            }
+            final boolean newlyAccepted = priorState == null || priorState.toLowerCase(Locale.ROOT).contains("verification_pending");
 
             // BLEE_ATOMIC_RECIPIENT_ACK_V1
             SQLiteDatabase database = db();
@@ -921,7 +1041,7 @@ final class BleeMeshDb {
                 paymentId,
                 newlyAccepted,
                 paymentDisplayAmount(payment),
-                peerDisplayLabel(senderWalletForNotification)
+                firstNonEmpty(payment.optString("senderName", ""), peerDisplayLabel(senderWalletForNotification))
             );
         } catch (Throwable ignored) {
             return AcceptedPayment.reject();
@@ -1239,6 +1359,7 @@ final class BleeMeshDb {
         if (s.contains("settlement_submitted") || s.contains("submitted")) return 70;
         if (s.contains("acknowledged") || s.contains("acknowledge")) return 60;
         if (s.contains("delivered_offline") || s.contains("delivered")) return 50;
+        if (s.contains("verification_pending") || s.contains("verification-pending")) return 45;
         if (s.contains("queued")) return 40;
         if (s.contains("signed")) return 30;
         if (s.contains("created")) return 20;

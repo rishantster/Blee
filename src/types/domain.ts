@@ -10,13 +10,16 @@ export type TransferAuthorization = {
   signature: Hex;
 };
 
-export type PaymentState = 'queued-local' | 'mesh-broadcast' | 'mesh-delivered' | 'submitted' | 'settled' | 'failed';
+export type PaymentState = 'verification-pending' | 'queued-local' | 'mesh-broadcast' | 'mesh-delivered' | 'submitted' | 'settled' | 'failed';
 
 export type PaymentRecord = {
   id: string;
   direction: 'out' | 'in' | 'relay';
   counterparty: Address;
   counterpartyAlias?: string;
+  counterpartyAvatar?: string;
+  senderName?: string;
+  senderAvatar?: string;
   amount: string;
   createdAt: number;
   updatedAt?: number;

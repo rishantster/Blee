@@ -49,12 +49,13 @@ const transportHelloAt = new Map<string, number>();
 type SendResult = { id: string; route: PaymentRecord['route']; state: PaymentRecord['state']; txHash?: Hex };
 
 const STATE_RANK: Record<PaymentRecord['state'], number> = {
-  'queued-local': 0,
-  'mesh-broadcast': 1,
-  'mesh-delivered': 2,
-  submitted: 3,
-  settled: 4,
-  failed: 5,
+  'verification-pending': 0,
+  'queued-local': 1,
+  'mesh-broadcast': 2,
+  'mesh-delivered': 3,
+  submitted: 4,
+  settled: 5,
+  failed: 6,
 };
 
 function advanceState(current: PaymentRecord['state'], next: PaymentRecord['state']) {
@@ -354,7 +355,7 @@ export function useBlee() {
     .reduce((sum, p) => sum + BigInt(p.authorization!.value), 0n), [payments]);
 
   const pendingIncomingUnits = useMemo(() => payments
-    .filter((p) => p.direction === 'in' && p.state !== 'settled' && p.state !== 'failed' && p.authorization)
+    .filter((p) => p.direction === 'in' && (p.state === 'mesh-delivered' || p.state === 'submitted') && p.authorization)
     .reduce((sum, p) => sum + BigInt(p.authorization!.value), 0n), [payments]);
 
   const reserved = Number(formatUnits(reservedUnits, ARC_USDC_DECIMALS));
@@ -984,6 +985,8 @@ export function useBlee() {
         direction: 'out',
         counterparty: to,
         counterpartyAlias,
+        senderName: aliasRef.current,
+        senderAvatar: profilePhotoRef.current || undefined,
         amount,
         createdAt: Date.now(),
         updatedAt: Date.now(),

@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-APP_VERSION="2.7.0"
-VERSION_CODE="17"
+APP_VERSION="2.7.1"
+VERSION_CODE="18"
 FINAL_APK="$ROOT/dist/Blee-${APP_VERSION}.apk"
 
 is_java_21_home() {

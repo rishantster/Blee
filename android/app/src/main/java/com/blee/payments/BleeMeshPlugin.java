@@ -207,6 +207,32 @@ public class BleeMeshPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void rejectEnvelope(PluginCall call) {
+        String messageId = call.getString("messageId", "");
+        String reason = call.getString("reason", "Payment authorization could not be verified");
+        if (messageId.isEmpty()) {
+            call.reject("Missing messageId");
+            return;
+        }
+        try {
+            BleeMeshDb db = new BleeMeshDb(getContext());
+            boolean rejected = db.rejectPendingEnvelope(messageId, reason);
+            db.close();
+            JSObject result = new JSObject();
+            result.put("rejected", rejected);
+            if (rejected) {
+                JSObject event = new JSObject();
+                event.put("paymentId", "");
+                event.put("eventType", "RECIPIENT_VERIFICATION_FAILED");
+                notifyListeners("ledgerChanged", event, true);
+            }
+            call.resolve(result);
+        } catch (Throwable error) {
+            call.reject("Unable to reject invalid Blee payment: " + error.getMessage());
+        }
+    }
+
+    @PluginMethod
     public void acceptEnvelope(PluginCall call) {
         String messageId = call.getString("messageId", "");
         if (messageId.isEmpty()) {

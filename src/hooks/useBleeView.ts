@@ -23,9 +23,13 @@ function mergePayments(...groups: PaymentRecord[][]): PaymentRecord[] {
 
 function pendingIncomingAmount(payments: PaymentRecord[]): number {
   const units = payments
-    .filter((row) => row.direction === 'in' && row.authorization && row.state !== 'settled' && row.state !== 'failed')
+    .filter((row) => row.direction === 'in' && row.authorization && (row.state === 'mesh-delivered' || row.state === 'submitted'))
     .reduce((total, row) => total + BigInt(row.authorization!.value), 0n);
   return Number(formatUnits(units, ARC_USDC_DECIMALS));
+}
+
+function verifyingIncomingCount(payments: PaymentRecord[]): number {
+  return payments.filter((row) => row.direction === 'in' && row.state === 'verification-pending').length;
 }
 
 /**
@@ -74,10 +78,12 @@ export function useBleeView() {
     [core.payments, durablePayments],
   );
   const pendingIncoming = useMemo(() => pendingIncomingAmount(payments), [payments]);
+  const verifyingIncoming = useMemo(() => verifyingIncomingCount(payments), [payments]);
 
   return {
     ...core,
     payments,
     pendingIncoming,
+    verifyingIncoming,
   };
 }

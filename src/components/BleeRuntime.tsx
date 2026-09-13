@@ -36,6 +36,7 @@ type MeshPlugin = {
   diagnostics(): Promise<BleDiagnostics>;
   rearmBluetooth(): Promise<{ requested?: boolean }>;
   acceptEnvelope(options: { messageId: string }): Promise<{ accepted: boolean; paymentId?: string }>;
+  rejectEnvelope(options: { messageId: string; reason: string }): Promise<{ rejected: boolean }>;
   addListener(
     eventName: 'ledgerChanged' | 'peerChanged',
     listener: (event: Record<string, unknown>) => void,
@@ -577,16 +578,26 @@ export default function BleeRuntime() {
         const { packets } = await BleeMesh.pendingEnvelopes();
         let accepted = false;
         for (const raw of packets || []) {
+          let messageId = '';
           try {
             const packet = JSON.parse(raw) as Record<string, any>;
+            messageId = String(packet.messageId || '');
+            const reject = async (reason: string) => {
+              if (!messageId) return;
+              try { await BleeMesh.rejectEnvelope({ messageId, reason }); } catch {}
+            };
             const payment = JSON.parse(String(packet.payload || '{}')) as Record<string, unknown>;
             const auth = authorizationFromPayment(payment);
-            if (!auth || String(auth.to).toLowerCase() !== wallet) continue;
-            if (!(await verifyAuthorization(auth))) continue;
-            const result = await BleeMesh.acceptEnvelope({ messageId: String(packet.messageId || '') });
+            if (!auth) { await reject('Payment authorization is missing or malformed'); continue; }
+            if (String(auth.to).toLowerCase() !== wallet) { await reject('Payment authorization recipient does not match this wallet'); continue; }
+            if (!(await verifyAuthorization(auth))) { await reject('Payment authorization is invalid or expired'); continue; }
+            const result = await BleeMesh.acceptEnvelope({ messageId });
             accepted = result.accepted || accepted;
           } catch (error) {
-            console.warn('Ignored invalid Blee Mesh payment envelope', error);
+            if (messageId) {
+              try { await BleeMesh.rejectEnvelope({ messageId, reason: 'Payment envelope could not be decoded safely' }); } catch {}
+            }
+            console.warn('Rejected invalid Blee Mesh payment envelope', error);
           }
         }
         if (accepted) refreshLedger();

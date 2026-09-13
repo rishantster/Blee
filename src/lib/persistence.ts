@@ -21,6 +21,7 @@ function canonicalDirection(value: unknown): PaymentRecord['direction'] | null {
 
 function canonicalState(value: unknown): PaymentState {
   const state = String(value || '').trim().toLowerCase();
+  if (state === 'verification-pending' || state.includes('verification_pending') || state.includes('verification-pending')) return 'verification-pending';
   if (state === 'settled' || state.includes('chain_confirmed') || state.includes('chain-confirmed')) return 'settled';
   if (state === 'failed' || state.includes('expired') || state.includes('revert') || state.includes('cancel')) return 'failed';
   if (state === 'submitted' || state.includes('settlement_submitted') || state.includes('settlement-submitted')) return 'submitted';
@@ -31,6 +32,7 @@ function canonicalState(value: unknown): PaymentState {
 
 function canonicalRoute(value: unknown, state: PaymentState, originalState: unknown): PaymentRecord['route'] {
   const route = String(value || '').trim();
+  if (state === 'verification-pending') return 'ble-mesh';
   if (state === 'mesh-delivered' || String(originalState || '').toLowerCase().includes('delivered_offline')) return 'ble-mesh';
   if (route === 'arc-direct' || route === 'ble-mesh' || route === 'local-queue') return route;
   if (state === 'submitted' || state === 'settled') return 'arc-direct';
@@ -68,6 +70,13 @@ function canonicalPayment(input: StoredPayment): PaymentRecord | null {
     input.counterpartyAlias || input.recipientName || input.receiverName || input.contactName || input.peerName || input.counterpartyName || '',
   ).trim();
   const counterpartyAlias = direction === 'in' ? incomingAlias : outgoingAlias;
+  const incomingAvatar = String(
+    input.senderAvatar || input.counterpartyAvatar || input.peerAvatar || input.contactAvatar || '',
+  ).trim();
+  const outgoingAvatar = String(
+    input.counterpartyAvatar || input.receiverAvatar || input.peerAvatar || input.contactAvatar || '',
+  ).trim();
+  const counterpartyAvatar = direction === 'in' ? incomingAvatar : outgoingAvatar;
 
   const createdAt = Number(input.createdAt || Date.now());
   const updatedAt = Number(input.updatedAt || createdAt);
@@ -80,6 +89,7 @@ function canonicalPayment(input: StoredPayment): PaymentRecord | null {
     direction,
     counterparty: counterparty as PaymentRecord['counterparty'],
     counterpartyAlias: counterpartyAlias || undefined,
+    counterpartyAvatar: counterpartyAvatar || undefined,
     amount,
     createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
     updatedAt: Number.isFinite(updatedAt) ? updatedAt : undefined,

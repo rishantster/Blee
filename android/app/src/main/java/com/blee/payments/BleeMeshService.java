@@ -663,6 +663,7 @@ public class BleeMeshService extends Service {
     private static final UUID SERVICE_UUID = UUID.fromString("50f57a10-7bd4-4b6a-bf45-b1ee20000001");
     private static final UUID WRITE_UUID = UUID.fromString("50f57a10-7bd4-4b6a-bf45-b1ee20000002");
     private static final UUID IDENTITY_UUID = UUID.fromString("50f57a10-7bd4-4b6a-bf45-b1ee20000003");
+    private static final UUID PROFILE_UUID = UUID.fromString("50f57a10-7bd4-4b6a-bf45-b1ee20000004");
     private static final long LOOP_MS = 4_000L;
     private static final long PEER_RETRY_MS = 8_000L;
     private static final long SETTLEMENT_RETRY_MS = 12_000L;
@@ -1925,7 +1926,8 @@ public class BleeMeshService extends Service {
                     if (raw.isEmpty() || raw.length() > MAX_NEARBY_PACKET_BYTES) return;
                     BleeMeshDb.ProcessResult result = db.receive(raw, deviceId, publicKey);
                     if (result.accepted && (result.ledgerChanged || "PAYMENT_ENVELOPE".equals(result.type))) {
-                        notifyLedgerChanged(result.paymentId, result.ledgerChanged ? result.type : "PAYMENT_ENVELOPE_RECEIVED");
+                        String eventType = "PAYMENT_ENVELOPE".equals(result.type) ? "PAYMENT_ENVELOPE_RECEIVED" : result.type;
+                        notifyLedgerChanged(result.paymentId, eventType);
                     }
                     if (result.notificationTitle != null) paymentNotification(result.notificationTitle, result.notificationBody, result.paymentId);
                     if (result.accepted) scheduleSenderFundedSettlement();
@@ -2205,6 +2207,13 @@ public class BleeMeshService extends Service {
                     BluetoothGattCharacteristic.PERMISSION_READ | BluetoothGattCharacteristic.PERMISSION_WRITE
                 );
                 service.addCharacteristic(identity);
+
+                BluetoothGattCharacteristic profile = new BluetoothGattCharacteristic(
+                    PROFILE_UUID,
+                    BluetoothGattCharacteristic.PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_WRITE,
+                    BluetoothGattCharacteristic.PERMISSION_READ | BluetoothGattCharacteristic.PERMISSION_WRITE
+                );
+                service.addCharacteristic(profile);
 
                 boolean accepted = localServer.addService(service);
                 lastPhaseV2 = accepted ? "server_service_registering" : "server_service_rejected";
@@ -2503,6 +2512,41 @@ public class BleeMeshService extends Service {
                 String wallet = peerWallets.get(link.address);
                 if (wallet != null) lastWalletV2 = wallet;
             }
+            readPeerProfile(gatt);
+        }
+
+        private void readPeerProfile(BluetoothGatt gatt) {
+            ClientLink link = clientLinks.get(gatt);
+            if (link == null) return;
+            try {
+                BluetoothGattService service = gatt.getService(SERVICE_UUID);
+                BluetoothGattCharacteristic profile = service == null ? null : service.getCharacteristic(PROFILE_UUID);
+                if (profile == null || (profile.getProperties() & BluetoothGattCharacteristic.PROPERTY_READ) == 0) {
+                    writeOwnIdentity(gatt);
+                    return;
+                }
+                if (!gatt.readCharacteristic(profile)) writeOwnIdentity(gatt);
+            } catch (Throwable ignored) {
+                writeOwnIdentity(gatt);
+            }
+        }
+
+        private void handlePeerProfile(BluetoothGatt gatt, byte[] value, int status) {
+            ClientLink link = clientLinks.get(gatt);
+            if (link == null) return;
+            try {
+                if (status == BluetoothGatt.GATT_SUCCESS && value != null) {
+                    String expectedWallet = peerWallets.get(link.address);
+                    BleePeerProfile profile = BleePeerProfile.decodeBound(value, expectedWallet);
+                    if (profile != null && !profile.displayName.isEmpty()) {
+                        publishResolvedPeer(link.address, profile.wallet, profile.displayName, link.rssi, System.currentTimeMillis());
+                        lastPhaseV2 = "peer_profile_resolved";
+                    }
+                }
+            } catch (Throwable error) {
+                Log.d(TAG, "BLE peer profile ignored: " + message(error));
+            }
+            // Profile metadata is optional. Never let it block payment delivery.
             writeOwnIdentity(gatt);
         }
 
@@ -2520,8 +2564,30 @@ public class BleeMeshService extends Service {
                 boolean ok;
                 if (Build.VERSION.SDK_INT >= 33) ok = gatt.writeCharacteristic(identity, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == 0;
                 else { identity.setValue(payload); ok = gatt.writeCharacteristic(identity); }
+                if (!ok) writeOwnProfile(gatt);
+            } catch (Throwable ignored) { writeOwnProfile(gatt); }
+        }
+
+        private void writeOwnProfile(BluetoothGatt gatt) {
+            if (gatt == null) return;
+            try {
+                BluetoothGattService service = gatt.getService(SERVICE_UUID);
+                BluetoothGattCharacteristic profile = service == null ? null : service.getCharacteristic(PROFILE_UUID);
+                BleePeerProfile local = BleePeerProfile.local(db);
+                byte[] payload = local == null ? new byte[0] : local.encode();
+                if (profile == null || payload.length == 0
+                    || (profile.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE) == 0) {
+                    sendPacketIfAny(gatt);
+                    return;
+                }
+                profile.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+                boolean ok;
+                if (Build.VERSION.SDK_INT >= 33) ok = gatt.writeCharacteristic(profile, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == 0;
+                else { profile.setValue(payload); ok = gatt.writeCharacteristic(profile); }
                 if (!ok) sendPacketIfAny(gatt);
-            } catch (Throwable ignored) { sendPacketIfAny(gatt); }
+            } catch (Throwable ignored) {
+                sendPacketIfAny(gatt);
+            }
         }
 
         private void sendPacketIfAny(BluetoothGatt gatt) {
@@ -2712,17 +2778,25 @@ public class BleeMeshService extends Service {
 
             @Override public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
                 byte[] value = characteristic == null ? null : characteristic.getValue();
-                if (characteristic != null && IDENTITY_UUID.equals(characteristic.getUuid())) handler.post(() -> handleIdentity(gatt, value, status));
+                if (characteristic == null) return;
+                if (IDENTITY_UUID.equals(characteristic.getUuid())) handler.post(() -> handleIdentity(gatt, value, status));
+                else if (PROFILE_UUID.equals(characteristic.getUuid())) handler.post(() -> handlePeerProfile(gatt, value, status));
             }
 
             @Override public void onCharacteristicRead(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, byte[] value, int status) {
-                if (characteristic != null && IDENTITY_UUID.equals(characteristic.getUuid())) handler.post(() -> handleIdentity(gatt, value, status));
+                if (characteristic == null) return;
+                if (IDENTITY_UUID.equals(characteristic.getUuid())) handler.post(() -> handleIdentity(gatt, value, status));
+                else if (PROFILE_UUID.equals(characteristic.getUuid())) handler.post(() -> handlePeerProfile(gatt, value, status));
             }
 
             @Override public void onCharacteristicWrite(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
                 handler.post(() -> {
                     if (characteristic == null) return;
                     if (IDENTITY_UUID.equals(characteristic.getUuid())) {
+                        writeOwnProfile(gatt);
+                        return;
+                    }
+                    if (PROFILE_UUID.equals(characteristic.getUuid())) {
                         sendPacketIfAny(gatt);
                         return;
                     }
@@ -2769,17 +2843,26 @@ public class BleeMeshService extends Service {
             }
 
             @Override public void onCharacteristicReadRequest(BluetoothDevice device, int requestId, int offset, BluetoothGattCharacteristic characteristic) {
-                if (localServer == null || characteristic == null || !IDENTITY_UUID.equals(characteristic.getUuid())) {
+                if (localServer == null || characteristic == null) {
                     try { if (localServer != null) localServer.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null); } catch (Throwable ignored) {}
                     return;
                 }
                 try {
-                    byte[] identity = localIdentityPayload();
-                    if (identity == null || offset < 0 || offset > identity.length) {
+                    byte[] payload;
+                    if (IDENTITY_UUID.equals(characteristic.getUuid())) {
+                        payload = localIdentityPayload();
+                    } else if (PROFILE_UUID.equals(characteristic.getUuid())) {
+                        BleePeerProfile local = BleePeerProfile.local(db);
+                        payload = local == null ? new byte[0] : local.encode();
+                    } else {
                         localServer.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null);
                         return;
                     }
-                    byte[] slice = Arrays.copyOfRange(identity, offset, identity.length);
+                    if (payload == null || payload.length == 0 || offset < 0 || offset > payload.length) {
+                        localServer.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null);
+                        return;
+                    }
+                    byte[] slice = Arrays.copyOfRange(payload, offset, payload.length);
                     localServer.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, slice);
                 } catch (Throwable ignored) {
                     try { localServer.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null); } catch (Throwable ignored2) {}
@@ -2800,6 +2883,15 @@ public class BleeMeshService extends Service {
                             publishResolvedPeer(address, wallet, "", rssi, System.currentTimeMillis());
                             lastWalletV2 = wallet;
                             identityReadsV2++;
+                            status = BluetoothGatt.GATT_SUCCESS;
+                        }
+                    } else if (characteristic != null && PROFILE_UUID.equals(characteristic.getUuid()) && value != null && device != null) {
+                        String address = device.getAddress();
+                        String expectedWallet = peerWallets.get(address);
+                        BleePeerProfile profile = BleePeerProfile.decodeBound(value, expectedWallet);
+                        if (profile != null) {
+                            int rssi = peerRssi.containsKey(address) ? peerRssi.get(address) : 0;
+                            publishResolvedPeer(address, profile.wallet, profile.displayName, rssi, System.currentTimeMillis());
                             status = BluetoothGatt.GATT_SUCCESS;
                         }
                     } else if (characteristic != null && WRITE_UUID.equals(characteristic.getUuid()) && value != null) {
@@ -3307,7 +3399,8 @@ public class BleeMeshService extends Service {
             BleeMeshDb.ProcessResult result = db.receive(raw, deviceId, publicKey);
             // BLEE_PRODUCTION_RAW_PAYMENT_WAKEUP_V1
             if (result.accepted && (result.ledgerChanged || "PAYMENT_ENVELOPE".equals(result.type))) {
-                notifyLedgerChanged(result.paymentId, result.ledgerChanged ? result.type : "PAYMENT_ENVELOPE_RECEIVED");
+                String eventType = "PAYMENT_ENVELOPE".equals(result.type) ? "PAYMENT_ENVELOPE_RECEIVED" : result.type;
+                notifyLedgerChanged(result.paymentId, eventType);
             }
             if (result.notificationTitle != null) paymentNotification(result.notificationTitle, result.notificationBody, result.paymentId);
             if (result.accepted) scheduleSenderFundedSettlement();
