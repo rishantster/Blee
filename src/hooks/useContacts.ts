@@ -20,7 +20,7 @@ type ContactsPlugin = {
   deleteContact(options: { wallet: string }): Promise<{ deleted: boolean }>;
 };
 
-const BleeMeshContacts = registerPlugin<ContactsPlugin>('BleeMesh');
+const BleeContacts = registerPlugin<ContactsPlugin>('BleeContacts');
 
 function canonicalContact(contact: Partial<BleeContact>): BleeContact | null {
   const wallet = String(contact.wallet || '').trim().toLowerCase();
@@ -76,8 +76,8 @@ export function useContacts() {
     setLoading(true);
     try {
       const [savedResult, candidateResult] = await Promise.all([
-        BleeMeshContacts.listContacts(),
-        BleeMeshContacts.contactCandidates(),
+        BleeContacts.listContacts(),
+        BleeContacts.contactCandidates(),
       ]);
       setSaved((savedResult.contacts || []).map(canonicalContact).filter(Boolean) as BleeContact[]);
       setCandidates((candidateResult.contacts || []).map(canonicalContact).filter(Boolean) as BleeContact[]);
@@ -103,7 +103,7 @@ export function useContacts() {
   const save = useCallback(async (contact: Pick<BleeContact, 'wallet'> & Partial<Pick<BleeContact, 'displayName' | 'avatar'>>) => {
     const wallet = String(contact.wallet || '').trim().toLowerCase();
     if (!/^0x[0-9a-f]{40}$/.test(wallet)) throw new Error('Invalid contact wallet');
-    const result = await BleeMeshContacts.saveContact({
+    const result = await BleeContacts.saveContact({
       wallet,
       displayName: String(contact.displayName || '').trim(),
       avatar: String(contact.avatar || '').trim(),
@@ -115,7 +115,7 @@ export function useContacts() {
   const remove = useCallback(async (wallet: string) => {
     const normalized = wallet.trim().toLowerCase();
     if (!/^0x[0-9a-f]{40}$/.test(normalized)) return false;
-    const result = await BleeMeshContacts.deleteContact({ wallet: normalized });
+    const result = await BleeContacts.deleteContact({ wallet: normalized });
     await refresh();
     return result.deleted;
   }, [refresh]);
