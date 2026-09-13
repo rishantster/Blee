@@ -118,6 +118,7 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-contacts-ui-preclean-v2.py")
     run_stage("apply-blee-stability-freeze-v1.py")
     run_stage("apply-blee-contacts-react-v3.py")
+    run_stage("apply-blee-contacts-react-v3-compilefix.py")
 
     # Android 13+ permission request and high-importance payment channel.
     run_stage("apply-blee-notification-permission-v1.py")
