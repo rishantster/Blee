@@ -109,6 +109,7 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-nearby-speed-profile-v2.py")
     run_stage("apply-blee-activity-identity-v2.py")
     run_stage("apply-blee-contacts-v1.py")
+    run_stage("apply-blee-contacts-sync-v1.py")
     run_stage("apply-blee-notification-permission-v1.py")
 
 
