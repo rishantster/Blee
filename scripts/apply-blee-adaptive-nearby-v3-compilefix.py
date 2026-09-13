@@ -91,12 +91,19 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-payment-notifications.py")
     run_stage("apply-blee-payment-notifications-v2.py")
 
+    # BLEE_GLOBAL_STORE_FORWARD_RELAY_CHAIN_V1
+    # Relay is deliberately last. Adaptive V3 and production payment behavior
+    # are already materialized; this stage only adds the validated transit queue
+    # and replaces the old native relay broadcaster with a no-signer raw-tx path.
+    run_stage("apply-blee-store-forward-relay-v1.py")
+    run_stage("apply-blee-store-forward-relay-v1-compilefix.py")
+
 
 def main() -> None:
     patch_service()
     patch_runtime_copy()
     apply_production_polish()
-    print("Blee adaptive transport v3 compile path + production event/UI/notification polish hardened")
+    print("Blee adaptive transport v3 + production UI/notifications + validated store-and-forward relay hardened")
 
 
 if __name__ == "__main__":
