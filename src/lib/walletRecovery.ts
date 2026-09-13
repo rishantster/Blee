@@ -1,6 +1,6 @@
-import { registerPlugin } from "@capacitor/core";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Hex } from "viem";
+import { BleeStore } from './bleeStore';
 
 type StoredVault = {
   version: number;
@@ -12,13 +12,6 @@ type StoredVault = {
   createdAt: number;
 };
 
-type StorePlugin = {
-  init(): Promise<{ ready: boolean }>;
-  getValue(options: { key: string }): Promise<{ value?: string | null }>;
-  setValue(options: { key: string; value: string }): Promise<void>;
-};
-
-const BleeStore = registerPlugin<StorePlugin>("BleeStore");
 const VAULT_KEY = "wallet.vault.v2";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -56,7 +49,6 @@ function validateImportedVault(vault: StoredVault) {
     throw new Error("Wallet backup timestamp is invalid");
   }
 }
-
 
 function cloneBuffer(bytes: Uint8Array): ArrayBuffer {
   const out = new Uint8Array(bytes.byteLength);
