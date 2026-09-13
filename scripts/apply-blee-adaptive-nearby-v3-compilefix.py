@@ -88,46 +88,49 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-payment-notifications.py")
     run_stage("apply-blee-payment-notifications-v2.py")
 
-    # Wallet-canonical peer presence and self-healing remain the stable base.
+    # Wallet-canonical peer presence and self-healing remain the proven base.
     run_stage("apply-blee-nearby-stability-v1.py")
     run_stage("apply-blee-nearby-stability-heartbeat-v1.py")
     run_stage("apply-blee-nearby-stability-hook-v1.py")
 
-    # Send QR scanner base + placement/compile guards. Resume builds may already
-    # contain the final v2 icon class, so normalize that one control back to the
-    # base contract before v1 verifies it. The later v2 stage reconstructs the
-    # final icon-only control from zero.
+    # Send QR scanner base + placement/compile guards. Resume compatibility is
+    # harmless on a clean build and makes the stage idempotent if rerun.
     run_stage("apply-blee-qr-resume-compat-v1.py")
     run_stage("apply-blee-qr-scanner-v1.py")
     run_stage("apply-blee-qr-scanner-placement-fix.py")
     run_stage("apply-blee-qr-scanner-compilefix.py")
-
-    # BLEE_PRODUCTION_STABILITY_V4
-    # Keep only isolated, regression-bounded additions after the proven payment
-    # and transport stack. No DOM-injected product features survive this stage.
     run_stage("apply-blee-qr-ux-v2.py")
+
+    # Full refresh stays in-process: no WebView reload and no vault/session loss.
     run_stage("apply-blee-refresh-preclean-v2.py")
     run_stage("apply-blee-pull-refresh-v1.py")
+
+    # Preserve the last physically proven BLE/Nearby timing contract while
+    # keeping live profile/name/avatar synchronization and Activity backfill.
     run_stage("apply-blee-nearby-speed-profile-v2.py")
     run_stage("apply-blee-activity-identity-v2.py")
 
-    # Contacts remain durable backend data/API only. Do not install the previous
-    # mutation-observer Activity/Home UI. A deterministic preclean removes that
-    # exact legacy block from partially patched resume trees before the freeze.
+    # Contacts use durable SQLite/native APIs. The legacy MutationObserver UI is
+    # never installed. Any stale legacy block is deterministically removed, then
+    # the feature is rendered inside the real React Activity screen.
     run_stage("apply-blee-contacts-backend-only-v2.py")
     run_stage("apply-blee-contacts-sync-v1.py")
     run_stage("apply-blee-contacts-ui-preclean-v2.py")
     run_stage("apply-blee-stability-freeze-v1.py")
+    run_stage("apply-blee-contacts-react-v3.py")
 
+    # Android 13+ permission request and high-importance payment channel.
     run_stage("apply-blee-notification-permission-v1.py")
-    run_stage("verify-production-stability-v4.py")
+
+    # One final source-of-truth gate for the production build.
+    run_stage("verify-production-final-v5.py")
 
 
 def main() -> None:
     patch_service()
     patch_runtime_copy()
     apply_production_polish()
-    print("Blee adaptive transport v3 + production stability v4 frozen")
+    print("Blee adaptive transport v3 + Blee 2.7 production stack finalized")
 
 
 if __name__ == "__main__":
