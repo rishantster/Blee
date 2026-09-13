@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import hashlib
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,9 +23,10 @@ def require_all(rel: str, markers: tuple[str, ...]) -> str:
 build = require_all(
     "build-blee.command",
     (
-        "CANONICAL_BLEE_BUILDER_V2",
-        'APP_VERSION="2.6.0"',
+        "CANONICAL_BLEE_BUILDER_V3",
+        'APP_VERSION="2.7.0"',
         'FINAL_APK="$ROOT/dist/Blee-${APP_VERSION}.apk"',
+        'rm -rf "$ROOT/android" "$ROOT/.next" "$ROOT/out"',
         "command -v sdkmanager",
         'if [ "$(uname -s)" != "Darwin" ]',
         'Darwin) ADOPTIUM_OS="mac"',
@@ -46,15 +46,20 @@ build = require_all(
         'apply-blee-runtime-reliability.py',
         'apply-blee-ble-transport-v4.py',
         'apply-blee-ble-diagnostics.py',
+        'apply-blee-adaptive-nearby-v3-compilefix.py',
         'verify-blee-mesh-v2.py',
+        'verify-production-final-v5.py',
+        'verify-apk-integrity.sh',
         'verify-canonical-build.py',
+        'versionCode 17',
+        'versionName "2.7.0"',
         'rm -f "$ROOT/dist"/*.apk',
     ),
 )
 
 architecture = require_file("ARCHITECTURE.md")
-if "dist/Blee-2.6.0.apk" not in architecture:
-    raise SystemExit("Canonical architecture does not declare the versioned Blee APK")
+if "dist/Blee-2.7.0.apk" not in architecture:
+    raise SystemExit("Canonical architecture does not declare the Blee 2.7 APK")
 if "source-of-truth" not in architecture or "main" not in architecture:
     raise SystemExit("Canonical architecture does not declare main as source of truth")
 if not any(
@@ -72,10 +77,12 @@ if "Fingerprint unlock is optional" not in ui:
     raise SystemExit("UI contract is missing optional fingerprint unlock")
 if "fingerprint hardware" not in ui.lower() or "enrolled" not in ui.lower():
     raise SystemExit("UI contract is missing fingerprint capability gating")
-if "dist/Blee-2.6.0.apk" not in ui:
-    raise SystemExit("UI contract does not pin the canonical APK name")
+if "dist/Blee-2.7.0.apk" not in ui:
+    raise SystemExit("UI contract does not pin the Blee 2.7 APK name")
 if "standalone Blee logo" not in ui or "cold-launch" not in ui:
     raise SystemExit("UI contract does not pin the standalone Blee launch identity")
+if "Filter by contact" not in ui or "pull-to-refresh" not in ui:
+    raise SystemExit("UI contract is missing Blee 2.7 Activity/refresh behavior")
 
 logo = ROOT / "brand-assets/blee-logo.svg"
 if not logo.is_file():
@@ -225,6 +232,34 @@ runtime = require_all(
 if "<BleeApp key=" in runtime:
     raise SystemExit("Canonical runtime still force-remounts BleeApp on focus/ledger changes")
 
+require_all(
+    "scripts/apply-blee-adaptive-nearby-v3-compilefix.py",
+    (
+        'apply-blee-contacts-react-v4.py',
+        'apply-blee-pull-refresh-v1.py',
+        'apply-blee-notification-permission-v1.py',
+        'verify-production-final-v5.py',
+    ),
+)
+require_all(
+    "scripts/apply-blee-contacts-react-v4.py",
+    (
+        "BLEE_CONTACTS_REACT_V4",
+        "Filter by contact",
+        "Save contact",
+        "<BottomNav active={activeTab} onChange={selectTab}/>",
+    ),
+)
+require_all(
+    "scripts/verify-apk-integrity.sh",
+    (
+        "Blee 2.7 production contract",
+        "native contacts persistence API",
+        "React Activity contact filter",
+        "legacy DOM-injected Activity controls",
+    ),
+)
+
 for rel in ("build-blee-macos.command", "build-blee-professional.command"):
     path = ROOT / rel
     if not path.exists():
@@ -233,7 +268,7 @@ for rel in ("build-blee-macos.command", "build-blee-professional.command"):
     if 'exec bash "$ROOT/build-blee.command"' not in text:
         raise SystemExit(f"Legacy builder still has independent logic: {rel}")
 
-if 'versionCode 16' not in build or 'versionName "2.6.0"' not in build:
-    raise SystemExit("Android and artifact versions are not aligned at Blee 2.6.0")
+if 'versionCode 17' not in build or 'versionName "2.7.0"' not in build:
+    raise SystemExit("Android and artifact versions are not aligned at Blee 2.7.0")
 
-print("Canonical Blee repository contract verified.")
+print("Canonical Blee 2.7 repository contract verified.")
