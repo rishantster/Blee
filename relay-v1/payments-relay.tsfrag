@@ -1,0 +1,219 @@
+// BLEE_GLOBAL_STORE_FORWARD_RELAY_WEB_V1
+export type RelayEnvelopeValidationProof = {
+  relayProtocol: 'blee-relay';
+  relayVersion: 1;
+  messageId: string;
+  paymentId: string;
+  txHash: Hex;
+  sender: Address;
+  recipient: Address;
+  authorizationNonce: Hex;
+  tokenContract: Address;
+  chainId: number;
+};
+
+export type RelayEnvelopeValidationResult =
+  | { valid: true; proof: RelayEnvelopeValidationProof }
+  | { valid: false; reason: string; messageId?: string };
+
+export type RelayBroadcastResult =
+  | { status: 'BROADCASTED'; txHash: Hex }
+  | { status: 'ALREADY_KNOWN'; txHash: Hex }
+  | { status: 'ALREADY_SETTLED'; txHash?: Hex }
+  | { status: 'NEEDS_SENDER_REFRESH'; reason: string }
+  | { status: 'RETRY_LATER'; reason: string }
+  | { status: 'INVALID'; reason: string }
+  | { status: 'EXPIRED'; reason: string };
+
+const RELAY_MAX_PACKET_BYTES = 128 * 1024;
+const RELAY_MAX_RAW_TX_HEX_CHARS = 128 * 1024 * 2 + 2;
+const RELAY_MAX_HOPS = 16;
+
+function relayReason(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.length > 480 ? text.slice(0, 480) : text;
+}
+
+function relayAddress(value: unknown): value is Address {
+  return typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value);
+}
+
+function relayHex32(value: unknown): value is Hex {
+  return typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value);
+}
+
+function relaySame(a: unknown, b: unknown) {
+  return String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase();
+}
+
+function relayBigIntEqual(a: unknown, b: unknown) {
+  try { return BigInt(String(a)) === BigInt(String(b)); }
+  catch { return false; }
+}
+
+function relayBroadcastFrom(auth: TransferAuthorization): SenderFundedBroadcast | null {
+  const broadcast = (auth as AuthorizationWithBroadcast).broadcast;
+  return broadcast?.mode === 'SENDER_FUNDED_RAW_TX' ? broadcast : null;
+}
+
+async function validateSenderFundedAuthorizationBundle(auth: TransferAuthorization) {
+  if (!(await verifyAuthorization(auth))) throw new Error('invalid or expired EIP-3009 authorization');
+  const broadcast = relayBroadcastFrom(auth);
+  if (!broadcast) throw new Error('sender-funded raw transaction missing');
+  if (broadcast.chainId !== arcTestnet.id) throw new Error('relay chain mismatch');
+  if (!relayHex32(broadcast.txHash)) throw new Error('invalid raw transaction hash');
+  if (!/^0x[0-9a-fA-F]+$/.test(broadcast.rawTransaction) || broadcast.rawTransaction.length > RELAY_MAX_RAW_TX_HEX_CHARS) {
+    throw new Error('invalid raw transaction bytes');
+  }
+  if (keccak256(broadcast.rawTransaction).toLowerCase() !== broadcast.txHash.toLowerCase()) {
+    throw new Error('raw transaction hash mismatch');
+  }
+
+  const tx = parseTransaction(broadcast.rawTransaction);
+  if (tx.type !== 'eip1559') throw new Error('relay transaction must be EIP-1559');
+  if (Number(tx.chainId ?? -1) !== arcTestnet.id) throw new Error('raw transaction chain mismatch');
+  if (!tx.to || tx.to.toLowerCase() !== ARC_USDC.toLowerCase()) throw new Error('raw transaction token contract mismatch');
+  if ((tx.value ?? 0n) !== 0n) throw new Error('raw transaction must not transfer native value');
+  if (Number(tx.nonce ?? -1) !== broadcast.txNonce) throw new Error('raw transaction nonce mismatch');
+  if (tx.gas !== undefined && BigInt(broadcast.gasLimit) !== tx.gas) throw new Error('raw transaction gas limit mismatch');
+  if (tx.maxFeePerGas !== undefined && BigInt(broadcast.maxFeePerGas) !== tx.maxFeePerGas) throw new Error('raw transaction max fee mismatch');
+  if (tx.maxPriorityFeePerGas !== undefined && BigInt(broadcast.maxPriorityFeePerGas) !== tx.maxPriorityFeePerGas) {
+    throw new Error('raw transaction priority fee mismatch');
+  }
+
+  const recovered = await recoverTransactionAddress({ serializedTransaction: broadcast.rawTransaction });
+  if (recovered.toLowerCase() !== auth.from.toLowerCase()) throw new Error('raw transaction signer mismatch');
+
+  const decoded = decodeFunctionData({ abi: usdcAbi, data: (tx.data ?? '0x') as Hex });
+  if (decoded.functionName !== 'transferWithAuthorization' || !decoded.args || decoded.args.length !== 7) {
+    throw new Error('raw transaction is not transferWithAuthorization');
+  }
+  const args = decoded.args as readonly [Address, Address, bigint, bigint, bigint, Hex, Hex];
+  if (!relaySame(args[0], auth.from)) throw new Error('calldata sender mismatch');
+  if (!relaySame(args[1], auth.to)) throw new Error('calldata recipient mismatch');
+  if (!relayBigIntEqual(args[2], auth.value)) throw new Error('calldata amount mismatch');
+  if (!relayBigIntEqual(args[3], auth.validAfter)) throw new Error('calldata validAfter mismatch');
+  if (!relayBigIntEqual(args[4], auth.validBefore)) throw new Error('calldata validBefore mismatch');
+  if (!relaySame(args[5], auth.nonce)) throw new Error('calldata authorization nonce mismatch');
+  if (!relaySame(args[6], auth.signature)) throw new Error('calldata authorization signature mismatch');
+
+  return broadcast;
+}
+
+export async function validateSenderFundedRelayEnvelope(rawPacket: string): Promise<RelayEnvelopeValidationResult> {
+  let messageId = '';
+  try {
+    if (typeof rawPacket !== 'string' || new TextEncoder().encode(rawPacket).length > RELAY_MAX_PACKET_BYTES) {
+      return { valid: false, reason: 'relay packet too large' };
+    }
+    const packet = JSON.parse(rawPacket) as Record<string, any>;
+    messageId = String(packet.messageId || '');
+    if (packet.version !== 2 || packet.type !== 'PAYMENT_ENVELOPE' || !messageId) {
+      return { valid: false, reason: 'unsupported relay packet', messageId };
+    }
+    const now = Date.now();
+    const createdAt = Number(packet.createdAt || 0);
+    const expiresAt = Number(packet.expiresAt || 0);
+    const hopCount = Number(packet.hopCount ?? -1);
+    const hopLimit = Number(packet.hopLimit ?? -1);
+    const copyBudget = Number(packet.copyBudget ?? -1);
+    if (!Number.isSafeInteger(createdAt) || createdAt <= 0 || createdAt > now + 5 * 60_000) {
+      return { valid: false, reason: 'invalid relay creation time', messageId };
+    }
+    if (!Number.isSafeInteger(expiresAt) || expiresAt <= now) return { valid: false, reason: 'relay authorization expired', messageId };
+    if (!Number.isInteger(hopCount) || !Number.isInteger(hopLimit) || !Number.isInteger(copyBudget)
+      || hopCount < 0 || hopLimit < 1 || hopLimit > RELAY_MAX_HOPS || hopCount > hopLimit
+      || copyBudget < 1 || copyBudget > RELAY_MAX_HOPS) {
+      return { valid: false, reason: 'invalid relay routing metadata', messageId };
+    }
+
+    const payment = JSON.parse(String(packet.payload || '{}')) as Record<string, any>;
+    const auth = (payment.authorization ?? payment.auth) as TransferAuthorization | undefined;
+    const paymentId = String(payment.id || packet.paymentId || '');
+    if (!paymentId || !auth || !relayAddress(auth.from) || !relayAddress(auth.to) || !relayHex32(auth.nonce)) {
+      return { valid: false, reason: 'invalid payment authorization payload', messageId };
+    }
+    if (String(packet.paymentId || '') && String(packet.paymentId) !== paymentId) {
+      return { valid: false, reason: 'payment id mismatch', messageId };
+    }
+    if (!relaySame(packet.destinationWallet, auth.to)) return { valid: false, reason: 'relay destination mismatch', messageId };
+    const authExpiry = Number(BigInt(auth.validBefore) * 1000n);
+    if (!Number.isSafeInteger(authExpiry) || authExpiry <= now || expiresAt > authExpiry + 1000) {
+      return { valid: false, reason: 'relay expiry exceeds authorization validity', messageId };
+    }
+
+    const broadcast = await validateSenderFundedAuthorizationBundle(auth);
+    return {
+      valid: true,
+      proof: {
+        relayProtocol: 'blee-relay',
+        relayVersion: 1,
+        messageId,
+        paymentId,
+        txHash: broadcast.txHash,
+        sender: auth.from,
+        recipient: auth.to,
+        authorizationNonce: auth.nonce,
+        tokenContract: ARC_USDC,
+        chainId: arcTestnet.id,
+      },
+    };
+  } catch (error) {
+    return { valid: false, reason: relayReason(error), messageId: messageId || undefined };
+  }
+}
+
+export function classifyRelayBroadcastError(error: unknown): 'ALREADY_KNOWN' | 'NONCE_TOO_LOW' | 'RETRY_LATER' | 'INVALID' {
+  const message = relayReason(error).toLowerCase();
+  if (message.includes('already known') || message.includes('known transaction') || message.includes('already imported')) return 'ALREADY_KNOWN';
+  if (message.includes('nonce too low')) return 'NONCE_TOO_LOW';
+  if (
+    message.includes('timeout') || message.includes('timed out') || message.includes('network')
+    || message.includes('dns') || message.includes('gateway') || message.includes('rate limit')
+    || message.includes('429') || message.includes('temporar') || message.includes('unavailable')
+    || message.includes('connection') || message.includes('base fee') || message.includes('underpriced')
+  ) return 'RETRY_LATER';
+  return 'INVALID';
+}
+
+/**
+ * Community relay broadcaster. Intentionally has no PrivateKeyAccount argument,
+ * no WalletClient, and no writeContract fallback. A relay either submits the
+ * exact sender-signed bytes or stores/retries them later.
+ */
+export async function broadcastSenderFundedRawTransaction(auth: TransferAuthorization): Promise<RelayBroadcastResult> {
+  try {
+    if (isAuthorizationExpired(auth)) return { status: 'EXPIRED', reason: 'authorization expired' };
+    const broadcast = await validateSenderFundedAuthorizationBundle(auth);
+    if (await authorizationUsed(auth.from, auth.nonce)) {
+      try {
+        const receipt = await publicClient.getTransactionReceipt({ hash: broadcast.txHash });
+        if (receipt.status === 'success') return { status: 'ALREADY_SETTLED', txHash: broadcast.txHash };
+      } catch {}
+      return { status: 'ALREADY_SETTLED' };
+    }
+
+    try {
+      const txHash = await publicClient.sendRawTransaction({ serializedTransaction: broadcast.rawTransaction });
+      if (txHash.toLowerCase() !== broadcast.txHash.toLowerCase()) return { status: 'INVALID', reason: 'RPC returned a different transaction hash' };
+      return { status: 'BROADCASTED', txHash };
+    } catch (error) {
+      const classification = classifyRelayBroadcastError(error);
+      if (classification === 'ALREADY_KNOWN') return { status: 'ALREADY_KNOWN', txHash: broadcast.txHash };
+      if (classification === 'NONCE_TOO_LOW') {
+        try {
+          const receipt = await publicClient.getTransactionReceipt({ hash: broadcast.txHash });
+          if (receipt.status === 'success') return { status: 'ALREADY_SETTLED', txHash: broadcast.txHash };
+        } catch {}
+        if (await authorizationUsed(auth.from, auth.nonce)) return { status: 'ALREADY_SETTLED' };
+        return { status: 'NEEDS_SENDER_REFRESH', reason: 'sender transaction nonce was consumed before this raw transaction settled' };
+      }
+      if (classification === 'RETRY_LATER') return { status: 'RETRY_LATER', reason: relayReason(error) };
+      return { status: 'INVALID', reason: relayReason(error) };
+    }
+  } catch (error) {
+    return isAuthorizationExpired(auth)
+      ? { status: 'EXPIRED', reason: relayReason(error) }
+      : { status: 'INVALID', reason: relayReason(error) };
+  }
+}
