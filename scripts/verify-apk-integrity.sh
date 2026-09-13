@@ -65,11 +65,10 @@ require_dex 'IntentIntegrator' 'ZXing scanner dependency'
 require_dex 'SENDER_FUNDED_RAW_TX' 'sender-funded settlement contract'
 require_dex 'PAYMENT_ENVELOPE' 'offline payment envelope contract'
 
-require_web 'Filter by contact' 'React Activity contact filter'
-require_web 'Manage contacts' 'React contact management UI'
-require_web 'Save contact' 'React save-contact flow'
 require_web 'blee-recipient-qr-icon' 'in-field QR scanner control'
 require_web 'blee-refresh-splash' 'Blee refresh animation'
+forbid_web 'activity-contact-filter' 'experimental React contact filter'
+forbid_web 'Manage contacts' 'experimental React contact management UI'
 forbid_web 'blee-activity-contact-tools' 'legacy DOM-injected Activity controls'
 forbid_web 'blee-activity-contacts-button' 'legacy DOM contacts button'
 
