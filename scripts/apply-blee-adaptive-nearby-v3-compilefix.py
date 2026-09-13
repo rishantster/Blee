@@ -88,6 +88,9 @@ def apply_production_polish() -> None:
     # notification stage runs; the latter then sees its DB marker and skips its
     # legacy pre-atomic anchor path.
     run_stage("apply-blee-payment-notifications-dbfix.py")
+    # The production service may already have lifecycle logic in onStartCommand.
+    # Inject notification handling into that method without replacing its body.
+    run_stage("apply-blee-payment-notifications-servicecompat.py")
     run_stage("apply-blee-payment-notifications.py")
     run_stage("apply-blee-payment-notifications-v2.py")
     # BLEE_NEARBY_STABILITY_CHAIN_V1
