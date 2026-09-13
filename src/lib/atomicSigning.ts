@@ -1,4 +1,4 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
 import {
   createPublicClient,
   encodeFunctionData,
@@ -20,6 +20,7 @@ import {
   transferAuthorizationTypes,
   usdcAbi,
 } from './arc';
+import { BleeStore } from './bleeStore';
 import type { TransferAuthorization } from '../types/domain';
 
 const CLOCK_SKEW_SECONDS = 60;
@@ -28,7 +29,6 @@ const OFFLINE_GAS_LIMIT = 250_000n;
 const PROFILE_VERSION = 2;
 const FRESH_FEE_WINDOW_MS = 6 * 60 * 60 * 1000;
 const MAX_OFFLINE_PROFILE_AGE_MS = 24 * 60 * 60 * 1000;
-// BLEE_OFFLINE_SETTLEMENT_PROFILE_REQUIRED_V1
 
 export type SenderFundedBroadcast = {
   mode: 'SENDER_FUNDED_RAW_TX';
@@ -65,32 +65,6 @@ type SettlementProfile = {
   syncedAt: number;
 };
 
-type StorePlugin = {
-  init(): Promise<{ ready: boolean }>;
-  getValue(options: { key: string }): Promise<{ value?: string | null }>;
-  setValue(options: { key: string; value: string }): Promise<void>;
-  reserveSigningIntent(options: {
-    signingId: string;
-    sessionId: string;
-    chainId: number | string;
-    sender: string;
-    recipient: string;
-    value: string;
-    authorizationNonce: string;
-    expiresAt: number | string;
-    minTxNonce?: number | string;
-  }): Promise<{ reserved: boolean; txNonce?: number | null }>;
-  finalizeSigningIntent(options: {
-    signingId: string;
-    sessionId: string;
-    authorization: string;
-    broadcast: string;
-    bundleHash: string;
-  }): Promise<{ ready: boolean }>;
-  abortSigningIntent(options: { signingId: string; sessionId: string; reason?: string }): Promise<void>;
-};
-
-const BleeStore = registerPlugin<StorePlugin>('BleeStore');
 const publicClient = createPublicClient({ chain: arcTestnet, transport: http(ARC_RPC) });
 const SIGNING_SESSION_ID = makeSessionId();
 let signingQueue: Promise<unknown> = Promise.resolve();
@@ -174,8 +148,6 @@ export async function refreshAtomicSigningProfile(address: Address): Promise<boo
       chainId: arcTestnet.id,
       address: address.toLowerCase(),
       chainNonce,
-      // Never move the cache backwards locally. The native signing-intent table
-      // remains the authoritative nonce reservation source across crashes.
       nextNonce: Math.max(chainNonce, existing?.nextNonce ?? chainNonce),
       maxFeePerGas: (fees.maxFeePerGas ?? await publicClient.getGasPrice()).toString(),
       maxPriorityFeePerGas: (fees.maxPriorityFeePerGas ?? 1n).toString(),
@@ -233,10 +205,6 @@ async function createAtomicAuthorizationInner(
 
   const id = signingId(account.address, authorizationNonce);
   const nativeReady = await ensureNativeStore();
-
-  // Production Blee fails closed. A payment is not created unless its signed
-  // authorization and sender-funded raw settlement transaction can both be
-  // durably stored before any nearby transmission begins.
   if (!nativeReady) {
     throw new Error('Blee secure payment storage is unavailable. Reopen the Android app before sending.');
   }
@@ -331,9 +299,6 @@ async function createAtomicAuthorizationInner(
     const atomicSigning = { ...unsignedMarker, bundleHash };
     const complete: AtomicAuthorization = { ...auth, broadcast, atomicSigning };
 
-    // This native transaction is the second atomic boundary. If it does not
-    // commit, no signed bundle is returned to the caller and therefore nothing
-    // can enter the payment journal or mesh outbox.
     const finalized = await BleeStore.finalizeSigningIntent({
       signingId: id,
       sessionId: SIGNING_SESSION_ID,
@@ -351,8 +316,6 @@ async function createAtomicAuthorizationInner(
     return complete;
   } catch (error) {
     if (reserved) {
-      // abortSigningIntent only changes rows still in SIGNING. If finalize
-      // committed but the bridge response was lost, READY cannot be rolled back.
       try {
         await BleeStore.abortSigningIntent({
           signingId: id,
@@ -372,5 +335,3 @@ export function createAtomicAuthorization(
 ): Promise<AtomicAuthorization> {
   return serialize(() => createAtomicAuthorizationInner(account, to, amount));
 }
-
-// BLEE_ATOMIC_BRIDGE_STRING_NUMERICS
