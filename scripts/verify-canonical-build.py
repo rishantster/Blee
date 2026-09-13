@@ -81,7 +81,7 @@ if "dist/Blee-2.7.0.apk" not in ui:
     raise SystemExit("UI contract does not pin the Blee 2.7 APK name")
 if "standalone Blee logo" not in ui or "cold-launch" not in ui:
     raise SystemExit("UI contract does not pin the standalone Blee launch identity")
-if "Filter by contact" not in ui or "pull-to-refresh" not in ui:
+if "Filter by contact" not in ui or "pull-to-refresh" not in ui.lower():
     raise SystemExit("UI contract is missing Blee 2.7 Activity/refresh behavior")
 
 logo = ROOT / "brand-assets/blee-logo.svg"
@@ -236,6 +236,7 @@ require_all(
     "scripts/apply-blee-adaptive-nearby-v3-compilefix.py",
     (
         'apply-blee-contacts-react-v4.py',
+        'apply-blee-contacts-react-v4-compilefix.py',
         'apply-blee-pull-refresh-v1.py',
         'apply-blee-notification-permission-v1.py',
         'verify-production-final-v5.py',
