@@ -1,0 +1,9 @@
+{
+	"appId": "com.blee.payments",
+	"appName": "Blee",
+	"webDir": "out",
+	"android": {
+		"backgroundColor": "#f4f4f2",
+		"allowMixedContent": false
+	}
+}

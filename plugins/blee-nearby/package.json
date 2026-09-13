@@ -1,0 +1,11 @@
+{
+  "name": "@blee/nearby",
+  "version": "1.0.0",
+  "description": "Blee native Android nearby payment transport",
+  "main": "dist/plugin.cjs.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "files": ["android/src/main/", "android/build.gradle", "dist/"],
+  "peerDependencies": { "@capacitor/core": ">=8.0.0" },
+  "capacitor": { "android": { "src": "android" } }
+}

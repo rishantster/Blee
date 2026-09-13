@@ -1,0 +1,64 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:1:1-12:12
+INJECTED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:1:1-12:12
+	package
+		INJECTED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml
+	xmlns:android
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:1:11-69
+uses-permission#android.permission.BLUETOOTH
+ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:2:5-95
+	android:maxSdkVersion
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:2:66-92
+	android:name
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:2:22-65
+uses-permission#android.permission.BLUETOOTH_ADMIN
+ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:3:5-101
+	android:maxSdkVersion
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:3:72-98
+	android:name
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:3:22-71
+uses-permission#android.permission.ACCESS_FINE_LOCATION
+ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:4:5-106
+	android:maxSdkVersion
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:4:77-103
+	android:name
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:4:22-76
+uses-permission#android.permission.BLUETOOTH_SCAN
+ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:5:5-120
+	android:usesPermissionFlags
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:5:71-117
+	android:name
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:5:22-70
+uses-permission#android.permission.BLUETOOTH_CONNECT
+ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:6:5-76
+	android:name
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:6:22-73
+uses-permission#android.permission.BLUETOOTH_ADVERTISE
+ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:7:5-78
+	android:name
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:7:22-75
+uses-permission#android.permission.INTERNET
+ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:8:5-67
+	android:name
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:8:22-64
+uses-permission#android.permission.ACCESS_NETWORK_STATE
+ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:9:5-79
+	android:name
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:9:22-76
+uses-permission#android.permission.ACCESS_WIFI_STATE
+ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:10:5-76
+	android:name
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:10:22-73
+uses-permission#android.permission.CHANGE_WIFI_MULTICAST_STATE
+ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:11:5-86
+	android:name
+		ADDED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml:11:22-83
+uses-sdk
+INJECTED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml
+INJECTED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml
+	android:targetSdkVersion
+		INJECTED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from /Users/rish/Desktop/Blee-sanity/plugins/blee-nearby/android/src/main/AndroidManifest.xml

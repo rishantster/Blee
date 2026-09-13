@@ -1,0 +1,10 @@
+[
+	{
+		"pkg": "@blee/store",
+		"classpath": "com.blee.store.BleeStorePlugin"
+	},
+	{
+		"pkg": "@blee/nearby",
+		"classpath": "com.blee.nearby.BleeNearbyPlugin"
+	}
+]

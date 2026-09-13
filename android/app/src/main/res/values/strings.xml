@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Blee</string>
+    <string name="title_activity_main">Blee</string>
+    <string name="package_name">com.blee.payments</string>
+    <string name="custom_url_scheme">com.blee.payments</string>
+</resources>
