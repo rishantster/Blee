@@ -82,7 +82,7 @@ if "dist/Blee-2.7.0.apk" not in ui:
 if "standalone Blee logo" not in ui or "cold-launch" not in ui:
     raise SystemExit("UI contract does not pin the standalone Blee launch identity")
 if "pull-to-refresh" not in ui.lower() or "No experimental Contacts" not in ui:
-    raise SystemExit("UI contract is missing stable hackathon Activity/refresh behavior")
+    raise SystemExit("UI contract is missing stable Activity/refresh behavior")
 
 logo = ROOT / "brand-assets/blee-logo.svg"
 if not logo.is_file():
@@ -248,7 +248,7 @@ chain = require_all(
 )
 for forbidden in ('apply-blee-contacts-react-v4.py', 'apply-blee-qr-final-normalize-v3.py'):
     if forbidden in chain:
-        raise SystemExit(f"Unstable hackathon stage is still in production chain: {forbidden}")
+        raise SystemExit(f"Unstable stage is still in production chain: {forbidden}")
 
 require_all(
     "scripts/apply-blee-contacts-backend-only-v2.py",
@@ -279,4 +279,4 @@ for rel in ("build-blee-macos.command", "build-blee-professional.command"):
 if 'versionCode 17' not in build or 'versionName "2.7.0"' not in build:
     raise SystemExit("Android and artifact versions are not aligned at Blee 2.7.0")
 
-print("Canonical Blee 2.7 stable hackathon repository contract verified.")
+print("Canonical Blee 2.7 production repository contract verified.")
