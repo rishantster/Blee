@@ -108,10 +108,14 @@ def main() -> None:
         fail("materialized BleeApp.tsx missing")
     text = APP.read_text()
 
-    # The financial/scan implementation is the contract. Do not make the final
-    # production build depend on a JSX comment marker surviving later React
-    # rewrites. We reconstruct the final Recipient field structurally below.
-    for marker in ("BLEE_SEND_QR_SCANNER_V1", "BleeQrScanner.scan()", "parseBleeRecipientQr"):
+    # Only durable module-level QR plumbing must exist before normalization.
+    # The rendered button/call is intentionally allowed to be absent because
+    # this stage exists to reconstruct it after later React structural patches.
+    for marker in (
+        "BLEE_SEND_QR_SCANNER_V1",
+        "registerPlugin<BleeQrScannerPlugin>('BleeQrScanner')",
+        "parseBleeRecipientQr",
+    ):
         if marker not in text:
             fail(f"QR implementation missing {marker}")
 
@@ -177,8 +181,12 @@ def main() -> None:
         fail("visible Scan QR text survived")
     if recipient_region.count('BLEE_QR_INPUT_SHELL_V2') != 1:
         fail("final Recipient QR input shell marker is missing or duplicated")
+    if "BleeQrScanner.scan()" not in recipient_region:
+        fail("final Recipient QR control is not wired to the native scanner")
+    if "parseBleeRecipientQr(result.value)" not in recipient_region:
+        fail("final Recipient QR control does not validate scanned recipient data")
 
-    print("VERIFIED: final React tree contains exactly one QR icon, inside Send Recipient only")
+    print("VERIFIED: final React tree contains exactly one native QR icon, inside Send Recipient only")
 
 
 if __name__ == "__main__":
