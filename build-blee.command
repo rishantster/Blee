@@ -239,6 +239,8 @@ python3 scripts/apply-blee-ble-diagnostics.py
 python3 scripts/apply-blee-bitchat-reliability.py
 python3 scripts/apply-blee-gatt-interop.py
 python3 scripts/apply-blee-transport-core-v2.py
+python3 scripts/apply-blee-adaptive-nearby-v3.py
+python3 scripts/apply-blee-adaptive-nearby-v3-compilefix.py
 
 npm run check
 npm run build
