@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 from pathlib import Path
 import runpy
 
@@ -71,6 +72,15 @@ def patch_runtime_copy() -> None:
     path.write_text(text)
 
 
+def patch_release_version() -> None:
+    package = ROOT / "package.json"
+    if not package.is_file():
+        raise SystemExit("Blee 2.7 release version: package.json missing")
+    data = json.loads(package.read_text())
+    data["version"] = "2.7.0"
+    package.write_text(json.dumps(data, indent=2) + "\n")
+
+
 def run_stage(script_name: str) -> None:
     script = ROOT / "scripts" / script_name
     if not script.is_file():
@@ -119,6 +129,8 @@ def apply_production_polish() -> None:
 
     # Android 13+ permission request and high-importance payment channel.
     run_stage("apply-blee-notification-permission-v1.py")
+
+    patch_release_version()
 
     # One final source-of-truth gate for the production build.
     run_stage("verify-production-final-v5.py")
