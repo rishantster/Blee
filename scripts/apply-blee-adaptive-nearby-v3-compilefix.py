@@ -98,13 +98,17 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-qr-scanner-placement-fix.py")
     run_stage("apply-blee-qr-scanner-compilefix.py")
 
-    # BLEE_PRODUCTION_STABILIZATION_V2
+    # BLEE_PRODUCTION_STABILIZATION_V3
     # Final isolated UX/reliability stages. They must not alter signing,
     # authorization, sender-funded settlement, or Adaptive packet semantics.
     run_stage("apply-blee-qr-ux-v2.py")
+    # Clean a generated tree that may still contain the old reload-based patch
+    # before installing the session-preserving refresh implementation.
+    run_stage("apply-blee-refresh-preclean-v2.py")
     run_stage("apply-blee-pull-refresh-v1.py")
     run_stage("apply-blee-nearby-speed-profile-v2.py")
     run_stage("apply-blee-activity-identity-v2.py")
+    run_stage("apply-blee-contacts-v1.py")
     run_stage("apply-blee-notification-permission-v1.py")
 
 
@@ -112,7 +116,7 @@ def main() -> None:
     patch_service()
     patch_runtime_copy()
     apply_production_polish()
-    print("Blee adaptive transport v3 + production stabilization v2 hardened")
+    print("Blee adaptive transport v3 + production stabilization v3 hardened")
 
 
 if __name__ == "__main__":
