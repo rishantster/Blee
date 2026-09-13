@@ -6,7 +6,7 @@ Blee is an Android-first, self-custodial USDC payment wallet with native nearby/
 
 `main` is the release/source-of-truth branch.
 
-There is one supported build entrypoint:
+There is one supported clean build entrypoint:
 
 ```bash
 bash build-blee.command
@@ -14,21 +14,105 @@ bash build-blee.command
 
 Historical builder filenames remain only as thin compatibility wrappers and delegate immediately to `build-blee.command`. They contain no independent build logic.
 
-The public APK artifact is always:
+The current APK artifact is:
 
 ```text
-dist/Blee-2.6.0.apk
+dist/Blee-2.7.0.apk
 ```
 
 A SHA-256 file is produced alongside it when the host provides `shasum` or `sha256sum`:
 
 ```text
-dist/Blee-2.6.0.apk.sha256
+dist/Blee-2.7.0.apk.sha256
 ```
 
-Android `versionCode` and `versionName` advance with releases. The public APK filename includes the same `versionName` so local builds are unambiguous.
+Android release identity:
+
+```text
+versionName 2.7.0
+versionCode 17
+```
 
 Every canonical build runs `scripts/verify-canonical-build.py` before source materialization and again after all web/native hardening. This fails the build if a legacy builder regains independent logic, the versioned APK contract changes, or required protocol-hardening markers disappear.
+
+## Build commands
+
+### Clean production build
+
+```bash
+cd ~/Desktop/Blee-sanity
+
+git fetch origin main
+git reset --hard origin/main
+git clean -fdx -e .blee-tools/
+
+git log -1 --oneline
+bash scripts/repo-sanity.sh
+bash build-blee.command
+```
+
+The canonical builder selects Java 21+, rebuilds generated web/Android state from source, runs source verifiers, compiles the APK and verifies the finished binary.
+
+### Finish an already-synced Blee 2.7 tree
+
+Use this only when the web build and Capacitor sync have already completed successfully and the generated Android tree is present:
+
+```bash
+cd ~/Desktop/Blee-sanity
+
+git pull --ff-only origin main
+chmod +x scripts/finish-blee-2.7-post-sync.sh
+bash scripts/finish-blee-2.7-post-sync.sh
+```
+
+The finisher explicitly selects Java 21 before invoking Gradle and refuses to build on an older JVM.
+
+### Verify Java on macOS
+
+```bash
+export JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home"
+export PATH="$JAVA_HOME/bin:$PATH"
+
+java -version
+echo "$JAVA_HOME"
+```
+
+If Java 21 is not installed:
+
+```bash
+brew install openjdk@21
+```
+
+### Verify the produced APK
+
+```bash
+cd ~/Desktop/Blee-sanity
+
+ls -lh dist/Blee-2.7.0.apk
+shasum -a 256 dist/Blee-2.7.0.apk
+bash scripts/verify-apk-integrity.sh dist/Blee-2.7.0.apk
+```
+
+### Install on a connected Android phone
+
+```bash
+cd ~/Desktop/Blee-sanity
+adb devices
+adb install -r dist/Blee-2.7.0.apk
+```
+
+To confirm the embedded Android release identity when Android build-tools are available:
+
+```bash
+~/Library/Android/sdk/build-tools/35.0.0/aapt dump badging dist/Blee-2.7.0.apk | head -n 1
+```
+
+Expected release values:
+
+```text
+versionCode='17'
+versionName='2.7.0'
+```
 
 ## Product scope
 
@@ -76,14 +160,6 @@ Fingerprint is optional. It is surfaced only when the device has compatible fing
 - Node.js 22+
 - Java 21+
 - Android command-line tools / SDK
-
-On macOS with Homebrew JDK 21:
-
-```bash
-export JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home"
-export PATH="$(brew --prefix openjdk@21)/bin:$PATH"
-bash build-blee.command
-```
 
 The canonical build performs source reconstruction, applies the frozen Blee implementation in deterministic order, type-checks, builds the web layer, generates the Android project, installs the native mesh/biometric/notification implementation, runs protocol/product verifiers and compiles the APK.
 
