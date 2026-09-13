@@ -18,6 +18,66 @@ def require(path: Path, markers: tuple[str, ...]) -> str:
     return text
 
 
+def require_text(text: str, label: str, markers: tuple[str, ...]) -> None:
+    missing = [marker for marker in markers if marker not in text]
+    if missing:
+        raise SystemExit(f"VERIFY ERROR: {label} missing {missing}")
+
+
+def verify_ble_transport(service: str) -> str:
+    common = (
+        "START_STICKY", "BluetoothLeScanner", "BluetoothLeAdvertiser", "registerDefaultNetworkCallback",
+        "attemptSenderFundedSettlement", "eth_sendRawTransaction", "SENDER_FUNDED_RAW_TX", "TRUSTED_CHAIN_ID = 5042002L",
+        "SCAN_MODE_LOW_LATENCY", "CONNECTION_PRIORITY_HIGH",
+        "BLEE_NATIVE_LIFECYCLE_HARDENING_V1", "bluetoothStateReceiver", "PEER_STALE_MS", "MAX_ASSEMBLIES",
+        "MAX_PACKET_BYTES", "reconcileCanonicalReceipts", "CHAIN_CONFIRMED", "R.drawable.blee_notification",
+    )
+    require_text(service, "BleeMeshService.java common transport contract", common)
+
+    if "BLEE_TRANSPORT_CORE_V2" in service:
+        # Transport Core V2 is the sole live radio owner. Do not require legacy
+        # scheduler/advertiser markers that remain only as compatibility material.
+        core_v2 = (
+            "BLEE_TRANSPORT_CORE_V2",
+            "class BleTransportV2",
+            "ble_core_v2",
+            "setConnectable(true)",
+            "ADVERTISE_MODE_BALANCED",
+            "ADVERTISE_TX_POWER_MEDIUM",
+            "addServiceData(new ParcelUuid(SERVICE_UUID), localPeerId)",
+            "stablePeerId()",
+            "samePeer(remotePeerId, localPeerId)",
+            "direct_scan_result",
+            "device.connectGatt(BleeMeshService.this, false, coreClientCallback, BluetoothDevice.TRANSPORT_LE)",
+            "requestMtu(PREFERRED_MTU)",
+            "discoverServices(gatt)",
+            "gatt_server_ready",
+            "server_service_registering",
+            "scanner_first",
+            "ADVERTISE_FAILED_TOO_MANY_ADVERTISERS",
+            "handleIdentityRead(gatt, value)",
+            "writeOwnIdentity(gatt)",
+            "duePacketsForPeer",
+            "recordPeerDelivery",
+            "acceptFrame",
+            "coreScanCallback",
+            "coreAdvertiseCallback",
+            "coreClientCallback",
+            "coreServerCallback",
+        )
+        require_text(service, "BleeMeshService.java transport core v2 contract", core_v2)
+        return "ble_core_v2"
+
+    legacy = (
+        "BLEE_BLUETOOTH_DISCOVERY_V2_2", "ADVERTISE_MODE_LOW_LATENCY", "ADVERTISE_TX_POWER_HIGH",
+        "MATCH_MODE_AGGRESSIVE", "BLEE_RADIO_ARBITRATION_V2", "BLEE_SAFE_GATT_BOOTSTRAP_1M_V1",
+        "localRoleTokenPayload", "rememberPeerRoleToken", "pauseScanForGatt", "advertiser_slot_busy_scanner_first",
+        "addServiceData(new ParcelUuid(SERVICE_UUID), localRoleTokenPayload())",
+    )
+    require_text(service, "BleeMeshService.java legacy BLE contract", legacy)
+    return "legacy_ble"
+
+
 def main() -> None:
     package = json.loads((ROOT / "package.json").read_text())
     if package.get("version") != "2.5.1":
@@ -72,10 +132,6 @@ def main() -> None:
     if "logs.slice(0, 100)" in payments:
         raise SystemExit("VERIFY ERROR: settlement history is still silently truncated at 100 transfers")
 
-    # Brand contract: the v5 splash may be either a direct <img> or a wrapper.
-    # The canonical brand installer supports both forms. Do not require the logo
-    # URL to exist literally in BleeApp.tsx when CSS binds a wrapper to the
-    # standalone asset; verify the rendered contract instead.
     splash_nodes = re.findall(r'<[^>]*\bsplash-logo\b[^>]*>', app, flags=re.I | re.S)
     if len(splash_nodes) < 1:
         raise SystemExit("VERIFY ERROR: cold-launch splash element is missing")
@@ -117,16 +173,13 @@ def main() -> None:
         "setUserAuthenticationRequired(true)", "Use a passphrase of at least 8 characters", "FingerprintManager",
         "isHardwareDetected()", "hasEnrolledFingerprints()",
     ))
-    service = require(native_dir / "BleeMeshService.java", (
-        "START_STICKY", "BluetoothLeScanner", "BluetoothLeAdvertiser", "registerDefaultNetworkCallback",
-        "attemptSenderFundedSettlement", "eth_sendRawTransaction", "SENDER_FUNDED_RAW_TX", "TRUSTED_CHAIN_ID = 5042002L",
-        "BLEE_BLUETOOTH_DISCOVERY_V2_2", "ADVERTISE_MODE_LOW_LATENCY", "ADVERTISE_TX_POWER_HIGH", "SCAN_MODE_LOW_LATENCY",
-        "MATCH_MODE_AGGRESSIVE", "CONNECTION_PRIORITY_HIGH", "BLEE_RADIO_ARBITRATION_V2", "BLEE_SAFE_GATT_BOOTSTRAP_1M_V1",
-        "localRoleTokenPayload", "rememberPeerRoleToken", "pauseScanForGatt", "advertiser_slot_busy_scanner_first",
-        "addServiceData(new ParcelUuid(SERVICE_UUID), localRoleTokenPayload())",
-        "BLEE_NATIVE_LIFECYCLE_HARDENING_V1", "bluetoothStateReceiver", "PEER_STALE_MS", "MAX_ASSEMBLIES",
-        "MAX_PACKET_BYTES", "reconcileCanonicalReceipts", "CHAIN_CONFIRMED", "R.drawable.blee_notification",
-    ))
+
+    service_path = native_dir / "BleeMeshService.java"
+    if not service_path.is_file():
+        raise SystemExit(f"VERIFY ERROR: missing {service_path.relative_to(ROOT)}")
+    service = service_path.read_text(errors="replace")
+    transport_engine = verify_ble_transport(service)
+
     require(native_dir / "BleeMeshDb.java", (
         "PAYMENT_ENVELOPE", "DELIVERY_ACK", "SETTLEMENT_RECEIPT", "BLEE_ATOMIC_OUTBOX_V1",
         "BLEE_ATOMIC_RECIPIENT_ACK_V1", "Payment delivered", "BLEE_CANONICAL_SETTLEMENT_VERIFY_V1",
@@ -173,7 +226,11 @@ def main() -> None:
     print("- wallet backup import is size/format/KDF bounded")
     print("- sender-funded raw settlement retained; courier never signs or pays gas")
     print("- stale React journal writes cannot downgrade native payment state")
-    print("- BLE uses deterministic roles, scanner-first recovery, safe 1M GATT bootstrap and radio handoff")
+    if transport_engine == "ble_core_v2":
+        print("- BLE Transport Core V2 is sole live radio owner with stable peer identity + direct scan-result GATT")
+        print("- connectable advertising, scanner-first recovery, MTU/service sequencing and durable peer delivery verified")
+    else:
+        print("- legacy BLE uses deterministic roles, scanner-first recovery and safe 1M GATT bootstrap")
     print("- fragment assemblies and stale peer caches are bounded")
     print("- relay receipt hash is pinned to sender-signed transaction")
     print("- relay-reported state is independently promoted to CHAIN_CONFIRMED online")
