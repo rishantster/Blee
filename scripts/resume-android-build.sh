@@ -72,6 +72,25 @@ echo "============================================================"
 [ -d "$ROOT/android" ] || { echo "ERROR: android/ is missing. Run bash build-blee.command first." >&2; exit 1; }
 [ -x "$ROOT/android/gradlew" ] || chmod +x "$ROOT/android/gradlew"
 
+SERVICE_FILE="$(find "$ROOT/android/app/src/main/java" -type f -name BleeMeshService.java -print -quit)"
+[ -n "$SERVICE_FILE" ] || { echo "ERROR: generated BleeMeshService.java is missing." >&2; exit 1; }
+
+# A resume build may be running against Android sources materialized before the
+# adaptive-v3 commit landed. Bring that generated tree forward in-place so the
+# user does not have to rerun the entire source-materialization pipeline.
+if ! grep -q 'BLEE_ADAPTIVE_NEARBY_V3' "$SERVICE_FILE"; then
+  echo "Applying Adaptive Transport V3 to the existing generated Android tree..."
+  python3 scripts/apply-blee-adaptive-nearby-v3.py
+fi
+python3 scripts/apply-blee-adaptive-nearby-v3-compilefix.py
+
+# The adaptive patch also adds diagnostics to the web runtime. Rebuild/sync the
+# already-materialized web app before Gradle so the APK and native transport are
+# guaranteed to describe the same runtime.
+npm run check
+npm run build
+npx cap sync android
+
 python3 scripts/verify-blee-mesh-v2.py
 python3 scripts/verify-canonical-build.py
 
