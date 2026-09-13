@@ -81,8 +81,8 @@ if "dist/Blee-2.7.0.apk" not in ui:
     raise SystemExit("UI contract does not pin the Blee 2.7 APK name")
 if "standalone Blee logo" not in ui or "cold-launch" not in ui:
     raise SystemExit("UI contract does not pin the standalone Blee launch identity")
-if "Filter by contact" not in ui or "pull-to-refresh" not in ui.lower():
-    raise SystemExit("UI contract is missing Blee 2.7 Activity/refresh behavior")
+if "pull-to-refresh" not in ui.lower() or "No experimental Contacts" not in ui:
+    raise SystemExit("UI contract is missing stable hackathon Activity/refresh behavior")
 
 logo = ROOT / "brand-assets/blee-logo.svg"
 if not logo.is_file():
@@ -232,23 +232,30 @@ runtime = require_all(
 if "<BleeApp key=" in runtime:
     raise SystemExit("Canonical runtime still force-remounts BleeApp on focus/ledger changes")
 
-require_all(
+chain = require_all(
     "scripts/apply-blee-adaptive-nearby-v3-compilefix.py",
     (
-        'apply-blee-contacts-react-v4.py',
-        'apply-blee-contacts-react-v4-compilefix.py',
+        'BLEE_PRODUCTION_POLISH_CHAIN_V2',
         'apply-blee-pull-refresh-v1.py',
+        'apply-blee-contacts-backend-only-v2.py',
+        'apply-blee-stability-freeze-v1.py',
+        'apply-blee-qr-scanner-v1.py',
+        'apply-blee-qr-ux-v2.py',
         'apply-blee-notification-permission-v1.py',
+        'patch_release_version()',
         'verify-production-final-v5.py',
     ),
 )
+for forbidden in ('apply-blee-contacts-react-v4.py', 'apply-blee-qr-final-normalize-v3.py'):
+    if forbidden in chain:
+        raise SystemExit(f"Unstable hackathon stage is still in production chain: {forbidden}")
+
 require_all(
-    "scripts/apply-blee-contacts-react-v4.py",
+    "scripts/apply-blee-contacts-backend-only-v2.py",
     (
-        "BLEE_CONTACTS_REACT_V4",
-        "Filter by contact",
-        "Save contact",
-        "<BottomNav active={activeTab} onChange={selectTab}/>",
+        "durable SQLite contacts remain available",
+        "native contacts API remains available",
+        "no Activity/Home DOM controls are installed",
     ),
 )
 require_all(
@@ -256,7 +263,7 @@ require_all(
     (
         "Blee 2.7 production contract",
         "native contacts persistence API",
-        "React Activity contact filter",
+        "in-field QR scanner control",
         "legacy DOM-injected Activity controls",
     ),
 )
@@ -272,4 +279,4 @@ for rel in ("build-blee-macos.command", "build-blee-professional.command"):
 if 'versionCode 17' not in build or 'versionName "2.7.0"' not in build:
     raise SystemExit("Android and artifact versions are not aligned at Blee 2.7.0")
 
-print("Canonical Blee 2.7 repository contract verified.")
+print("Canonical Blee 2.7 stable hackathon repository contract verified.")
