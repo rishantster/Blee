@@ -22,6 +22,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(BleeMeshPlugin.class);
         registerPlugin(BleeBiometricPlugin.class);
         registerPlugin(BleeQrScannerPlugin.class);
+        registerPlugin(BleeNotificationsPlugin.class);
         super.onCreate(savedInstanceState);
 
         BleePaymentNotifier.ensureChannel(this);
