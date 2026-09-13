@@ -21,6 +21,7 @@ required=(
   "scripts/apply-blee-ble-diagnostics.py"
   "scripts/apply-blee-bitchat-reliability.py"
   "scripts/apply-blee-gatt-interop.py"
+  "scripts/apply-blee-transport-core-v2.py"
   "mesh-v2/android/BleeBleReliability.javafrag"
   ".github/workflows/verify-build.yml"
 )
@@ -44,6 +45,7 @@ grep -q 'CANONICAL_BLEE_BUILDER_V2' build-blee.command || fail "canonical builde
 grep -q 'python3 scripts/apply-blee-ble-diagnostics.py' build-blee.command || fail "BLE diagnostics stage missing"
 grep -q 'python3 scripts/apply-blee-bitchat-reliability.py' build-blee.command || fail "Bitchat reliability stage missing"
 grep -q 'python3 scripts/apply-blee-gatt-interop.py' build-blee.command || fail "GATT interop stage missing"
+grep -q 'python3 scripts/apply-blee-transport-core-v2.py' build-blee.command || fail "transport core v2 stage missing"
 
 python3 - <<'PY'
 from pathlib import Path
@@ -56,6 +58,7 @@ patch_order = [
     'python3 scripts/apply-blee-ble-diagnostics.py',
     'python3 scripts/apply-blee-bitchat-reliability.py',
     'python3 scripts/apply-blee-gatt-interop.py',
+    'python3 scripts/apply-blee-transport-core-v2.py',
 ]
 
 positions = []
@@ -116,14 +119,20 @@ grep -q 'addServiceData(new ParcelUuid(SERVICE_UUID), localRoleTokenPayload())' 
   || fail "role-token scan response wiring missing"
 grep -q 'BLEE_GATT_INTEROP_V1' scripts/apply-blee-gatt-interop.py \
   || fail "GATT interop marker missing"
-grep -q 'connectImmediatelyFromScan' scripts/apply-blee-gatt-interop.py \
-  || fail "live ScanResult connection path missing"
-grep -q 'auto_connect_le' scripts/apply-blee-gatt-interop.py \
-  || fail "autoConnect fallback missing"
-grep -q 'scanner_first_peripheral_suspended' scripts/apply-blee-gatt-interop.py \
-  || fail "scanner-first controller resource recovery missing"
-grep -q 'result.isConnectable()' scripts/apply-blee-gatt-interop.py \
-  || fail "connectable advertisement telemetry missing"
+grep -q 'BLEE_TRANSPORT_CORE_V2' scripts/apply-blee-transport-core-v2.py \
+  || fail "transport core v2 marker missing"
+grep -q 'class BleTransportV2' scripts/apply-blee-transport-core-v2.py \
+  || fail "transport core v2 runtime owner missing"
+grep -q 'direct_scan_result' scripts/apply-blee-transport-core-v2.py \
+  || fail "live ScanResult direct-connect path missing"
+grep -q 'setServiceUuid(new ParcelUuid(SERVICE_UUID))' scripts/apply-blee-transport-core-v2.py \
+  || fail "service-filtered scan path missing"
+grep -q 'addServiceData(new ParcelUuid(SERVICE_UUID), localPeerId)' scripts/apply-blee-transport-core-v2.py \
+  || fail "stable peer ID scan response missing"
+grep -q 'PROPERTY_WRITE_NO_RESPONSE' scripts/apply-blee-transport-core-v2.py \
+  || fail "Bitchat-style GATT characteristic capabilities missing"
+grep -q 'recordPeerDelivery' scripts/apply-blee-transport-core-v2.py \
+  || fail "durable peer-specific packet accounting missing"
 if grep -q 'connectGattWithPreferredPhy' mesh-v2/android/BleeBleReliability.javafrag; then
   fail "multi-PHY negotiation must not run during initial GATT connection"
 fi
@@ -143,6 +152,7 @@ print('SANITY OK: Bitchat Android base connection lifecycle is pinned')
 PY
 pass "Bitchat-derived base BLE radio arbitration pinned"
 pass "Android GATT interop recovery pinned"
+pass "Transport core v2 final runtime ownership pinned"
 
 for forbidden in \
   'dist/*.apk' \
