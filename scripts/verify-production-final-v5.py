@@ -52,48 +52,43 @@ def main() -> None:
     qr_plugin = locate("BleeQrScannerPlugin.java").read_text()
     qr_capture = locate("BleeQrCaptureActivity.java").read_text()
 
-    # ----- React shell / navigation / Activity -----
+    # ----- Stable React shell / navigation / Activity -----
     require(app, (
-        "BLEE_CONTACTS_REACT_V4",
-        "const stable = canonicalWallet(value)",
-        "activity-contact-filter",
-        "Filter by contact",
-        "Manage contacts",
-        "Save contact",
-        "contactMatches = !contactFilter",
-        "savedContact?.displayName",
-        "renderContactSheet()",
         "<BottomNav active={activeTab} onChange={selectTab}/>",
-    ), "Blee React shell")
-
-    if app.count('className="blee-recipient-qr-icon"') != 1:
-        fail("Send must contain exactly one QR scanner icon")
-    if '<span>Scan QR</span>' in app or '>Scan QR<' in app:
-        fail("visible Scan QR text survived")
+        "activityFilter",
+    ), "stable Blee React shell")
     if app.count("<BottomNav active={activeTab} onChange={selectTab}/>") != 1:
         fail("primary bottom navigation is missing or duplicated")
 
-    home_start = app.find("const renderHome")
-    nearby_start = app.find("const renderNearby", home_start)
-    if home_start < 0 or nearby_start < 0:
-        fail("Home/Nearby React boundaries missing")
-    home = app[home_start:nearby_start]
-    for marker in ("activity-contact-filter", "Manage contacts", "Save contact", "Filter by contact"):
-        if marker in home:
-            fail(f"contacts controls leaked onto Home: {marker}")
-
-    # Legacy runtime DOM injection must be completely absent. New contacts are
-    # rendered only by BleeApp React and therefore cannot mutate the nav shell.
-    combined_runtime_css = runtime + "\n" + css
+    # No experimental contact/filter controls are allowed to mutate Home or
+    # Activity for the hackathon production artifact. Durable contacts remain
+    # available natively for a later UI release.
     for marker in (
-        "BLEE_CONTACTS_ACTIVITY_UI_V1",
+        "BLEE_CONTACTS_REACT_V4",
+        "activity-contact-filter",
+        "renderContactSheet()",
         "blee-activity-contact-tools",
         "blee-activity-filter-button",
         "blee-activity-contacts-button",
         "#blee-contact-sheet",
     ):
-        if marker in combined_runtime_css:
-            fail(f"legacy injected Activity UI remains: {marker}")
+        if marker in app or marker in runtime or marker in css:
+            fail(f"unstable contacts UI survived: {marker}")
+
+    # ----- Send QR scanner: exactly one final control -----
+    require(app, (
+        "BLEE_SEND_QR_SCANNER_V1",
+        "registerPlugin<BleeQrScannerPlugin>('BleeQrScanner')",
+        "parseBleeRecipientQr",
+        "BleeQrScanner.scan()",
+        'className="blee-recipient-qr-icon"',
+    ), "Send QR scanner")
+    if app.count('className="blee-recipient-qr-icon"') != 1:
+        fail("Send must contain exactly one QR scanner icon")
+    if 'className="blee-recipient-qr-scan"' in app:
+        fail("legacy QR scanner control survived")
+    if '<span>Scan QR</span>' in app or '>Scan QR<' in app:
+        fail("visible Scan QR text survived")
 
     # ----- Refresh: in-process only -----
     if "window.location.reload" in runtime:
@@ -110,8 +105,7 @@ def main() -> None:
     require(css, (
         "BLEE_SOFT_REFRESH_CSS_V2",
         "BLEE_STABLE_SEND_RECIPIENT_ACTION_V1",
-        "BLEE_CONTACTS_REACT_V4",
-        ".react-contact-sheet",
+        "BLEE_QR_UX_V2",
     ), "production CSS")
     require(plugin, ("BLEE_NONDESTRUCTIVE_MANUAL_REFRESH_V2", "manualRefresh(PluginCall call)"), "native refresh bridge")
 
@@ -136,10 +130,9 @@ def main() -> None:
     ):
         if marker in service:
             fail(f"aggressive transport regression returned: {marker}")
-
     require(hook, ("BLEE_PRODUCTION_NATIVE_PEER_MERGE_V1",), "React peer merge")
 
-    # ----- Identity / Activity / contacts -----
+    # ----- Identity / Activity / durable contacts backend -----
     require(db, (
         "BLEE_ACTIVITY_IDENTITY_BACKFILL_V2",
         "backfillPaymentIdentity",
@@ -159,7 +152,7 @@ def main() -> None:
         "BLEE_CONTACT_ACTIVITY_WAKE_V1",
     ), "contacts native API")
 
-    # ----- QR scanner -----
+    # ----- Native QR scanner -----
     require(qr_plugin, (
         "BLEE_SEND_QR_SCANNER_ANDROID_V1",
         "BleeQrCaptureActivity.class",
@@ -200,15 +193,14 @@ def main() -> None:
         fail("Android Gradle version is not 17 / 2.7.0")
 
     print("============================================================")
-    print("VERIFIED: Blee 2.7 final production source contract")
-    print("- primary React navigation shell is intact on Activity")
-    print("- contacts live inside React Activity, never on Home or DOM observers")
-    print("- Activity name/avatar/contact filtering uses durable SQLite identity")
+    print("VERIFIED: Blee 2.7 final hackathon production source contract")
+    print("- original React Activity shell + persistent BottomNav are intact")
+    print("- experimental contacts/filter UI is absent; durable contacts backend remains")
+    print("- Activity name/avatar backfill remains enabled")
     print("- wallet address presentation is canonical and stable")
     print("- QR scanner is single, in-field, portrait and offline-bundled")
-    print("- refresh is full in-process state rehydration with Blee animation/swish")
+    print("- refresh is in-process with Blee animation/swish and no session reload")
     print("- last physically proven BLE/Nearby timing contract is pinned")
-    print("- live peer profile sync + Activity identity backfill remain enabled")
     print("- Android payment notifications + runtime permission request are present")
     print("- Android versionCode 17 / Blee 2.7.0 is consistent")
     print("============================================================")
