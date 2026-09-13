@@ -20,9 +20,9 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(BleeMeshPlugin.class);
+        registerPlugin(BleeContactsPlugin.class);
         registerPlugin(BleeBiometricPlugin.class);
         registerPlugin(BleeQrScannerPlugin.class);
-        registerPlugin(BleeNotificationsPlugin.class);
         super.onCreate(savedInstanceState);
 
         BleePaymentNotifier.ensureChannel(this);
