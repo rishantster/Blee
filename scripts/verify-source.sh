@@ -30,6 +30,7 @@ required=(
   src/lib/walletRecovery.ts
   src/lib/rails.ts
   src/lib/solanaGateway.ts
+  src/lib/solanaVault.ts
   plugins/blee-store/package.json
   plugins/blee-nearby/package.json
   android/gradlew
@@ -159,6 +160,21 @@ grep -q "BLEE_SOLANA_GATEWAY = 'https://rpc.blee.app'" src/lib/solanaGateway.ts 
 grep -q "id: 'solana-sol'" src/lib/rails.ts || fail "Solana payment rail registry missing"
 grep -q "settlementModel: 'solana-durable-nonce'" src/lib/rails.ts || fail "Solana durable-nonce settlement model missing"
 
+# BLEE_SOLANA_VAULT_V1
+# Solana identity is stored in an independent encrypted vault. The working
+# Arc/EVM vault must remain unchanged and Solana private key material must not be
+# persisted in plaintext or exposed through a reusable client secret.
+grep -q "SOLANA_VAULT_KEY = 'wallet.solana.v1'" src/lib/solanaVault.ts || fail "Solana vault storage key missing"
+grep -q "algorithm: 'Ed25519'" src/lib/solanaVault.ts || fail "Solana vault is not Ed25519"
+grep -q "SOLANA_KDF_ITERATIONS = 600_000" src/lib/solanaVault.ts || fail "Solana vault PBKDF2 work factor changed unexpectedly"
+grep -q "name: 'PBKDF2'" src/lib/solanaVault.ts || fail "Solana vault PBKDF2 derivation missing"
+grep -q "name: 'AES-GCM'" src/lib/solanaVault.ts || fail "Solana vault AES-GCM encryption missing"
+grep -q "name: 'Ed25519'" src/lib/solanaVault.ts || fail "Solana vault Ed25519 key generation/import missing"
+grep -q "from './bleeStore'" src/lib/solanaVault.ts || fail "Solana vault must use canonical BleeStore persistence"
+if grep -Eq 'localStorage|sessionStorage' src/lib/solanaVault.ts; then
+  fail "Solana key material must not use browser storage"
+fi
+
 APK_BOUND_DIRS=(src android plugins public app)
 for dir in "${APK_BOUND_DIRS[@]}"; do
   [ -e "$dir" ] || continue
@@ -174,3 +190,4 @@ printf 'VERIFIED: Blee 2.7.1 source-first repository contract\n'
 printf 'VERIFIED: offline receive projection, notifications and contacts contract\n'
 printf 'VERIFIED: single plugin ownership and generated-output hygiene\n'
 printf 'VERIFIED: Solana client is gateway-only with no provider credential surface\n'
+printf 'VERIFIED: Solana identity vault is isolated, encrypted and BleeStore-backed\n'
