@@ -83,6 +83,11 @@ def apply_production_polish() -> None:
     # BLEE_PRODUCTION_POLISH_CHAIN_V1
     run_stage("apply-blee-production-polish.py")
     run_stage("apply-blee-production-raw-wakeup.py")
+    # Generated BleeMeshDb uses the atomic recipient/ACK transaction. Prepare
+    # notification summary fields against that structure before the general
+    # notification stage runs; the latter then sees its DB marker and skips its
+    # legacy pre-atomic anchor path.
+    run_stage("apply-blee-payment-notifications-dbfix.py")
     run_stage("apply-blee-payment-notifications.py")
     run_stage("apply-blee-payment-notifications-v2.py")
 
