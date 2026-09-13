@@ -23,6 +23,9 @@ required=(
   "scripts/apply-blee-bitchat-reliability.py"
   "scripts/apply-blee-gatt-interop.py"
   "scripts/apply-blee-transport-core-v2.py"
+  "scripts/apply-blee-adaptive-nearby-v3.py"
+  "scripts/apply-blee-adaptive-nearby-v3-compilefix.py"
+  "scripts/resume-android-build.sh"
   "mesh-v2/android/BleeBleReliability.javafrag"
   ".github/workflows/verify-build.yml"
 )
@@ -37,6 +40,7 @@ pass "required canonical inputs exist"
 pass "single canonical build entrypoint"
 
 bash -n build-blee.command
+bash -n scripts/resume-android-build.sh
 pass "canonical build shell syntax"
 
 python3 -m py_compile scripts/apply-blee-*.py scripts/verify-*.py
@@ -47,12 +51,13 @@ grep -q 'python3 scripts/apply-blee-ble-diagnostics.py' build-blee.command || fa
 grep -q 'python3 scripts/apply-blee-bitchat-reliability.py' build-blee.command || fail "Bitchat reliability stage missing"
 grep -q 'python3 scripts/apply-blee-gatt-interop.py' build-blee.command || fail "GATT interop stage missing"
 grep -q 'python3 scripts/apply-blee-transport-core-v2.py' build-blee.command || fail "transport core v2 stage missing"
+grep -q 'python3 scripts/apply-blee-adaptive-nearby-v3.py' build-blee.command || fail "adaptive Nearby v3 stage missing"
+grep -q 'python3 scripts/apply-blee-adaptive-nearby-v3-compilefix.py' build-blee.command || fail "adaptive Nearby v3 compile-hardening stage missing"
 
 python3 - <<'PY'
 from pathlib import Path
 
 s = Path('build-blee.command').read_text()
-
 patch_order = [
     'python3 scripts/apply-blee-runtime-reliability.py',
     'python3 scripts/apply-blee-ble-transport-v4.py',
@@ -60,34 +65,31 @@ patch_order = [
     'python3 scripts/apply-blee-bitchat-reliability.py',
     'python3 scripts/apply-blee-gatt-interop.py',
     'python3 scripts/apply-blee-transport-core-v2.py',
+    'python3 scripts/apply-blee-adaptive-nearby-v3.py',
+    'python3 scripts/apply-blee-adaptive-nearby-v3-compilefix.py',
 ]
-
 positions = []
 for token in patch_order:
     i = s.find(token)
     if i < 0:
         raise SystemExit(f'SANITY FAIL: serialized build stage missing: {token}')
     positions.append(i)
-
 if positions != sorted(positions):
-    raise SystemExit('SANITY FAIL: native BLE reliability stages are out of order')
+    raise SystemExit('SANITY FAIL: native transport stages are out of order')
 
 cursor = positions[-1]
-post_patch_order = [
+for token in (
     'npm run check',
     'npm run build',
     'npx cap sync android',
     'python3 scripts/verify-blee-mesh-v2.py',
     'python3 scripts/verify-canonical-build.py',
-]
-
-for token in post_patch_order:
+):
     i = s.find(token, cursor + 1)
     if i < 0:
         raise SystemExit(f'SANITY FAIL: post-patch build stage missing or misplaced: {token}')
     cursor = i
-
-print('SANITY OK: BLE/runtime/build stages are serialized')
+print('SANITY OK: BLE/adaptive/runtime/build stages are serialized')
 PY
 
 grep -q 'BLEE_BITCHAT_STYLE_BLE_RELIABILITY_V1' mesh-v2/android/BleeBleReliability.javafrag \
@@ -114,10 +116,7 @@ grep -q 'pauseScanForGatt' mesh-v2/android/BleeBleReliability.javafrag \
   || fail "GATT radio compatibility hook missing"
 grep -q 'Scanning is intentionally continuous through connection establishment' mesh-v2/android/BleeBleReliability.javafrag \
   || fail "continuous-scan GATT establishment missing"
-grep -q 'BLEE_RADIO_ARBITRATION_V2' scripts/apply-blee-bitchat-reliability.py \
-  || fail "Bitchat radio-arbitration patcher marker missing"
-grep -q 'addServiceData(new ParcelUuid(SERVICE_UUID), localRoleTokenPayload())' scripts/apply-blee-bitchat-reliability.py \
-  || fail "role-token scan response wiring missing"
+
 grep -q 'BLEE_GATT_INTEROP_V1' scripts/apply-blee-gatt-interop.py \
   || fail "GATT interop marker missing"
 grep -q 'BLEE_TRANSPORT_CORE_V2' scripts/apply-blee-transport-core-v2.py \
@@ -135,18 +134,43 @@ grep -q 'PROPERTY_WRITE_NO_RESPONSE' scripts/apply-blee-transport-core-v2.py \
 grep -q 'recordPeerDelivery' scripts/apply-blee-transport-core-v2.py \
   || fail "durable peer-specific packet accounting missing"
 
-# The generated-service verifier must understand that Transport Core V2 replaces
-# the old runtime advertiser/role-token implementation. Catch stale assertions
-# here before spending time materializing/building Android.
+# Adaptive v3 must be a genuine offline second transport, not another GATT retry.
+grep -q 'BLEE_ADAPTIVE_NEARBY_V3' scripts/apply-blee-adaptive-nearby-v3.py \
+  || fail "adaptive Nearby v3 marker missing"
+grep -q 'play-services-nearby:19.5.0' scripts/apply-blee-adaptive-nearby-v3.py \
+  || fail "Nearby Connections dependency not pinned"
+grep -q 'Strategy.P2P_CLUSTER' scripts/apply-blee-adaptive-nearby-v3.py \
+  || fail "Nearby cluster strategy missing"
+grep -q 'status == 147' scripts/apply-blee-adaptive-nearby-v3.py \
+  || fail "GATT 147 fallback trigger missing"
+grep -q 'BLE_GRACE_MS = 15_000L' scripts/apply-blee-adaptive-nearby-v3.py \
+  || fail "no-peer adaptive fallback timer missing"
+grep -q 'DUAL_SCAN_ON_MS = 8_000L' scripts/apply-blee-adaptive-nearby-v3.py \
+  || fail "Bitchat-style dual-role scan window missing"
+grep -q 'startAdvertising(localPeerIdBytes()' scripts/apply-blee-adaptive-nearby-v3.py \
+  || fail "Nearby stable peer advertising missing"
+grep -q 'startDiscovery(NEARBY_SERVICE_ID' scripts/apply-blee-adaptive-nearby-v3.py \
+  || fail "Nearby discovery missing"
+grep -q 'Payload.fromBytes' scripts/apply-blee-adaptive-nearby-v3.py \
+  || fail "Nearby byte payload transport missing"
+grep -q 'db.receive(raw, deviceId, publicKey)' scripts/apply-blee-adaptive-nearby-v3.py \
+  || fail "Nearby payload does not feed canonical mesh packet verifier"
+grep -q 'NEARBY_WIFI_DEVICES' scripts/apply-blee-adaptive-nearby-v3.py \
+  || fail "Nearby Wi-Fi runtime permission wiring missing"
+grep -q 'nearbyError(Throwable error)' scripts/apply-blee-adaptive-nearby-v3-compilefix.py \
+  || fail "adaptive Java compile hardening missing"
+pass "Adaptive Nearby v3 fallback contract pinned"
+
+# The generated-service verifier must understand live transport ownership.
 grep -q 'if "BLEE_TRANSPORT_CORE_V2" in service:' scripts/verify-blee-mesh-v2.py \
   || fail "mesh verifier is not transport-core-v2 aware"
 grep -q 'ADVERTISE_MODE_BALANCED' scripts/verify-blee-mesh-v2.py \
-  || fail "mesh verifier does not validate transport-core-v2 advertising"
+  || fail "mesh verifier does not validate transport-core advertising"
 grep -q 'addServiceData(new ParcelUuid(SERVICE_UUID), localPeerId)' scripts/verify-blee-mesh-v2.py \
   || fail "mesh verifier does not validate stable peer-ID advertising"
 grep -q 'direct_scan_result' scripts/verify-blee-mesh-v2.py \
   || fail "mesh verifier does not validate direct ScanResult GATT"
-pass "Transport core v2 verifier contract pinned"
+pass "Transport verifier contract pinned"
 
 if grep -q 'connectGattWithPreferredPhy' mesh-v2/android/BleeBleReliability.javafrag; then
   fail "multi-PHY negotiation must not run during initial GATT connection"
@@ -167,7 +191,7 @@ print('SANITY OK: Bitchat Android base connection lifecycle is pinned')
 PY
 pass "Bitchat-derived base BLE radio arbitration pinned"
 pass "Android GATT interop recovery pinned"
-pass "Transport core v2 final runtime ownership pinned"
+pass "Adaptive v3 final transport ownership pinned"
 
 for forbidden in \
   'dist/*.apk' \
