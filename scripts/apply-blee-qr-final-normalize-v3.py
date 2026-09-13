@@ -39,25 +39,37 @@ def input_bounds(text: str, start: int, end: int) -> tuple[int, int]:
     return -1, -1
 
 
-def find_send_bounds(text: str) -> tuple[int, int, int, int]:
-    review_matches = list(re.finditer(r"Review payment", text))
-    if not review_matches:
-        fail("Review payment anchor missing")
-    review = review_matches[-1].start()
-    window_start = max(0, review - 18000)
-    send_labels = list(re.finditer(r">\s*Send\s*<", text[window_start:review], re.I))
-    if not send_labels:
-        fail("Send heading missing")
-    send_start = window_start + send_labels[-1].start()
-    recipient_labels = list(re.finditer(r">\s*Recipient\s*<", text[send_start:review], re.I))
-    if not recipient_labels:
-        fail("Recipient label missing")
-    recipient = send_start + recipient_labels[-1].end()
-    amount_labels = list(re.finditer(r">\s*Amount\s*<", text[recipient:review], re.I))
-    if not amount_labels:
-        fail("Amount label missing")
-    amount = recipient + amount_labels[0].start()
-    return send_start, recipient, amount, review
+def find_recipient_region(text: str) -> tuple[int, int]:
+    """Find the editable Send Recipient field structurally.
+
+    Do not depend on screen/button copy such as "Review payment". Activity detail
+    can also contain Recipient/Amount labels, but it has no editable input between
+    them. The Send form is therefore identified as the unique Recipient -> Amount
+    region containing a non-secret input.
+    """
+    candidates: list[tuple[int, int]] = []
+    for match in re.finditer(r">\s*Recipient\s*<", text, re.I):
+        recipient = match.end()
+        search_end = min(len(text), recipient + 12000)
+        amount_match = re.search(r">\s*Amount\s*<", text[recipient:search_end], re.I)
+        if not amount_match:
+            continue
+        amount = recipient + amount_match.start()
+        input_start = text.find("<input", recipient, amount)
+        if input_start < 0:
+            continue
+        try:
+            start, end = input_bounds(text, recipient, amount)
+        except SystemExit:
+            continue
+        input_tag = text[start:end].lower()
+        if "password" in input_tag or "passphrase" in input_tag:
+            continue
+        candidates.append((recipient, amount))
+
+    if len(candidates) != 1:
+        fail(f"expected one editable Recipient -> Amount region, found {len(candidates)}")
+    return candidates[0]
 
 
 def recipient_setter(text: str, input_tag: str) -> str:
@@ -109,8 +121,7 @@ def main() -> None:
     text = APP.read_text()
 
     # Only durable module-level QR plumbing must exist before normalization.
-    # The rendered button/call is intentionally allowed to be absent because
-    # this stage exists to reconstruct it after later React structural patches.
+    # The rendered control may be absent because this stage reconstructs it.
     for marker in (
         "BLEE_SEND_QR_SCANNER_V1",
         "registerPlugin<BleeQrScannerPlugin>('BleeQrScanner')",
@@ -119,25 +130,25 @@ def main() -> None:
         if marker not in text:
             fail(f"QR implementation missing {marker}")
 
-    send_start, recipient, amount, review = find_send_bounds(text)
-    segment = text[recipient:amount]
-
-    # Remove every rendered scanner control in the Recipient field. Both legacy
-    # text-button and final icon forms are normalized to one canonical icon.
-    segment = re.sub(
+    # Remove any rendered legacy/final scanner control globally first. Later
+    # React stages are allowed to reshape the Send form; the final tree gets one
+    # canonical control rebuilt below.
+    text = re.sub(
         r'\s*<button\b(?=[^>]*\bclassName="(?:blee-recipient-qr-scan|blee-recipient-qr-icon)")[\s\S]*?</button>',
         '',
-        segment,
+        text,
     )
-    segment = segment.replace('{/* BLEE_QR_INPUT_SHELL_V2 */}', '')
+    text = text.replace('{/* BLEE_QR_INPUT_SHELL_V2 */}', '')
 
+    recipient, amount = find_recipient_region(text)
+    segment = text[recipient:amount]
     input_start, input_end = input_bounds(segment, 0, len(segment))
     input_tag = segment[input_start:input_end]
     if "password" in input_tag.lower() or "passphrase" in input_tag.lower():
         fail("refusing to install scanner on secret input")
+
     setter = recipient_setter(text, input_tag)
     button = scanner_button(setter)
-
     wrapper_token = '<div className="blee-recipient-input-shell">'
     wrapper_count = segment.count(wrapper_token)
     if wrapper_count > 1:
@@ -158,25 +169,19 @@ def main() -> None:
         segment = segment[:input_start] + shell + segment[input_end:]
 
     text = text[:recipient] + segment + text[amount:]
-
     marker = "// BLEE_FINAL_QR_NORMALIZE_V3"
     if marker not in text:
         text = marker + "\n" + text
     APP.write_text(text)
 
     final = APP.read_text()
-    send_start, recipient, amount, review = find_send_bounds(final)
-    send_region = final[send_start:review]
+    recipient, amount = find_recipient_region(final)
     recipient_region = final[recipient:amount]
     total = final.count('className="blee-recipient-qr-icon"')
-    in_send = send_region.count('className="blee-recipient-qr-icon"')
     in_recipient = recipient_region.count('className="blee-recipient-qr-icon"')
     legacy = final.count('className="blee-recipient-qr-scan"')
-    if total != 1 or in_send != 1 or in_recipient != 1 or legacy != 0:
-        fail(f"scanner cardinality invalid total={total} send={in_send} recipient={in_recipient} legacy={legacy}")
-    outside = final[:send_start] + final[review:]
-    if 'className="blee-recipient-qr-icon"' in outside:
-        fail("QR scanner exists outside Send")
+    if total != 1 or in_recipient != 1 or legacy != 0:
+        fail(f"scanner cardinality invalid total={total} recipient={in_recipient} legacy={legacy}")
     if '<span>Scan QR</span>' in final or '>Scan QR<' in final:
         fail("visible Scan QR text survived")
     if recipient_region.count('BLEE_QR_INPUT_SHELL_V2') != 1:
@@ -186,7 +191,7 @@ def main() -> None:
     if "parseBleeRecipientQr(result.value)" not in recipient_region:
         fail("final Recipient QR control does not validate scanned recipient data")
 
-    print("VERIFIED: final React tree contains exactly one native QR icon, inside Send Recipient only")
+    print("VERIFIED: final React tree contains exactly one native QR icon in the editable Send Recipient field")
 
 
 if __name__ == "__main__":
