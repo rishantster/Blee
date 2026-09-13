@@ -98,27 +98,31 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-qr-scanner-placement-fix.py")
     run_stage("apply-blee-qr-scanner-compilefix.py")
 
-    # BLEE_PRODUCTION_STABILIZATION_V3
-    # Final isolated UX/reliability stages. They must not alter signing,
-    # authorization, sender-funded settlement, or Adaptive packet semantics.
+    # BLEE_PRODUCTION_STABILITY_V4
+    # Keep only isolated, regression-bounded additions after the proven payment
+    # and transport stack. No DOM-injected product features survive this stage.
     run_stage("apply-blee-qr-ux-v2.py")
-    # Clean a generated tree that may still contain the old reload-based patch
-    # before installing the session-preserving refresh implementation.
     run_stage("apply-blee-refresh-preclean-v2.py")
     run_stage("apply-blee-pull-refresh-v1.py")
     run_stage("apply-blee-nearby-speed-profile-v2.py")
     run_stage("apply-blee-activity-identity-v2.py")
+
+    # Keep durable contact storage/API for later, but immediately remove its
+    # mutation-observer UI. Contacts will be reintroduced only inside the real
+    # React Activity component after the shell is stable again.
     run_stage("apply-blee-contacts-v1.py")
     run_stage("apply-blee-contacts-sync-v1.py")
+    run_stage("apply-blee-stability-freeze-v1.py")
+
     run_stage("apply-blee-notification-permission-v1.py")
-    run_stage("verify-production-stabilization-v3.py")
+    run_stage("verify-production-stability-v4.py")
 
 
 def main() -> None:
     patch_service()
     patch_runtime_copy()
     apply_production_polish()
-    print("Blee adaptive transport v3 + production stabilization v3 hardened")
+    print("Blee adaptive transport v3 + production stability v4 frozen")
 
 
 if __name__ == "__main__":
