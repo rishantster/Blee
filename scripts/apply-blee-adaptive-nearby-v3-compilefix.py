@@ -119,6 +119,10 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-contacts-react-v4.py")
     run_stage("apply-blee-contacts-react-v4-compilefix.py")
 
+    # Contacts/navigation are the last React structural mutation. Normalize the
+    # Send recipient action after them, then pin exactly one QR icon to Send only.
+    run_stage("apply-blee-qr-final-normalize-v3.py")
+
     # Android 13+ permission request and high-importance payment channel.
     run_stage("apply-blee-notification-permission-v1.py")
 
