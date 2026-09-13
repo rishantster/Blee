@@ -22,8 +22,6 @@ def patch_service() -> None:
     end = text.index("    // BLEE_TRANSPORT_CORE_V2\n    // One runtime owner", start)
     adaptive = text[start:end]
 
-    # AdaptiveNearbyV3 is a sibling of BleTransportV2, so it must not call the
-    # latter's private message(Throwable) helper unqualified.
     adaptive = adaptive.replace("message(error)", "nearbyError(error)")
 
     if "nearbyError(Throwable error)" not in adaptive:
@@ -56,14 +54,18 @@ def patch_runtime_copy() -> None:
     if not path.is_file():
         raise SystemExit("Blee adaptive v3 compilefix: generated BleeRuntime.tsx missing")
     text = path.read_text()
-    old_footer = "Keep Wi-Fi off on both phones while testing. This panel refreshes automatically."
-    new_footer = "Keep Bluetooth and Wi-Fi enabled. Internet can stay off. This panel refreshes automatically."
-    if old_footer in text:
-        text = text.replace(old_footer, new_footer)
+    text = text.replace(
+        "Keep Wi-Fi off on both phones while testing. This panel refreshes automatically.",
+        "Keep Bluetooth and Wi-Fi enabled. Internet can stay off. This panel refreshes automatically.",
+    )
     text = text.replace(
         "Scanning and advertising over Bluetooth LE in the background.",
         "Bluetooth LE is primary; Blee can switch to a local offline fallback when needed.",
     )
+    text = text.replace("Restarting Bluetooth discovery…", "Restarting nearby transport…")
+    text = text.replace("Restart requested. Watching the BLE path…", "Restart requested. Watching the nearby transport…")
+    text = text.replace("Restart Bluetooth discovery", "Restart nearby transport")
+    text = text.replace("Open Bluetooth diagnostics", "Open nearby transport diagnostics")
     if "Internet can stay off" not in text:
         raise SystemExit("Blee adaptive v3 compilefix: adaptive test guidance was not installed")
     path.write_text(text)
