@@ -97,6 +97,7 @@ def apply_production_polish() -> None:
     # and replaces the old native relay broadcaster with a no-signer raw-tx path.
     run_stage("apply-blee-store-forward-relay-v1.py")
     run_stage("apply-blee-store-forward-relay-v1-compilefix.py")
+    run_stage("apply-blee-store-forward-relay-v1-sender-compat.py")
 
 
 def main() -> None:
