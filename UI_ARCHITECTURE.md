@@ -22,7 +22,7 @@ This document defines the canonical Blee Android presentation model. It is inten
 - Blee does not intentionally auto-log-out an unlocked user because of inactivity/backgrounding while the process remains alive.
 - Native payment notifications work without requiring the React screen to remain open, subject to Android notification permission.
 - Pull-to-refresh is non-destructive: it refreshes Blee state without reloading the WebView or clearing the unlocked wallet session.
-- Contacts are local Blee records keyed by wallet address. They are managed inside the real React Activity experience, never injected onto Home or into the DOM shell.
+- Contacts remain durable local Blee records keyed by wallet address in SQLite/native APIs, but the hackathon production UI does not expose experimental Contacts/Filter controls.
 - The same EVM wallet is rendered with one stable canonical address presentation; checksum/lowercase flicker is not acceptable.
 
 ## Cold launch
@@ -33,13 +33,7 @@ Cold launch shows the supplied standalone Blee logo only, centered with its orig
 
 Pulling the app down from the top performs a full in-process state refresh. The funds-card refresh affordance invokes the same path.
 
-Refresh wakes/re-queries:
-- confirmed balance / network state;
-- durable payment journal and pending envelopes;
-- nearby peer projection;
-- peer identity/name/avatar projection;
-- Activity projection;
-- contact projection.
+Refresh wakes/re-queries confirmed balance/network state, durable payment journal and pending envelopes, nearby peers, peer identity/name/avatar projection and Activity projection. Contacts persistence remains native and durable.
 
 Refresh must never call `window.location.reload()`, clear the wallet vault, log the user out, or destroy the in-memory unlocked session. While refreshing, Blee shows a brief centered Blee logo animation with a soft swish.
 
@@ -128,32 +122,20 @@ Offline authorization must never be labelled chain-confirmed.
 ### Activity
 - persistent primary bottom navigation remains visible
 - All / Sent / Received filters
-- one **Filter by contact** control below the direction filters
-- counterparty saved-contact name/avatar when available
-- otherwise resolved Blee peer name/avatar
+- resolved counterparty Blee name/avatar when available
 - address fallback only when identity is unavailable
 - amount
 - direction
 - current state
 - timestamp
 
-Contact filtering is implemented by the React Activity component itself. It must never be inserted by a MutationObserver or arbitrary DOM manipulation.
+No experimental Contacts or contact-filter controls are added to Activity in the hackathon production build. Activity must stay on the original React navigation shell and must never be mutated by a MutationObserver or arbitrary DOM injection.
 
-### Contacts
-Contacts are local-first Blee metadata backed by SQLite and keyed by canonical wallet address.
-
-From Activity, the user can:
-- filter Activity by a saved contact;
-- open **Manage contacts**;
-- save people discovered through payment history / peer identity;
-- rename a saved contact;
-- remove a saved contact.
-
-A saved local contact alias/avatar is presentation metadata only. It never modifies EIP-3009 authorization, payment signatures or settlement data.
+### Contacts backend
+Contacts are local-first metadata backed by SQLite and keyed by canonical wallet address. The native APIs for list/save/delete/candidates remain part of the app and saved aliases remain presentation metadata only. They never modify EIP-3009 authorization, payment signatures or settlement data. Visible contact-management UI is intentionally deferred until it can be integrated without destabilizing Activity navigation.
 
 ### Activity detail
-- counterparty name/avatar with saved-contact preference
-- Save contact / Edit contact action
+- counterparty name/avatar when resolved
 - immutable event timeline
 - sender / receiver
 - amount
@@ -222,16 +204,13 @@ Primary destinations:
 
 `Home · Nearby · Activity · Profile`
 
-Send and Receive are actions, not permanent tabs.
-
-The bottom navigation is owned by the primary React shell and must remain present on Home, Nearby, Activity and Profile. Sheets (including Contacts) overlay that shell without replacing or mutating it.
+Send and Receive are actions, not permanent tabs. The bottom navigation is owned by the primary React shell and must remain present on Home, Nearby, Activity and Profile.
 
 ## Motion
 
 - cold-start standalone-logo transition: restrained, under ~700ms
 - refresh Blee-logo/swish transition: brief and deliberate
 - screen transition: 180–240ms
-- sheet transition: 220–260ms
 - button press: subtle scale only
 - no decorative looping animations
 - respect reduced-motion preference
@@ -252,7 +231,7 @@ The canonical build must fail if any of these regress:
 - destructive WebView reload returns to refresh
 - inactivity/background auto-lock returns
 - Activity bottom navigation disappears
-- Contacts/Activity controls leak onto Home
+- Contacts/Activity controls leak onto Home or Activity
 - legacy MutationObserver/DOM-injected Contacts UI returns
 - wallet address case flicker returns
 - courier-funded settlement returns
