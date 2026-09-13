@@ -83,37 +83,36 @@ def apply_production_polish() -> None:
     # BLEE_PRODUCTION_POLISH_CHAIN_V1
     run_stage("apply-blee-production-polish.py")
     run_stage("apply-blee-production-raw-wakeup.py")
-    # Generated BleeMeshDb uses the atomic recipient/ACK transaction. Prepare
-    # notification summary fields against that structure before the general
-    # notification stage runs; the latter then sees its DB marker and skips its
-    # legacy pre-atomic anchor path.
     run_stage("apply-blee-payment-notifications-dbfix.py")
-    # The production service may already have lifecycle logic in onStartCommand.
-    # Inject notification handling into that method without replacing its body.
     run_stage("apply-blee-payment-notifications-servicecompat.py")
     run_stage("apply-blee-payment-notifications.py")
     run_stage("apply-blee-payment-notifications-v2.py")
-    # BLEE_NEARBY_STABILITY_CHAIN_V1
-    # Run last so it can canonicalize the full production identity/event path
-    # without changing payment signing, settlement, or Adaptive V3 selection.
+
+    # Wallet-canonical peer presence and self-healing remain the stable base.
     run_stage("apply-blee-nearby-stability-v1.py")
     run_stage("apply-blee-nearby-stability-heartbeat-v1.py")
     run_stage("apply-blee-nearby-stability-hook-v1.py")
-    # BLEE_SEND_QR_SCANNER_CHAIN_V1
-    # Scanner is a UI/native-recipient convenience only. It feeds the existing
-    # recipient state and never bypasses review, signing, balance or settlement.
+
+    # Send QR scanner base + placement/compile guards.
     run_stage("apply-blee-qr-scanner-v1.py")
-    # Correct any stale/misplaced scanner from earlier generated trees and pin
-    # the control to the real Send -> Recipient field only.
     run_stage("apply-blee-qr-scanner-placement-fix.py")
     run_stage("apply-blee-qr-scanner-compilefix.py")
+
+    # BLEE_PRODUCTION_STABILIZATION_V2
+    # Final isolated UX/reliability stages. They must not alter signing,
+    # authorization, sender-funded settlement, or Adaptive packet semantics.
+    run_stage("apply-blee-qr-ux-v2.py")
+    run_stage("apply-blee-pull-refresh-v1.py")
+    run_stage("apply-blee-nearby-speed-profile-v2.py")
+    run_stage("apply-blee-activity-identity-v2.py")
+    run_stage("apply-blee-notification-permission-v1.py")
 
 
 def main() -> None:
     patch_service()
     patch_runtime_copy()
     apply_production_polish()
-    print("Blee adaptive transport v3 + production UI/notifications + nearby stability + Send QR scanner hardened")
+    print("Blee adaptive transport v3 + production stabilization v2 hardened")
 
 
 if __name__ == "__main__":
