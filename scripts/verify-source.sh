@@ -23,6 +23,7 @@ required=(
   src/hooks/useBlee.ts
   src/hooks/useBleeView.ts
   src/hooks/useContacts.ts
+  src/lib/bleeStore.ts
   src/lib/persistence.ts
   src/lib/nativeNotifications.ts
   src/lib/payments.ts
@@ -78,6 +79,11 @@ if grep -q 'cap add android' package.json; then
   fail "Android is tracked source; package.json must not recreate it with cap add"
 fi
 
+grep -q 'root: process.cwd()' next.config.ts || fail "Turbopack workspace root is not pinned to this repository"
+STORE_REGISTRATIONS="$(grep -R "registerPlugin.*BleeStore" src --include='*.ts' --include='*.tsx' | wc -l | tr -d ' ')"
+[ "$STORE_REGISTRATIONS" = "1" ] || fail "BleeStore must be registered exactly once, found $STORE_REGISTRATIONS registrations"
+grep -q "registerPlugin<BleeStorePlugin>('BleeStore')" src/lib/bleeStore.ts || fail "canonical BleeStore proxy registration missing"
+
 grep -q 'BleeMeshPlugin.class' android/app/src/main/java/com/blee/payments/MainActivity.java || fail "MainActivity does not register BleeMeshPlugin"
 grep -q 'BleeQrScannerPlugin.class' android/app/src/main/java/com/blee/payments/MainActivity.java || fail "MainActivity does not register BleeQrScannerPlugin"
 grep -q 'BleeNotificationsPlugin.class' android/app/src/main/java/com/blee/payments/MainActivity.java || fail "MainActivity does not register BleeNotificationsPlugin"
@@ -103,8 +109,8 @@ grep -q "listContacts" android/app/src/main/java/com/blee/payments/BleeMeshPlugi
 grep -q "saveContact" android/app/src/main/java/com/blee/payments/BleeMeshPlugin.java || fail "native contacts save API missing"
 grep -q "deleteContact" android/app/src/main/java/com/blee/payments/BleeMeshPlugin.java || fail "native contacts delete API missing"
 grep -q "BleePaymentNotifier.received" android/app/src/main/java/com/blee/payments/BleeNotificationsPlugin.java || fail "native notification bridge does not use payment notifier"
-
 grep -q 'post(context, paymentId, "receiver", "Payment received", body, true)' android/app/src/main/java/com/blee/payments/BleePaymentNotifier.java || fail "verified incoming payment notifications must alert"
 
 printf 'VERIFIED: Blee 2.7 source-first repository contract\n'
 printf 'VERIFIED: offline receive projection, notifications and contacts contract\n'
+printf 'VERIFIED: single native store proxy and repository-scoped Turbopack config\n'
