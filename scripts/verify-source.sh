@@ -67,7 +67,7 @@ fi
 
 grep -q 'BleeMeshPlugin.class' android/app/src/main/java/com/blee/payments/MainActivity.java || fail "MainActivity does not register BleeMeshPlugin"
 grep -q 'BleeQrScannerPlugin.class' android/app/src/main/java/com/blee/payments/MainActivity.java || fail "MainActivity does not register BleeQrScannerPlugin"
-grep -q 'BleeMeshService.class' android/app/src/main/AndroidManifest.xml || fail "BleeMeshService missing from manifest"
+grep -q 'BleeMeshService' android/app/src/main/AndroidManifest.xml || fail "BleeMeshService missing from manifest"
 grep -q 'blee-recipient-qr-icon' src/components/BleeApp.tsx || fail "Send recipient QR control missing from tracked UI source"
 
 printf 'VERIFIED: Blee 2.7 source-first repository contract\n'
