@@ -52,7 +52,6 @@ def main() -> None:
     qr_plugin = locate("BleeQrScannerPlugin.java").read_text()
     qr_capture = locate("BleeQrCaptureActivity.java").read_text()
 
-    # ----- Stable React shell / navigation / Activity -----
     require(app, (
         "<BottomNav active={activeTab} onChange={selectTab}/>",
         "activityFilter",
@@ -60,9 +59,6 @@ def main() -> None:
     if app.count("<BottomNav active={activeTab} onChange={selectTab}/>") != 1:
         fail("primary bottom navigation is missing or duplicated")
 
-    # No experimental contact/filter controls are allowed to mutate Home or
-    # Activity for the hackathon production artifact. Durable contacts remain
-    # available natively for a later UI release.
     for marker in (
         "BLEE_CONTACTS_REACT_V4",
         "activity-contact-filter",
@@ -75,7 +71,6 @@ def main() -> None:
         if marker in app or marker in runtime or marker in css:
             fail(f"unstable contacts UI survived: {marker}")
 
-    # ----- Send QR scanner: exactly one final control -----
     require(app, (
         "BLEE_SEND_QR_SCANNER_V1",
         "registerPlugin<BleeQrScannerPlugin>('BleeQrScanner')",
@@ -90,7 +85,6 @@ def main() -> None:
     if '<span>Scan QR</span>' in app or '>Scan QR<' in app:
         fail("visible Scan QR text survived")
 
-    # ----- Refresh: in-process only -----
     if "window.location.reload" in runtime:
         fail("destructive WebView reload remains in runtime")
     require(runtime, (
@@ -109,7 +103,6 @@ def main() -> None:
     ), "production CSS")
     require(plugin, ("BLEE_NONDESTRUCTIVE_MANUAL_REFRESH_V2", "manualRefresh(PluginCall call)"), "native refresh bridge")
 
-    # ----- Nearby: last physically proven timing contract -----
     require(service, (
         "BLEE_ADAPTIVE_NEARBY_V3",
         "private static final long BLE_GRACE_MS = 15_000L",
@@ -132,7 +125,6 @@ def main() -> None:
             fail(f"aggressive transport regression returned: {marker}")
     require(hook, ("BLEE_PRODUCTION_NATIVE_PEER_MERGE_V1",), "React peer merge")
 
-    # ----- Identity / Activity / durable contacts backend -----
     require(db, (
         "BLEE_ACTIVITY_IDENTITY_BACKFILL_V2",
         "backfillPaymentIdentity",
@@ -152,7 +144,6 @@ def main() -> None:
         "BLEE_CONTACT_ACTIVITY_WAKE_V1",
     ), "contacts native API")
 
-    # ----- Native QR scanner -----
     require(qr_plugin, (
         "BLEE_SEND_QR_SCANNER_ANDROID_V1",
         "BleeQrCaptureActivity.class",
@@ -168,7 +159,6 @@ def main() -> None:
     if "BleeQrCaptureActivity" not in manifest or 'android:screenOrientation="portrait"' not in manifest:
         fail("portrait QR activity manifest entry missing")
 
-    # ----- Notifications -----
     require(notifier, (
         "BLEE_PAYMENT_NOTIFICATIONS_V1",
         "BLEE_NOTIFICATION_PERMISSION_V1",
@@ -185,7 +175,6 @@ def main() -> None:
     if "android.permission.POST_NOTIFICATIONS" not in manifest:
         fail("POST_NOTIFICATIONS manifest permission missing")
 
-    # ----- Version / canonical artifact contract -----
     package = json.loads(package_path.read_text())
     if package.get("version") != "2.7.0":
         fail(f"package version is {package.get('version')}, expected 2.7.0")
@@ -193,7 +182,7 @@ def main() -> None:
         fail("Android Gradle version is not 17 / 2.7.0")
 
     print("============================================================")
-    print("VERIFIED: Blee 2.7 final hackathon production source contract")
+    print("VERIFIED: Blee 2.7 final production source contract")
     print("- original React Activity shell + persistent BottomNav are intact")
     print("- experimental contacts/filter UI is absent; durable contacts backend remains")
     print("- Activity name/avatar backfill remains enabled")
