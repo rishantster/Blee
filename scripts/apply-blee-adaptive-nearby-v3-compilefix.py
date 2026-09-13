@@ -22,7 +22,6 @@ def patch_service() -> None:
     start = text.index("    // BLEE_ADAPTIVE_NEARBY_V3", text.index("class BleeMeshService"))
     end = text.index("    // BLEE_TRANSPORT_CORE_V2\n    // One runtime owner", start)
     adaptive = text[start:end]
-
     adaptive = adaptive.replace("message(error)", "nearbyError(error)")
 
     if "nearbyError(Throwable error)" not in adaptive:
@@ -80,7 +79,7 @@ def run_stage(script_name: str) -> None:
 
 
 def apply_production_polish() -> None:
-    # BLEE_PRODUCTION_POLISH_CHAIN_V1
+    # BLEE_PRODUCTION_POLISH_CHAIN_V2
     run_stage("apply-blee-production-polish.py")
     run_stage("apply-blee-production-raw-wakeup.py")
     run_stage("apply-blee-payment-notifications-dbfix.py")
@@ -93,13 +92,6 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-nearby-stability-heartbeat-v1.py")
     run_stage("apply-blee-nearby-stability-hook-v1.py")
 
-    # Send QR scanner base + placement/compile guards.
-    run_stage("apply-blee-qr-resume-compat-v1.py")
-    run_stage("apply-blee-qr-scanner-v1.py")
-    run_stage("apply-blee-qr-scanner-placement-fix.py")
-    run_stage("apply-blee-qr-scanner-compilefix.py")
-    run_stage("apply-blee-qr-ux-v2.py")
-
     # Full refresh stays in-process: no WebView reload and no vault/session loss.
     run_stage("apply-blee-refresh-preclean-v2.py")
     run_stage("apply-blee-pull-refresh-v1.py")
@@ -109,19 +101,21 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-nearby-speed-profile-v2.py")
     run_stage("apply-blee-activity-identity-v2.py")
 
-    # Contacts use durable SQLite/native APIs. The legacy MutationObserver UI is
-    # never installed. Any stale block is cleaned, then contacts are rendered in
-    # the real React Activity component while the bottom nav remains React-owned.
+    # Keep durable contacts data/native APIs, but do not mutate the React
+    # Activity/Home shell for the hackathon production build. This is the stable
+    # UI contract: original Activity tabs + original BottomNav stay untouched.
     run_stage("apply-blee-contacts-backend-only-v2.py")
     run_stage("apply-blee-contacts-sync-v1.py")
     run_stage("apply-blee-contacts-ui-preclean-v2.py")
     run_stage("apply-blee-stability-freeze-v1.py")
-    run_stage("apply-blee-contacts-react-v4.py")
-    run_stage("apply-blee-contacts-react-v4-compilefix.py")
 
-    # Contacts/navigation are the last React structural mutation. Normalize the
-    # Send recipient action after them, then pin exactly one QR icon to Send only.
-    run_stage("apply-blee-qr-final-normalize-v3.py")
+    # QR is installed only after every structural/runtime stabilization stage.
+    # Nothing after this point mutates the Send React tree.
+    run_stage("apply-blee-qr-resume-compat-v1.py")
+    run_stage("apply-blee-qr-scanner-v1.py")
+    run_stage("apply-blee-qr-scanner-placement-fix.py")
+    run_stage("apply-blee-qr-scanner-compilefix.py")
+    run_stage("apply-blee-qr-ux-v2.py")
 
     # Android 13+ permission request and high-importance payment channel.
     run_stage("apply-blee-notification-permission-v1.py")
@@ -134,7 +128,7 @@ def main() -> None:
     patch_service()
     patch_runtime_copy()
     apply_production_polish()
-    print("Blee adaptive transport v3 + Blee 2.7 production stack finalized")
+    print("Blee adaptive transport v3 + stable Blee 2.7 hackathon production stack finalized")
 
 
 if __name__ == "__main__":
