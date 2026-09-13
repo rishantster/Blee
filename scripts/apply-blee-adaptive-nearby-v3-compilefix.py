@@ -93,7 +93,11 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-nearby-stability-heartbeat-v1.py")
     run_stage("apply-blee-nearby-stability-hook-v1.py")
 
-    # Send QR scanner base + placement/compile guards.
+    # Send QR scanner base + placement/compile guards. Resume builds may already
+    # contain the final v2 icon class, so normalize that one control back to the
+    # base contract before v1 verifies it. The later v2 stage reconstructs the
+    # final icon-only control from zero.
+    run_stage("apply-blee-qr-resume-compat-v1.py")
     run_stage("apply-blee-qr-scanner-v1.py")
     run_stage("apply-blee-qr-scanner-placement-fix.py")
     run_stage("apply-blee-qr-scanner-compilefix.py")
