@@ -33,7 +33,7 @@ required=(
 for file in "${required[@]}"; do
   [ -f "$file" ] || fail "missing required file: $file"
 done
-pass "Blee 2.7 canonical hackathon inputs exist"
+pass "Blee 2.7 canonical production inputs exist"
 
 [ "$(find . -maxdepth 1 -type f -name 'build-blee*.command' | wc -l | tr -d ' ')" = "1" ] \
   || fail "more than one root Blee build entrypoint exists"
@@ -127,7 +127,7 @@ if positions != sorted(positions):
 for forbidden in ('apply-blee-contacts-react-v4.py', 'apply-blee-qr-final-normalize-v3.py'):
     if forbidden in s:
         raise SystemExit(f'SANITY FAIL: unstable stage returned to production chain: {forbidden}')
-print('SANITY OK: stable hackathon feature chain pinned; QR installs after all UI stabilization')
+print('SANITY OK: stable production feature chain pinned; QR installs after all UI stabilization')
 PY
 
 for forbidden in \
@@ -147,4 +147,4 @@ python3 scripts/verify-canonical-build.py
 pass "canonical Blee 2.7 repository contract"
 
 echo
-echo "Blee 2.7 hackathon repository sanity passed."
+echo "Blee 2.7 production repository sanity passed."
