@@ -238,6 +238,7 @@ python3 scripts/apply-blee-ble-transport-v4.py
 python3 scripts/apply-blee-ble-diagnostics.py
 python3 scripts/apply-blee-bitchat-reliability.py
 python3 scripts/apply-blee-gatt-interop.py
+python3 scripts/apply-blee-transport-core-v2.py
 
 npm run check
 npm run build
