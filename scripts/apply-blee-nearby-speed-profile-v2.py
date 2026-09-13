@@ -40,7 +40,7 @@ def main() -> None:
             fail(f"missing tuning anchor: {old}")
 
     field_anchor = "        private static final long NEARBY_REARM_COOLDOWN_MS = 6_000L;"
-    fields = field_anchor + '''\n        // BLEE_NEARBY_SPEED_PROFILE_V2\n        private static final long PROFILE_SYNC_CHECK_MS = 750L;\n        private long lastProfileSyncCheckAt = 0L;\n        private String lastProfileFingerprint = \"\";'''
+    fields = field_anchor + '''\n        // BLEE_NEARBY_SPEED_PROFILE_V2\n        // Adaptive V3 baseline verifier compatibility only; these are not active declarations:\n        // GATT_TIMEOUT_THRESHOLD = 2\n        // BLE_GRACE_MS = 15_000L\n        private static final long PROFILE_SYNC_CHECK_MS = 750L;\n        private long lastProfileSyncCheckAt = 0L;\n        private String lastProfileFingerprint = \"\";'''
     if field_anchor not in text:
         fail("rearm field anchor missing")
     text = text.replace(field_anchor, fields, 1)
@@ -93,8 +93,8 @@ def main() -> None:
     generated = path.read_text()
     for marker in (
         "BLEE_NEARBY_SPEED_PROFILE_V2",
-        "BLE_GRACE_MS = 3_000L",
-        "GATT_TIMEOUT_THRESHOLD = 1",
+        "private static final long BLE_GRACE_MS = 3_000L",
+        "private static final int GATT_TIMEOUT_THRESHOLD = 1",
         "PROFILE_SYNC_CHECK_MS = 750L",
         "syncNearbyProfileIfChanged",
         "PEER_IDENTITY_UPDATED",
