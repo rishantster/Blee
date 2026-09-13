@@ -89,6 +89,7 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-store-forward-relay-v1-compilefix.py")
     run_stage("apply-blee-store-forward-relay-v1-sender-compat.py")
     run_stage("apply-blee-store-forward-relay-v1-ingress.py")
+    run_stage("apply-blee-store-forward-relay-v1-cleanup.py")
     run_stage("verify-store-forward-relay.py")
 
 
