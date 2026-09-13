@@ -1,16 +1,7 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
 import type { PaymentRecord, PaymentState } from '../types/domain';
+import { BleeStore } from './bleeStore';
 
-interface BleeStorePlugin {
-  init(): Promise<{ ready: boolean; journalMode: string }>;
-  loadPayments(): Promise<{ payments: string[] }>;
-  replacePayments(options: { payments: string[] }): Promise<{ count: number }>;
-  getValue(options: { key: string }): Promise<{ value: string | null }>;
-  setValue(options: { key: string; value: string }): Promise<void>;
-  removeValue(options: { key: string }): Promise<void>;
-}
-
-const BleeStore = registerPlugin<BleeStorePlugin>('BleeStore');
 let ready = false;
 
 type StoredPayment = Record<string, unknown>;
