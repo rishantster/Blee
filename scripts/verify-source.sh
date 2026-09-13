@@ -28,6 +28,8 @@ required=(
   src/lib/payments.ts
   src/lib/atomicSigning.ts
   src/lib/walletRecovery.ts
+  src/lib/rails.ts
+  src/lib/solanaGateway.ts
   plugins/blee-store/package.json
   plugins/blee-nearby/package.json
   android/gradlew
@@ -139,7 +141,6 @@ if grep -Eq 'listContacts|saveContact|deleteContact|contactCandidates' android/a
   fail "contacts API leaked back into transport plugin"
 fi
 
-
 grep -q 'PROFILE_UUID' android/app/src/main/java/com/blee/payments/BleeMeshService.java || fail "connection-bound BLE profile characteristic missing"
 grep -q 'BleePeerProfile.decodeBound' android/app/src/main/java/com/blee/payments/BleeMeshService.java || fail "BLE profile is not bound to authenticated wallet session"
 grep -q 'verification_pending' android/app/src/main/java/com/blee/payments/BleeMeshDb.java || fail "recipient verification-pending lifecycle missing"
@@ -150,6 +151,26 @@ grep -q "state === 'verification-pending'" src/hooks/useBleeView.ts || fail "unv
 grep -q 'projectedBalance' src/components/BleeApp.tsx || fail "verified offline receive is not projected into displayed balance"
 grep -q 'senderName: aliasRef.current' src/hooks/useBlee.ts || fail "durable payment envelope is missing sender display identity"
 
+# BLEE_SOLANA_SECRET_BOUNDARY_V1
+# Solana provider credentials must never enter APK-bound source. The client may
+# know only the public Blee gateway; provider selection and credentials live on
+# the server side.
+grep -q "BLEE_SOLANA_GATEWAY = 'https://rpc.blee.app'" src/lib/solanaGateway.ts || fail "canonical Solana gateway URL missing"
+grep -q "id: 'solana-sol'" src/lib/rails.ts || fail "Solana payment rail registry missing"
+grep -q "settlementModel: 'solana-durable-nonce'" src/lib/rails.ts || fail "Solana durable-nonce settlement model missing"
+
+APK_BOUND_DIRS=(src android plugins public app)
+for dir in "${APK_BOUND_DIRS[@]}"; do
+  [ -e "$dir" ] || continue
+  if grep -RIEq --exclude='*.map' 'helius-rpc[.]com|HELIUS_API_KEY|NEXT_PUBLIC_HELIUS|VITE_HELIUS|EXPO_PUBLIC_HELIUS' "$dir"; then
+    fail "provider credential material or Helius endpoint found in APK-bound source: $dir"
+  fi
+  if grep -RIEq --exclude='*.map' 'https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com' "$dir"; then
+    fail "direct Solana RPC endpoint found in APK-bound source: $dir; use rpc.blee.app"
+  fi
+done
+
 printf 'VERIFIED: Blee 2.7.1 source-first repository contract\n'
 printf 'VERIFIED: offline receive projection, notifications and contacts contract\n'
 printf 'VERIFIED: single plugin ownership and generated-output hygiene\n'
+printf 'VERIFIED: Solana client is gateway-only with no provider credential surface\n'
