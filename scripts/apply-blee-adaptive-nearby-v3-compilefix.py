@@ -83,13 +83,14 @@ def apply_production_polish() -> None:
     # BLEE_PRODUCTION_POLISH_CHAIN_V1
     run_stage("apply-blee-production-polish.py")
     run_stage("apply-blee-production-raw-wakeup.py")
+    run_stage("apply-blee-payment-notifications.py")
 
 
 def main() -> None:
     patch_service()
     patch_runtime_copy()
     apply_production_polish()
-    print("Blee adaptive transport v3 compile path + production event/UI polish hardened")
+    print("Blee adaptive transport v3 compile path + production event/UI/notification polish hardened")
 
 
 if __name__ == "__main__":
