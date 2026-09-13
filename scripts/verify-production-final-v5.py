@@ -54,8 +54,7 @@ def main() -> None:
 
     # ----- React shell / navigation / Activity -----
     require(app, (
-        "BLEE_CONTACTS_REACT_V3",
-        "BLEE_CONTACTS_REACT_V3_COMPILEFIX",
+        "BLEE_CONTACTS_REACT_V4",
         "const stable = canonicalWallet(value)",
         "activity-contact-filter",
         "Filter by contact",
@@ -64,7 +63,7 @@ def main() -> None:
         "contactMatches = !contactFilter",
         "savedContact?.displayName",
         "renderContactSheet()",
-        "{primary && <BottomNav active={activeTab} onChange={selectTab}/>}",
+        "<BottomNav active={activeTab} onChange={selectTab}/>",
     ), "Blee React shell")
 
     if app.count('className="blee-recipient-qr-icon"') != 1:
@@ -111,7 +110,7 @@ def main() -> None:
     require(css, (
         "BLEE_SOFT_REFRESH_CSS_V2",
         "BLEE_STABLE_SEND_RECIPIENT_ACTION_V1",
-        "BLEE_CONTACTS_REACT_V3",
+        "BLEE_CONTACTS_REACT_V4",
         ".react-contact-sheet",
     ), "production CSS")
     require(plugin, ("BLEE_NONDESTRUCTIVE_MANUAL_REFRESH_V2", "manualRefresh(PluginCall call)"), "native refresh bridge")
