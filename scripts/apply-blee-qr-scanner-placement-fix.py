@@ -89,11 +89,11 @@ def main() -> None:
     if "BLEE_SEND_QR_SCANNER_V1" not in text:
         fail("base QR scanner stage must run first")
 
-    # Remove every previously rendered scanner control. The original patch could
-    # accidentally land inside the reusable PasswordField component, causing the
-    # scanner to appear on both passphrase fields. Rebuild one control from zero.
+    # Resume builds may contain either the original base control or the final
+    # icon-only v2 control. Remove both forms before reconstructing exactly one
+    # base control. QR UX v2 later converts this one control to the final icon.
     text, removed = re.subn(
-        r'\s*<button\b(?=[^>]*\bclassName="blee-recipient-qr-scan")[\s\S]*?</button>',
+        r'\s*<button\b(?=[^>]*\bclassName="(?:blee-recipient-qr-scan|blee-recipient-qr-icon)")[\s\S]*?</button>',
         '',
         text,
     )
@@ -132,16 +132,14 @@ def main() -> None:
     APP.write_text(text)
 
     final = APP.read_text()
-    button_hits = [m.start() for m in re.finditer(r'className="blee-recipient-qr-scan"', final)]
-    if len(button_hits) != 1:
-        fail(f"expected exactly one rendered QR scanner control, found {len(button_hits)}")
-    button_at = button_hits[0]
+    scan_hits = [m.start() for m in re.finditer(r'className="blee-recipient-qr-scan"', final)]
+    icon_hits = [m.start() for m in re.finditer(r'className="blee-recipient-qr-icon"', final)]
+    if len(scan_hits) != 1 or icon_hits:
+        fail(f"expected exactly one base QR scanner control, found old={len(scan_hits)} icon={len(icon_hits)}")
+    button_at = scan_hits[0]
     if not (send_start < recipient < input_start < button_at < amount < review):
         fail("QR scanner is not scoped to Send Recipient before Amount/Review")
 
-    # The selected input itself must be the non-secret recipient address field.
-    # This structural check catches the exact PasswordField regression without
-    # relying on source-code distance between unrelated screens/components.
     selected = final[input_start:button_at]
     if "password" in selected.lower() or "passphrase" in selected.lower():
         fail("QR scanner leaked into secret/passphrase UI")
