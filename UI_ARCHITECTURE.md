@@ -22,7 +22,7 @@ This document defines the canonical Blee Android presentation model. It is inten
 - Blee does not intentionally auto-log-out an unlocked user because of inactivity/backgrounding while the process remains alive.
 - Native payment notifications work without requiring the React screen to remain open, subject to Android notification permission.
 - Pull-to-refresh is non-destructive: it refreshes Blee state without reloading the WebView or clearing the unlocked wallet session.
-- Contacts remain durable local Blee records keyed by wallet address in SQLite/native APIs, but the hackathon production UI does not expose experimental Contacts/Filter controls.
+- Contacts remain durable local Blee records keyed by wallet address in SQLite/native APIs, while experimental Contacts/Filter controls remain disabled until they can be integrated without destabilizing Activity navigation.
 - The same EVM wallet is rendered with one stable canonical address presentation; checksum/lowercase flicker is not acceptable.
 
 ## Cold launch
@@ -129,7 +129,7 @@ Offline authorization must never be labelled chain-confirmed.
 - current state
 - timestamp
 
-No experimental Contacts or contact-filter controls are added to Activity in the hackathon production build. Activity must stay on the original React navigation shell and must never be mutated by a MutationObserver or arbitrary DOM injection.
+No experimental Contacts or contact-filter controls are added to Activity in the current production build. Activity must stay on the original React navigation shell and must never be mutated by a MutationObserver or arbitrary DOM injection.
 
 ### Contacts backend
 Contacts are local-first metadata backed by SQLite and keyed by canonical wallet address. The native APIs for list/save/delete/candidates remain part of the app and saved aliases remain presentation metadata only. They never modify EIP-3009 authorization, payment signatures or settlement data. Visible contact-management UI is intentionally deferred until it can be integrated without destabilizing Activity navigation.
