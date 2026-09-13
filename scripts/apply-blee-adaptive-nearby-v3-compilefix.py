@@ -93,8 +93,7 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-nearby-stability-heartbeat-v1.py")
     run_stage("apply-blee-nearby-stability-hook-v1.py")
 
-    # Send QR scanner base + placement/compile guards. Resume compatibility is
-    # harmless on a clean build and makes the stage idempotent if rerun.
+    # Send QR scanner base + placement/compile guards.
     run_stage("apply-blee-qr-resume-compat-v1.py")
     run_stage("apply-blee-qr-scanner-v1.py")
     run_stage("apply-blee-qr-scanner-placement-fix.py")
@@ -111,14 +110,13 @@ def apply_production_polish() -> None:
     run_stage("apply-blee-activity-identity-v2.py")
 
     # Contacts use durable SQLite/native APIs. The legacy MutationObserver UI is
-    # never installed. Any stale legacy block is deterministically removed, then
-    # the feature is rendered inside the real React Activity screen.
+    # never installed. Any stale block is cleaned, then contacts are rendered in
+    # the real React Activity component while the bottom nav remains React-owned.
     run_stage("apply-blee-contacts-backend-only-v2.py")
     run_stage("apply-blee-contacts-sync-v1.py")
     run_stage("apply-blee-contacts-ui-preclean-v2.py")
     run_stage("apply-blee-stability-freeze-v1.py")
-    run_stage("apply-blee-contacts-react-v3.py")
-    run_stage("apply-blee-contacts-react-v3-compilefix.py")
+    run_stage("apply-blee-contacts-react-v4.py")
 
     # Android 13+ permission request and high-importance payment channel.
     run_stage("apply-blee-notification-permission-v1.py")
