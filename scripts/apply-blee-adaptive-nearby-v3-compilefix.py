@@ -12,7 +12,7 @@ def locate_service() -> Path:
     return hits[0]
 
 
-def main() -> None:
+def patch_service() -> None:
     path = locate_service()
     text = path.read_text()
     if "BLEE_ADAPTIVE_NEARBY_V3" not in text:
@@ -26,9 +26,10 @@ def main() -> None:
     # latter's private message(Throwable) helper unqualified.
     adaptive = adaptive.replace("message(error)", "nearbyError(error)")
 
-    helper_anchor = '''        String mode() {
+    if "nearbyError(Throwable error)" not in adaptive:
+        helper_anchor = '''        String mode() {
             if (fallbackStarting) return "nearby_starting";'''
-    helper = '''        private String nearbyError(Throwable error) {
+        helper = '''        private String nearbyError(Throwable error) {
             if (error == null) return "unknown";
             String value = error.getMessage();
             return value == null || value.isEmpty() ? error.toString() : value;
@@ -37,9 +38,9 @@ def main() -> None:
         String mode() {
             if ("permission_required".equals(lastNearbyStatus)) return "permission_required";
             if (fallbackStarting) return "nearby_starting";'''
-    if helper_anchor not in adaptive:
-        raise SystemExit("Blee adaptive v3 compilefix: mode helper anchor missing")
-    adaptive = adaptive.replace(helper_anchor, helper, 1)
+        if helper_anchor not in adaptive:
+            raise SystemExit("Blee adaptive v3 compilefix: mode helper anchor missing")
+        adaptive = adaptive.replace(helper_anchor, helper, 1)
 
     if "message(error)" in adaptive:
         raise SystemExit("Blee adaptive v3 compilefix: cross-inner helper call remains")
@@ -48,7 +49,30 @@ def main() -> None:
 
     text = text[:start] + adaptive + text[end:]
     path.write_text(text)
-    print("Blee adaptive transport v3 Java compile path hardened")
+
+
+def patch_runtime_copy() -> None:
+    path = ROOT / "src/components/BleeRuntime.tsx"
+    if not path.is_file():
+        raise SystemExit("Blee adaptive v3 compilefix: generated BleeRuntime.tsx missing")
+    text = path.read_text()
+    old_footer = "Keep Wi-Fi off on both phones while testing. This panel refreshes automatically."
+    new_footer = "Keep Bluetooth and Wi-Fi enabled. Internet can stay off. This panel refreshes automatically."
+    if old_footer in text:
+        text = text.replace(old_footer, new_footer)
+    text = text.replace(
+        "Scanning and advertising over Bluetooth LE in the background.",
+        "Bluetooth LE is primary; Blee can switch to a local offline fallback when needed.",
+    )
+    if "Internet can stay off" not in text:
+        raise SystemExit("Blee adaptive v3 compilefix: adaptive test guidance was not installed")
+    path.write_text(text)
+
+
+def main() -> None:
+    patch_service()
+    patch_runtime_copy()
+    print("Blee adaptive transport v3 compile path + offline test guidance hardened")
 
 
 if __name__ == "__main__":
