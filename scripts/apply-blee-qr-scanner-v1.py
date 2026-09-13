@@ -86,13 +86,9 @@ def recipient_input_bounds(text: str, start: int, end: int) -> tuple[int, int]:
     input_start = text.find("<input", start, end)
     if input_start < 0:
         fail("Recipient input not found")
-    # React input elements are self-closing in the production Blee UI. Prefer />
-    # because arrow handlers contain the '>' character in '=>'.
     close = text.find("/>", input_start, end)
     if close >= 0:
         return input_start, close + 2
-    # Defensive fallback: scan until a tag-closing > that is outside quotes and
-    # JSX brace expressions rather than stopping on an arrow function.
     quote = None
     brace_depth = 0
     for i in range(input_start + 6, end):
@@ -263,7 +259,6 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.journeyapps.barcodescanner.IntentIntegrator;
-import com.journeyapps.barcodescanner.IntentResult;
 
 @CapacitorPlugin(name = "BleeQrScanner")
 public class BleeQrScannerPlugin extends Plugin {{
@@ -286,18 +281,16 @@ public class BleeQrScannerPlugin extends Plugin {{
     @ActivityCallback
     private void scanResult(PluginCall call, ActivityResult activityResult) {{
         if (call == null) return;
-        IntentResult result = IntentIntegrator.parseActivityResult(
-            activityResult.getResultCode(),
-            activityResult.getData()
-        );
+        Intent data = activityResult == null ? null : activityResult.getData();
+        String value = data == null ? null : data.getStringExtra("SCAN_RESULT");
         JSObject out = new JSObject();
-        if (result == null || result.getContents() == null) {{
+        if (value == null || value.trim().isEmpty()) {{
             out.put("cancelled", true);
             call.resolve(out);
             return;
         }}
         out.put("cancelled", false);
-        out.put("value", result.getContents());
+        out.put("value", value);
         call.resolve(out);
     }}
 }}
@@ -348,7 +341,7 @@ def verify_android() -> None:
         '@CapacitorPlugin(name = "BleeQrScanner")',
         "IntentIntegrator.QR_CODE",
         "startActivityForResult(call, intent, \"scanResult\")",
-        "IntentIntegrator.parseActivityResult",
+        'getStringExtra("SCAN_RESULT")',
     ):
         if marker not in native:
             fail(f"native scanner verification missing {marker}")
