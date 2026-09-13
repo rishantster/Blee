@@ -12,8 +12,6 @@ There is one supported clean build entrypoint:
 bash build-blee.command
 ```
 
-Historical builder filenames remain only as thin compatibility wrappers and delegate immediately to `build-blee.command`. They contain no independent build logic.
-
 The current APK artifact is:
 
 ```text
@@ -32,8 +30,6 @@ Android release identity:
 versionName 2.7.0
 versionCode 17
 ```
-
-Every canonical build runs `scripts/verify-canonical-build.py` before source materialization and again after all web/native hardening. This fails the build if a legacy builder regains independent logic, the versioned APK contract changes, or required protocol-hardening markers disappear.
 
 ## Build commands
 
@@ -55,17 +51,38 @@ The canonical builder selects Java 21+, rebuilds generated web/Android state fro
 
 ### Finish an already-synced Blee 2.7 tree
 
-Use this only when the web build and Capacitor sync have already completed successfully and the generated Android tree is present:
+Use this when the web build and Capacitor sync have already completed successfully and the generated Android tree is present:
 
 ```bash
 cd ~/Desktop/Blee-sanity
 
-git pull --ff-only origin main
-chmod +x scripts/finish-blee-2.7-post-sync.sh
+git fetch origin main
+git restore --source=origin/main --worktree scripts/finish-blee-2.7-post-sync.sh
 bash scripts/finish-blee-2.7-post-sync.sh
 ```
 
-The finisher explicitly selects Java 21 before invoking Gradle and refuses to build on an older JVM.
+Do **not** run `chmod +x` on tracked build scripts. Invoke them with `bash`. Changing a tracked file mode can leave a local Git modification and block a later fast-forward pull.
+
+The post-sync finisher:
+
+- selects Java 21 explicitly;
+- isolates Gradle from user-level `~/.gradle` configuration;
+- pins `org.gradle.java.home` to the selected Java 21 JDK;
+- verifies the Gradle launcher JVM before compilation;
+- builds the Android APK;
+- validates the final APK binary and writes its SHA-256.
+
+### If a pull is blocked by local build-script changes
+
+Do not delete the generated Android tree. Refresh only the build script from `origin/main` and continue:
+
+```bash
+cd ~/Desktop/Blee-sanity
+
+git fetch origin main
+git restore --source=origin/main --worktree scripts/finish-blee-2.7-post-sync.sh
+bash scripts/finish-blee-2.7-post-sync.sh
+```
 
 ### Verify Java on macOS
 
