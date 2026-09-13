@@ -19,6 +19,7 @@ required=(
   "scripts/apply-blee-nearby-speed-profile-v2.py"
   "scripts/apply-blee-pull-refresh-v1.py"
   "scripts/apply-blee-qr-ux-v2.py"
+  "scripts/apply-blee-qr-final-normalize-v3.py"
   "scripts/apply-blee-notification-permission-v1.py"
   "scripts/apply-blee-contacts-backend-only-v2.py"
   "scripts/apply-blee-contacts-sync-v1.py"
@@ -109,11 +110,18 @@ for token in \
   'apply-blee-activity-identity-v2.py' \
   'apply-blee-contacts-backend-only-v2.py' \
   'apply-blee-contacts-react-v4.py' \
+  'apply-blee-qr-final-normalize-v3.py' \
   'apply-blee-notification-permission-v1.py' \
   'verify-production-final-v5.py'; do
   grep -q "$token" "$chain" || fail "final production chain missing $token"
 done
 pass "Blee 2.7 production feature chain pinned"
+
+grep -q 'BLEE_FINAL_QR_NORMALIZE_V3' scripts/apply-blee-qr-final-normalize-v3.py \
+  || fail "final QR cardinality normalizer marker missing"
+grep -q 'scanner cardinality invalid' scripts/apply-blee-qr-final-normalize-v3.py \
+  || fail "final QR cardinality guard missing"
+pass "final Send QR cardinality is pinned after React contacts"
 
 for forbidden in \
   'dist/*.apk' \
