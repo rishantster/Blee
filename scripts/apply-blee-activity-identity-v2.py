@@ -52,15 +52,25 @@ def main() -> None:
                     if (!paymentReferencesWallet(payment, normalized)) continue;
                     boolean changed = false;
                     String cleanName = displayName == null ? "" : displayName.trim();
+                    JSONObject auth = authorization(payment);
+                    boolean peerIsSender = auth != null && normalized.equalsIgnoreCase(auth.optString("from", ""));
+                    boolean peerIsReceiver = auth != null && normalized.equalsIgnoreCase(auth.optString("to", ""));
+
                     if (!cleanName.isEmpty()) {
                         if (!cleanName.equals(payment.optString("counterpartyName", ""))) { payment.put("counterpartyName", cleanName); changed = true; }
                         payment.put("peerName", cleanName);
                         payment.put("contactName", cleanName);
+                        payment.put("displayName", cleanName);
+                        if (peerIsSender) payment.put("senderName", cleanName);
+                        if (peerIsReceiver) payment.put("receiverName", cleanName);
                     }
                     if (avatar != null && !avatar.isEmpty()) {
                         if (!avatar.equals(payment.optString("counterpartyAvatar", ""))) { payment.put("counterpartyAvatar", avatar); changed = true; }
                         payment.put("peerAvatar", avatar);
                         payment.put("contactAvatar", avatar);
+                        payment.put("avatar", avatar);
+                        if (peerIsSender) payment.put("senderAvatar", avatar);
+                        if (peerIsReceiver) payment.put("receiverAvatar", avatar);
                     }
                     payment.put("counterpartyWallet", normalized);
                     JSONObject profile = payment.optJSONObject("counterpartyProfile");
@@ -83,7 +93,7 @@ def main() -> None:
 
     private static boolean paymentReferencesWallet(JSONObject payment, String wallet) {
         if (payment == null || wallet == null) return false;
-        for (String key : new String[] { "sender", "receiver", "from", "to", "counterparty", "counterpartyWallet" }) {
+        for (String key : new String[] { "sender", "receiver", "from", "to", "counterparty", "counterpartyWallet", "senderWallet", "receiverWallet", "recipient" }) {
             if (wallet.equalsIgnoreCase(payment.optString(key, ""))) return true;
         }
         JSONObject auth = authorization(payment);
@@ -101,7 +111,7 @@ def main() -> None:
     path.write_text(text)
 
     generated = path.read_text()
-    for marker in ("BLEE_ACTIVITY_IDENTITY_BACKFILL_V2", "backfillPaymentIdentity", "counterpartyName", "counterpartyAvatar"):
+    for marker in ("BLEE_ACTIVITY_IDENTITY_BACKFILL_V2", "backfillPaymentIdentity", "counterpartyName", "counterpartyAvatar", "senderAvatar", "receiverAvatar"):
         if marker not in generated:
             fail(f"missing {marker}")
     print("VERIFIED: late peer identity backfills Activity name/avatar without touching payment authorization")
