@@ -21,10 +21,27 @@ This document defines the canonical Blee Android presentation model. It is inten
 - Passphrase remains the biometric fallback/recovery credential.
 - Blee does not intentionally auto-log-out an unlocked user because of inactivity/backgrounding while the process remains alive.
 - Native payment notifications work without requiring the React screen to remain open, subject to Android notification permission.
+- Pull-to-refresh is non-destructive: it refreshes Blee state without reloading the WebView or clearing the unlocked wallet session.
+- Contacts are local Blee records keyed by wallet address. They are managed inside the real React Activity experience, never injected onto Home or into the DOM shell.
+- The same EVM wallet is rendered with one stable canonical address presentation; checksum/lowercase flicker is not acceptable.
 
 ## Cold launch
 
 Cold launch shows the supplied standalone Blee logo only, centered with its original geometry and a restrained one-time transition. The native Blee launch chime plays when the app genuinely enters the foreground, with lifecycle debouncing to prevent duplicate playback. No decorative rings or marketing carousel.
+
+## Refresh
+
+Pulling the app down from the top performs a full in-process state refresh. The funds-card refresh affordance invokes the same path.
+
+Refresh wakes/re-queries:
+- confirmed balance / network state;
+- durable payment journal and pending envelopes;
+- nearby peer projection;
+- peer identity/name/avatar projection;
+- Activity projection;
+- contact projection.
+
+Refresh must never call `window.location.reload()`, clear the wallet vault, log the user out, or destroy the in-memory unlocked session. While refreshing, Blee shows a brief centered Blee logo animation with a soft swish.
 
 ## Screen map
 
@@ -36,6 +53,8 @@ Cold launch shows the supplied standalone Blee logo only, centered with its orig
 - optional fingerprint setup only when supported
 - Create wallet
 - Import / restore
+
+No QR scanner appears in passphrase fields.
 
 ### Unlock
 - Blee wordmark
@@ -56,20 +75,27 @@ Cold launch shows the supplied standalone Blee logo only, centered with its orig
 - small Recent activity preview
 - persistent bottom navigation
 
+Home does **not** contain Activity contact filters, `All activity` selectors or permanent Contacts controls.
+
 ### Nearby
 - discovery state
 - peer rows with cached identity
-- address fallback when identity unavailable
-- distance/recency only when reliable
+- display name + profile image when known
+- address fallback only when identity is unavailable
 - Send per peer
-- discovery refresh/re-arm affordance
+- discovery self-healing/re-arm behavior
+
+Nearby discovery is local transport behavior; Internet is not required to discover another Blee phone. The production transport keeps the last physically proven BLE/Nearby timing contract rather than abandoning BLE aggressively.
 
 ### Send
 - recipient identity/address
+- **one QR scan icon inside the Recipient input**
 - USDC amount
 - confirmed spendable context
 - note only if persisted/transported correctly
 - Review & send
+
+The QR scanner is icon-only, portrait-oriented and presented as a focused scanner surface rather than a landscape full-screen takeover. QR decoding works from the bundled scanner without requiring Internet.
 
 A payment may not exceed confirmed spendable minus already-reserved outgoing.
 
@@ -100,14 +126,34 @@ Offline authorization must never be labelled chain-confirmed.
 - nearby discoverability state
 
 ### Activity
+- persistent primary bottom navigation remains visible
 - All / Sent / Received filters
-- counterparty identity/address
+- one **Filter by contact** control below the direction filters
+- counterparty saved-contact name/avatar when available
+- otherwise resolved Blee peer name/avatar
+- address fallback only when identity is unavailable
 - amount
 - direction
 - current state
 - timestamp
 
+Contact filtering is implemented by the React Activity component itself. It must never be inserted by a MutationObserver or arbitrary DOM manipulation.
+
+### Contacts
+Contacts are local-first Blee metadata backed by SQLite and keyed by canonical wallet address.
+
+From Activity, the user can:
+- filter Activity by a saved contact;
+- open **Manage contacts**;
+- save people discovered through payment history / peer identity;
+- rename a saved contact;
+- remove a saved contact.
+
+A saved local contact alias/avatar is presentation metadata only. It never modifies EIP-3009 authorization, payment signatures or settlement data.
+
 ### Activity detail
+- counterparty name/avatar with saved-contact preference
+- Save contact / Edit contact action
 - immutable event timeline
 - sender / receiver
 - amount
@@ -125,6 +171,8 @@ Offline authorization must never be labelled chain-confirmed.
 - Backup & recovery
 - Settings
 - About
+
+Profile name/avatar changes are synchronized to connected nearby Blee peers and should backfill Activity presentation without changing payment authorization.
 
 ### Settings
 - discoverability
@@ -148,13 +196,13 @@ Unsupported future networks/assets must not leak into current product UI.
 
 ## Notifications
 
-Native payment notifications cover:
-- nearby payment received;
-- authenticated recipient delivery ACK;
-- settlement receipt reported through the mesh;
-- independently observed chain confirmation.
+Native payment notifications cover the user-visible payment lifecycle:
+- payment sent after durable outgoing persistence;
+- nearby payment detected while verification begins when applicable;
+- cryptographically verified payment received / pending settlement;
+- authenticated recipient delivery ACK / delivered state.
 
-Android 13+ notification permission may suppress OS notifications, but never ledger correctness.
+Android 13+ notification permission is requested at runtime. Permission denial may suppress OS notifications, but never ledger correctness.
 
 ## Biometric security contract
 
@@ -176,9 +224,12 @@ Primary destinations:
 
 Send and Receive are actions, not permanent tabs.
 
+The bottom navigation is owned by the primary React shell and must remain present on Home, Nearby, Activity and Profile. Sheets (including Contacts) overlay that shell without replacing or mutating it.
+
 ## Motion
 
 - cold-start standalone-logo transition: restrained, under ~700ms
+- refresh Blee-logo/swish transition: brief and deliberate
 - screen transition: 180–240ms
 - sheet transition: 220–260ms
 - button press: subtle scale only
@@ -197,12 +248,19 @@ The canonical build must fail if any of these regress:
 - standalone Blee logo disappears from Android launcher or cold launch
 - cold-launch animation or native Blee chime disappears
 - Send or Receive disappears
+- QR scanner is missing, duplicated, placed outside Send Recipient, or leaks into passphrase UI
+- destructive WebView reload returns to refresh
 - inactivity/background auto-lock returns
+- Activity bottom navigation disappears
+- Contacts/Activity controls leak onto Home
+- legacy MutationObserver/DOM-injected Contacts UI returns
+- wallet address case flicker returns
 - courier-funded settlement returns
 - sender-funded raw transaction path disappears
 - native atomic signing reservation disappears
 - nearby runtime permissions/re-arm disappears
+- last physically proven BLE/Nearby timing contract is replaced by aggressive fallback values
 - monotonic native payment state protection disappears
 - settlement receipts are accepted without sender-signed hash pinning
 - legacy orbit/radar/halo design returns
-- APK output is not the release-versioned `dist/Blee-2.6.0.apk`
+- APK output is not the release-versioned `dist/Blee-2.7.0.apk`
