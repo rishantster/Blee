@@ -10,6 +10,7 @@ next-env.d.ts
 # Android / Gradle generated output
 android/.gradle/
 android/**/build/
+plugins/**/android/build/
 android/local.properties
 android/app/src/main/assets/public/
 android/app/src/main/assets/capacitor.config.json
