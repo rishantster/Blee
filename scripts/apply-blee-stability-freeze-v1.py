@@ -118,7 +118,8 @@ const bleeCanonicalWallet = (value: unknown) => {
 
     # Presentational guard for own-wallet/profile text that may still be sourced
     # from a checksummed viem account while native persistence is lowercase.
-    # This mutates text only; it never changes payment/signing values.
+    # It also tags the containing element so future React renders are lowercase
+    # from CSS immediately, rather than visibly flipping for a frame.
     if "BLEE_CANONICAL_WALLET_TEXT_V1" not in text:
         gate = "const SHOW_INTERNAL_DIAGNOSTICS = false;"
         if gate not in text:
@@ -137,6 +138,10 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && !(window
       const node = walker.currentNode as Text;
       const value = node.nodeValue || '';
       if (!/0x[0-9a-fA-F]{40}/.test(value)) continue;
+      const parent = node.parentElement;
+      if (parent && /^\s*0x[0-9a-fA-F]{40}\s*$/.test(value)) {
+        parent.classList.add('blee-canonical-wallet-text');
+      }
       const next = value.replace(/0x[0-9a-fA-F]{40}/g, (address) => address.toLowerCase());
       if (next !== value) updates.push([node, next]);
     }
@@ -194,7 +199,10 @@ def patch_css() -> None:
 /* Send Recipient owns one trailing action only: the QR scanner. */
 .blee-recipient-input-shell > button:not(.blee-recipient-qr-icon) { display: none !important; }
 .blee-recipient-input-shell .blee-recipient-qr-icon { z-index: 4; }
+.blee-canonical-wallet-text { text-transform: lowercase !important; }
 '''
+    elif ".blee-canonical-wallet-text" not in text:
+        text = text.rstrip() + "\n.blee-canonical-wallet-text { text-transform: lowercase !important; }\n"
     path.write_text(text)
 
 
@@ -220,9 +228,10 @@ def verify() -> None:
         "BLEE_CANONICAL_WALLET_CASE_V1",
         "BLEE_CANONICAL_WALLET_TEXT_V1",
         "bleeCanonicalWallet(event.wallet)",
+        "blee-canonical-wallet-text",
     ):
-        if marker not in runtime:
-            fail(f"runtime missing {marker}")
+        if marker not in runtime and marker not in css:
+            fail(f"wallet/UI stability marker missing {marker}")
 
     if "BLEE_STABLE_SEND_RECIPIENT_ACTION_V1" not in css:
         fail("stable Send recipient action rule missing")
