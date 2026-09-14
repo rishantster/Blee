@@ -1,10 +1,13 @@
 import { Capacitor } from '@capacitor/core';
 import type { PaymentRecord, PaymentState } from '../types/domain';
 import { BleeStore } from './bleeStore';
+import { ARC_TESTNET, getActiveNetwork } from './networkConfig';
+import { ARC_USDC_RAIL } from './rails';
 
 let ready = false;
 
 type StoredPayment = Record<string, unknown>;
+type MissingNetworkMode = 'legacy-testnet' | 'active-release';
 
 function wallet(value: unknown): string | undefined {
   const clean = String(value || '').trim();
@@ -39,6 +42,44 @@ function canonicalRoute(value: unknown, state: PaymentState, originalState: unkn
   return 'local-queue';
 }
 
+function canonicalNetworkMetadata(
+  input: StoredPayment,
+  missingNetworkMode: MissingNetworkMode,
+): Pick<PaymentRecord, 'railId' | 'networkId' | 'assetId' | 'assetSymbol' | 'environment' | 'chainFamily'> {
+  const railId = input.railId === 'solana-sol' ? 'solana-sol' : 'arc-usdc';
+  if (railId === 'solana-sol') {
+    return {
+      railId,
+      networkId: 'solana-mainnet',
+      assetId: 'sol',
+      assetSymbol: 'SOL',
+      environment: 'mainnet',
+      chainFamily: 'solana',
+    };
+  }
+
+  // BLEE_LEGACY_NETWORK_IDENTITY_V1
+  // Persisted rows written before Sprint 3 carried no network metadata. They
+  // were created when Blee was Arc-Testnet-only, so load-time missing metadata
+  // ALWAYS means arc-testnet. New in-memory rows, however, inherit the release-
+  // selected Arc profile before their first durable write.
+  const activeArc = getActiveNetwork();
+  const fallbackNetworkId = missingNetworkMode === 'legacy-testnet' ? ARC_TESTNET.id : activeArc.id;
+  const networkId = input.networkId === 'arc-mainnet'
+    ? 'arc-mainnet'
+    : input.networkId === 'arc-testnet'
+      ? 'arc-testnet'
+      : fallbackNetworkId;
+  return {
+    railId: 'arc-usdc',
+    networkId,
+    assetId: 'usdc',
+    assetSymbol: 'USDC',
+    environment: networkId === 'arc-mainnet' ? 'mainnet' : 'testnet',
+    chainFamily: 'evm',
+  };
+}
+
 /**
  * SQLite is shared by the WebView journal and the native background mesh.
  * The native mesh historically used `outgoing` / `incoming`, while the React
@@ -46,7 +87,7 @@ function canonicalRoute(value: unknown, state: PaymentState, originalState: unkn
  * boundary so UI, notifications and background transport all describe the same
  * payment without leaking legacy names into application code.
  */
-function canonicalPayment(input: StoredPayment): PaymentRecord | null {
+function canonicalPayment(input: StoredPayment, missingNetworkMode: MissingNetworkMode): PaymentRecord | null {
   const id = String(input.id || input.paymentId || '').trim();
   const direction = canonicalDirection(input.direction);
   if (!id || !direction) return null;
@@ -82,6 +123,7 @@ function canonicalPayment(input: StoredPayment): PaymentRecord | null {
   const updatedAt = Number(input.updatedAt || createdAt);
   const amount = String(input.amount || input.displayAmount || input.tokenAmount || '0');
   const route = canonicalRoute(input.route, state, input.state);
+  const network = canonicalNetworkMetadata(input, missingNetworkMode);
 
   return {
     ...(input as unknown as PaymentRecord),
@@ -95,6 +137,7 @@ function canonicalPayment(input: StoredPayment): PaymentRecord | null {
     updatedAt: Number.isFinite(updatedAt) ? updatedAt : undefined,
     state,
     route,
+    ...network,
     authorization,
   };
 }
@@ -125,10 +168,13 @@ export async function initPersistence(): Promise<{ native: true; journalMode: st
   }
 }
 
-function normalizePayments(rows: Array<PaymentRecord | StoredPayment>): PaymentRecord[] {
+function normalizePayments(
+  rows: Array<PaymentRecord | StoredPayment>,
+  missingNetworkMode: MissingNetworkMode,
+): PaymentRecord[] {
   const map = new Map<string, PaymentRecord>();
   for (const source of rows) {
-    const row = canonicalPayment(source as StoredPayment);
+    const row = canonicalPayment(source as StoredPayment, missingNetworkMode);
     if (!row) continue;
     const key = `${row.direction}:${row.id}`;
     const existing = map.get(key);
@@ -147,14 +193,14 @@ export async function loadPayments(): Promise<PaymentRecord[]> {
   for (const raw of payments) {
     try { rows.push(JSON.parse(raw) as StoredPayment); } catch {}
   }
-  return normalizePayments(rows);
+  return normalizePayments(rows, 'legacy-testnet');
 }
 
 /** Persist the entire bounded payment journal in one native SQLite transaction. */
 export async function savePayments(rows: PaymentRecord[]): Promise<PaymentRecord[]> {
   await initPersistence();
   const now = Date.now();
-  const safe = normalizePayments(rows).map((row) => ({ ...row, updatedAt: row.updatedAt || now }));
+  const safe = normalizePayments(rows, 'active-release').map((row) => ({ ...row, updatedAt: row.updatedAt || now }));
   await BleeStore.replacePayments({
     payments: safe.map((row) => JSON.stringify(storagePayment(row))),
   });

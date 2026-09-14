@@ -1,5 +1,11 @@
 import type { Address, Hex } from 'viem';
 
+export type BleeAssetId = 'usdc' | 'sol';
+export type BleeRailId = 'arc-usdc' | 'solana-sol';
+export type BleeNetworkId = 'arc-testnet' | 'arc-mainnet' | 'solana-mainnet';
+export type BleeEnvironment = 'testnet' | 'mainnet';
+export type BleeChainFamily = 'evm' | 'solana';
+
 export type TransferAuthorization = {
   from: Address;
   to: Address;
@@ -25,6 +31,17 @@ export type PaymentRecord = {
   updatedAt?: number;
   state: PaymentState;
   route: 'arc-direct' | 'ble-mesh' | 'local-queue';
+  /**
+   * Network identity is persisted with the payment. These remain optional at
+   * the TypeScript boundary only for backwards compatibility with 2.7.1 rows;
+   * persistence canonicalizes missing legacy metadata to Arc Testnet.
+   */
+  railId?: BleeRailId;
+  networkId?: BleeNetworkId;
+  assetId?: BleeAssetId;
+  assetSymbol?: 'USDC' | 'SOL';
+  environment?: BleeEnvironment;
+  chainFamily?: BleeChainFamily;
   authorization?: TransferAuthorization;
   txHash?: Hex;
   error?: string;

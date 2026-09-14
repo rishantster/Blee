@@ -29,6 +29,7 @@ required=(
   src/lib/atomicSigning.ts
   src/lib/walletRecovery.ts
   src/lib/walletRestore.ts
+  src/lib/networkConfig.ts
   src/lib/rails.ts
   src/lib/solanaGateway.ts
   src/lib/solanaVault.ts
@@ -193,6 +194,21 @@ if grep -Eq 'revealPrivateKey\(|unlockSolanaVault\(' src/lib/walletRestore.ts; t
   fail "wallet restore journal must never decrypt private keys"
 fi
 
+# BLEE_NETWORK_IDENTITY_V1
+# Network identity is data attached to every durable payment. Legacy 2.7.1 rows
+# without metadata are permanently interpreted as Arc Testnet, while newly
+# created rows inherit only the release-approved active Arc profile.
+grep -q "id: 'arc-mainnet'" src/lib/networkConfig.ts || fail "Arc Mainnet approved profile slot missing"
+grep -q "operational: false" src/lib/networkConfig.ts || fail "Arc Mainnet must remain disabled until official parameters are populated"
+grep -q "ACTIVE_ARC_NETWORK_ID: ArcNetworkId = 'arc-testnet'" src/lib/networkConfig.ts || fail "unexpected Arc release selector"
+grep -q "networkId?: BleeNetworkId" src/types/domain.ts || fail "payment network identity missing from domain"
+grep -q "railId?: BleeRailId" src/types/domain.ts || fail "payment rail identity missing from domain"
+grep -q "BLEE_LEGACY_NETWORK_IDENTITY_V1" src/lib/persistence.ts || fail "legacy Arc Testnet history guard missing"
+grep -q "normalizePayments(rows, 'legacy-testnet')" src/lib/persistence.ts || fail "legacy payment load must pin missing network metadata to Arc Testnet"
+grep -q "normalizePayments(rows, 'active-release')" src/lib/persistence.ts || fail "new payments do not inherit release-selected network identity"
+grep -q "export const ARC_CHAIN_ID = BLEE_ACTIVE_NETWORK.chainId" src/lib/arc.ts || fail "Arc chain ID remains hardcoded outside approved network config"
+grep -q "supportedNetworkIds" src/lib/rails.ts || fail "Arc rail does not declare Testnet/Mainnet capability"
+
 APK_BOUND_DIRS=(src android plugins public app)
 for dir in "${APK_BOUND_DIRS[@]}"; do
   [ -e "$dir" ] || continue
@@ -210,3 +226,4 @@ printf 'VERIFIED: single plugin ownership and generated-output hygiene\n'
 printf 'VERIFIED: Solana client is gateway-only with no provider credential surface\n'
 printf 'VERIFIED: Solana identity vault is isolated, encrypted and BleeStore-backed\n'
 printf 'VERIFIED: Backup v2 is encrypted, crash-safe and legacy-v1 compatible\n'
+printf 'VERIFIED: network identity is durable and Arc Mainnet remains release-gated\n'

@@ -1,8 +1,11 @@
-export type BleeRailId = 'arc-usdc' | 'solana-sol';
-export type BleeNetworkId = 'arc-testnet' | 'arc-mainnet' | 'solana-mainnet';
-export type BleeAssetId = 'usdc' | 'sol';
-export type BleeChainFamily = 'evm' | 'solana';
-export type BleeEnvironment = 'testnet' | 'mainnet';
+import type {
+  BleeAssetId,
+  BleeChainFamily,
+  BleeEnvironment,
+  BleeNetworkId,
+  BleeRailId,
+} from '../types/domain';
+import { getActiveNetwork } from './networkConfig';
 
 export type BleeRail = {
   id: BleeRailId;
@@ -10,6 +13,7 @@ export type BleeRail = {
   assetSymbol: 'USDC' | 'SOL';
   chainFamily: BleeChainFamily;
   networkId: BleeNetworkId;
+  supportedNetworkIds: readonly BleeNetworkId[];
   networkLabel: string;
   environment: BleeEnvironment;
   decimals: number;
@@ -18,15 +22,18 @@ export type BleeRail = {
   senderFunded: true;
 };
 
+const activeArc = getActiveNetwork();
+
 export const ARC_USDC_RAIL: BleeRail = Object.freeze({
   id: 'arc-usdc',
   assetId: 'usdc',
   assetSymbol: 'USDC',
   chainFamily: 'evm',
-  networkId: 'arc-testnet',
-  networkLabel: 'Arc Testnet',
-  environment: 'testnet',
-  decimals: 6,
+  networkId: activeArc.id,
+  supportedNetworkIds: Object.freeze(['arc-testnet', 'arc-mainnet'] as const),
+  networkLabel: activeArc.name,
+  environment: activeArc.environment,
+  decimals: activeArc.tokenDecimals,
   settlementModel: 'eip3009',
   transport: 'blee-mesh',
   senderFunded: true,
@@ -38,6 +45,7 @@ export const SOLANA_SOL_RAIL: BleeRail = Object.freeze({
   assetSymbol: 'SOL',
   chainFamily: 'solana',
   networkId: 'solana-mainnet',
+  supportedNetworkIds: Object.freeze(['solana-mainnet'] as const),
   networkLabel: 'Solana Mainnet',
   environment: 'mainnet',
   decimals: 9,
