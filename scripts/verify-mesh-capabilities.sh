@@ -142,3 +142,25 @@ if grep -Eq 'sendSignedSolanaTransaction|createSolanaRpc|https://api[.](mainnet-
 fi
 
 printf 'VERIFIED: outbound SOL delivery is durable-before-send, exact-byte retry safe and ACK-driven\n'
+
+# BLEE_SPRINT_5C_SOLANA_PAYMENT_COORDINATOR_V1
+# The UI-neutral coordinator must derive the recipient SOL address only from the
+# verified nearby capability cache, use the authenticated session signer, create
+# the durable-nonce transaction, and hand exact bytes to the durable mesh outbox.
+[ -f src/lib/solanaPaymentCoordinator.ts ] || fail "SOL payment coordinator missing"
+grep -q 'BLEE_SOLANA_OFFLINE_PAYMENT_COORDINATOR_V1' src/lib/solanaPaymentCoordinator.ts || fail "SOL payment coordinator marker missing"
+grep -q 'loadVerifiedPeerMeshCapabilities' src/lib/solanaPaymentCoordinator.ts || fail "SOL coordinator does not source recipient from verified capabilities"
+grep -q 'getSolanaSignerForPrimarySession' src/lib/solanaPaymentCoordinator.ts || fail "SOL coordinator bypasses authenticated Solana session"
+grep -q 'prepareSignedOfflineSolTransfer' src/lib/solanaPaymentCoordinator.ts || fail "SOL coordinator does not use durable-nonce transaction builder"
+grep -q 'recipient: capabilities.solana.address' src/lib/solanaPaymentCoordinator.ts || fail "SOL coordinator accepts an unverified recipient Solana address"
+grep -q 'sendPreparedOfflineSolOverMesh' src/lib/solanaPaymentCoordinator.ts || fail "SOL coordinator does not hand signed payment to durable mesh delivery"
+grep -q 'crypto.getRandomValues' src/lib/solanaPaymentCoordinator.ts || fail "SOL coordinator payment IDs are not cryptographically random"
+grep -q 'retryPendingOutboundSolanaMeshPayments' src/lib/solanaPaymentCoordinator.ts || fail "SOL coordinator does not expose exact-byte durable retry"
+if grep -Eq 'sendSignedSolanaTransaction|createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|helius-rpc[.]com' src/lib/solanaPaymentCoordinator.ts; then
+  fail "SOL offline payment coordinator must not submit on-chain or introduce direct RPC"
+fi
+if grep -Eq 'BleeApp|useBleeView|React|tsx' src/lib/solanaPaymentCoordinator.ts; then
+  fail "SOL payment coordinator must remain UI-neutral"
+fi
+
+printf 'VERIFIED: SOL payment coordinator is verified-peer bound, session signed and durable-mesh only\n'
