@@ -28,9 +28,11 @@ required=(
   src/lib/payments.ts
   src/lib/atomicSigning.ts
   src/lib/walletRecovery.ts
+  src/lib/walletRestore.ts
   src/lib/rails.ts
   src/lib/solanaGateway.ts
   src/lib/solanaVault.ts
+  src/lib/solanaSession.ts
   plugins/blee-store/package.json
   plugins/blee-nearby/package.json
   android/gradlew
@@ -56,7 +58,7 @@ LOCK_ROOT_VERSION="$(node -p "require('./package-lock.json').packages[''].versio
 
 [ "$PACKAGE_VERSION" = "2.7.1" ] || fail "package version is $PACKAGE_VERSION, expected 2.7.1"
 [ "$LOCK_VERSION" = "$PACKAGE_VERSION" ] || fail "package-lock version is $LOCK_VERSION, expected $PACKAGE_VERSION"
-[ "$LOCK_ROOT_VERSION" = "$PACKAGE_VERSION" ] || fail "package-lock root package version is $LOCK_ROOT_VERSION, expected $PACKAGE_VERSION"
+[ "$LOCK_ROOT_VERSION" = "$PACKAGE_VERSION" ] || fail "package-lock root package version is $PACKAGE_VERSION, expected $PACKAGE_VERSION"
 
 grep -Eq 'versionCode[[:space:]]+18' android/app/build.gradle || fail "Android versionCode must be 18"
 grep -Eq 'versionName[[:space:]]+"2[.]7[.]1"' android/app/build.gradle || fail "Android versionName must be 2.7.1"
@@ -175,6 +177,22 @@ if grep -Eq 'localStorage|sessionStorage' src/lib/solanaVault.ts; then
   fail "Solana key material must not use browser storage"
 fi
 
+# BLEE_MULTI_WALLET_BACKUP_V2
+# Backup v2 exports only encrypted vault objects. Restore is journaled before
+# either wallet is replaced, so an interrupted dual-wallet restore rolls forward
+# before Arc or Solana identity can be read again.
+grep -q "formatVersion: 2" src/lib/walletRecovery.ts || fail "Backup v2 export missing"
+grep -q "wallets:" src/lib/walletRecovery.ts || fail "Backup v2 wallet bundle missing"
+grep -q "BLEE_BACKUP_V1_COMPAT_V1" src/lib/walletRecovery.ts || fail "Backup v1 compatibility guard missing"
+grep -q "WALLET_RESTORE_JOURNAL_KEY = 'wallet.restore.v2.pending'" src/lib/walletRestore.ts || fail "crash-safe wallet restore journal missing"
+grep -q "commitWalletRestoreCrashSafe" src/lib/walletRecovery.ts || fail "Backup v2 import does not use crash-safe restore"
+grep -q "recoverPendingWalletRestore" src/lib/vault.ts || fail "Arc vault does not recover interrupted dual-wallet restore"
+grep -q "recoverPendingWalletRestore" src/lib/solanaVault.ts || fail "Solana vault does not recover interrupted dual-wallet restore"
+grep -q "getEncryptedSolanaVaultSnapshot" src/lib/walletRecovery.ts || fail "Backup v2 does not include encrypted Solana vault snapshot"
+if grep -Eq 'revealPrivateKey\(|unlockSolanaVault\(' src/lib/walletRestore.ts; then
+  fail "wallet restore journal must never decrypt private keys"
+fi
+
 APK_BOUND_DIRS=(src android plugins public app)
 for dir in "${APK_BOUND_DIRS[@]}"; do
   [ -e "$dir" ] || continue
@@ -191,3 +209,4 @@ printf 'VERIFIED: offline receive projection, notifications and contacts contrac
 printf 'VERIFIED: single plugin ownership and generated-output hygiene\n'
 printf 'VERIFIED: Solana client is gateway-only with no provider credential surface\n'
 printf 'VERIFIED: Solana identity vault is isolated, encrypted and BleeStore-backed\n'
+printf 'VERIFIED: Backup v2 is encrypted, crash-safe and legacy-v1 compatible\n'
