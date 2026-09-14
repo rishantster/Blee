@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { isAddress } from 'viem';
+import { isAddress, parseUnits } from 'viem';
 import { getActiveNetwork } from '../lib/networkConfig';
+import { createAndDeliverOfflineSolPayment } from '../lib/solanaPaymentCoordinator';
 import {
   exportEncryptedWalletBackup,
   importEncryptedWalletBackup,
@@ -29,6 +30,16 @@ type Screen =
   | 'network-security';
 type BackupMode = 'overview' | 'reveal' | 'import-key' | 'restore';
 type ReceiveAsset = 'usdc' | 'sol';
+type SendAsset = 'usdc' | 'sol';
+type SendResult = {
+  asset: SendAsset;
+  route: string;
+  state: string;
+  txHash?: string;
+  paymentId?: string;
+  signedTransactionSha256?: string;
+  recipients?: number;
+};
 type IconName =
   | 'home' | 'send' | 'receive' | 'nearby' | 'activity' | 'person' | 'copy'
   | 'refresh' | 'close' | 'external' | 'wallet' | 'check' | 'wifi' | 'lock'
@@ -127,6 +138,16 @@ function formatAmount(value: string | number | null | undefined, max = 6) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return '0.00';
   return parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: max });
+}
+
+function parseSolLamports(value: string): bigint {
+  const clean = value.trim();
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,9})?$/.test(clean)) {
+    throw new Error('Enter a valid SOL amount with up to 9 decimal places.');
+  }
+  const lamports = parseUnits(clean, 9);
+  if (lamports <= 0n) throw new Error('Enter an amount greater than zero.');
+  return lamports;
 }
 
 function formatTimestamp(value?: number | null) {
@@ -282,8 +303,10 @@ export function BleeApp() {
   const [payAlias, setPayAlias] = useState('');
   const [payAddress, setPayAddress] = useState('');
   const [payAmount, setPayAmount] = useState('');
+  const [payAsset, setPayAsset] = useState<SendAsset>('usdc');
   const [payError, setPayError] = useState('');
-  const [payResult, setPayResult] = useState<{ route: string; state: string; txHash?: string } | null>(null);
+  const [payResult, setPayResult] = useState<SendResult | null>(null);
+  const [solPayBusy, setSolPayBusy] = useState(false);
   const [receiveAsset, setReceiveAsset] = useState<ReceiveAsset>('usdc');
   const [passphrase, setPassphrase] = useState('');
   const [confirmPassphrase, setConfirmPassphrase] = useState('');
@@ -406,6 +429,7 @@ export function BleeApp() {
     setPayAlias(peer?.alias || '');
     setPayAddress(peer?.address || '');
     setPayAmount('');
+    setPayAsset('usdc');
     setPayError('');
     setPayResult(null);
     navigate('send');
@@ -413,9 +437,25 @@ export function BleeApp() {
 
   const reviewSend = () => {
     const clean = payAddress.trim();
-    const value = Number(payAmount);
     setPayError('');
-    if (!isAddress(clean)) { setPayError('Enter a valid recipient address.'); return; }
+    if (!isAddress(clean)) { setPayError(payAsset === 'sol' ? 'Enter a valid Blee recipient address.' : 'Enter a valid recipient address.'); return; }
+
+    if (payAsset === 'sol') {
+      let lamports: bigint;
+      try { lamports = parseSolLamports(payAmount); } catch (error) { setPayError(error instanceof Error ? error.message : 'Enter a valid SOL amount.'); return; }
+      if (!app.solana.sessionReady || !app.solana.address) { setPayError('Solana wallet is still preparing.'); return; }
+      if (!app.solana.offlineReady) { setPayError('No prepared offline SOL payment slot is available yet.'); return; }
+      if (!app.meshStarted) { setPayError('Turn on Nearby before sending SOL over Blee Mesh.'); return; }
+      if (app.solana.gatewayReachable === true && app.solana.balanceLamports !== null && lamports > app.solana.balanceLamports) {
+        setPayError('Amount exceeds your confirmed SOL balance.');
+        return;
+      }
+      setPayAddress(clean);
+      navigate('confirm-send');
+      return;
+    }
+
+    const value = Number(payAmount);
     if (!Number.isFinite(value) || value <= 0) { setPayError('Enter an amount greater than zero.'); return; }
     if (value > Number(app.available || 0)) { setPayError('Amount exceeds your confirmed spendable balance.'); return; }
     setPayAddress(clean);
@@ -424,9 +464,41 @@ export function BleeApp() {
 
   const submitSend = async () => {
     setPayError('');
+    if (payAsset === 'sol') {
+      if (!app.account) { setPayError('Unlock Blee before sending SOL.'); return; }
+      setSolPayBusy(true);
+      try {
+        const result = await createAndDeliverOfflineSolPayment({
+          primaryAccount: app.account,
+          recipientEvm: payAddress,
+          amountLamports: parseSolLamports(payAmount).toString(),
+        });
+        const state = result.delivery.state === 'delivered'
+          ? 'mesh-delivered'
+          : result.delivery.state === 'broadcast'
+            ? 'mesh-broadcast'
+            : 'queued-local';
+        setPayResult({
+          asset: 'sol',
+          route: 'ble-mesh',
+          state,
+          paymentId: result.paymentId,
+          signedTransactionSha256: result.prepared.signedTransactionSha256,
+          recipients: result.recipients,
+        });
+        void app.solana.refresh();
+        navigate('send-success');
+      } catch (error) {
+        setPayError(error instanceof Error ? error.message : 'SOL payment could not be created');
+      } finally {
+        setSolPayBusy(false);
+      }
+      return;
+    }
+
     try {
       const result = await app.sendPayment(payAddress, payAmount, payAlias || payPeer?.alias);
-      setPayResult(result);
+      setPayResult({ asset: 'usdc', ...result });
       navigate('send-success');
     } catch (error) {
       setPayError(error instanceof Error ? error.message : 'Payment could not be created');
@@ -438,8 +510,10 @@ export function BleeApp() {
     setPayAlias('');
     setPayAddress('');
     setPayAmount('');
+    setPayAsset('usdc');
     setPayError('');
     setPayResult(null);
+    setSolPayBusy(false);
     historyRef.current = [];
     setScreen('home');
   };
@@ -606,7 +680,7 @@ export function BleeApp() {
       {app.solana.pendingOutboundCount > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>{app.solana.pendingOutboundCount} SOL payment{app.solana.pendingOutboundCount > 1 ? 's' : ''} pending delivery</strong><small>Signed transaction bytes remain durable on this phone and retry over Blee Mesh.</small></div></div>}
       {app.verifyingIncoming > 0 && <div className="pending-strip"><Icon name="shield"/><div><strong>Verifying nearby payment{app.verifyingIncoming > 1 ? 's' : ''}</strong><small>Stored durably on this phone. Sender authorization is being checked locally.</small></div></div>}
       {app.pendingIncoming > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>+{formatAmount(app.pendingIncoming)} USDC pending</strong><small>Received nearby and verified. Included in your displayed balance, but not spendable until Arc settlement is confirmed.</small></div></div>}
-      <div className="primary-actions"><button className="action-button send" onClick={() => openSend()}><Icon name="send"/><span>Send USDC</span></button><button className="action-button" onClick={() => navigate('receive')}><Icon name="receive"/><span>Receive</span></button></div>
+      <div className="primary-actions"><button className="action-button send" onClick={() => openSend()}><Icon name="send"/><span>Send</span></button><button className="action-button" onClick={() => navigate('receive')}><Icon name="receive"/><span>Receive</span></button></div>
       <section className="home-section"><div className="section-title"><div><span className="kicker">NEARBY</span><h2>People nearby</h2></div><button onClick={() => selectTab('nearby')}>See all</button></div>
         {nearbyPeers.length ? <div className="surface-list">{nearbyPeers.map((peer) => <button className="peer-row" key={`${peer.address}:${peer.transportId}`} onClick={() => openSend(peer)}><PersonAvatar name={peer.alias} src={app.identityFor(peer.address)?.avatar}/><span><strong>{peer.alias}</strong><small>{short(peer.address)}</small></span><span className="row-action">Pay</span></button>)}</div> : <EmptyState icon="nearby" title={app.meshStarted ? 'Looking for people nearby' : 'Nearby payments are off'} copy={app.meshStarted ? 'Blee is scanning over Bluetooth LE.' : 'Turn on Nearby to find other Blee users.'}/>}</section>
       <section className="home-section"><div className="section-title"><div><span className="kicker">RECENT</span><h2>Activity</h2></div><button onClick={() => selectTab('activity')}>See all</button></div>
@@ -642,28 +716,62 @@ export function BleeApp() {
     </div>
   );
 
-  const renderSend = () => (
-    <div className="screen-content"><ScreenHeader title="Send" onBack={() => goBack('home')}/>
-      {payPeer ? <div className="recipient-summary"><PersonAvatar name={payPeer.alias} src={app.identityFor(payPeer.address)?.avatar}/><span><small>TO</small><strong>{payPeer.alias}</strong><code>{short(payPeer.address)}</code></span></div> : <label className="field-block"><span>Recipient</span><RecipientField value={payAddress} onChange={(value) => { setPayAddress(value); setPayAlias(''); }} onSelectContact={(contact) => setPayAlias(contact.displayName || '')}/></label>}
-      <label className="field-block"><span>Amount</span><div className="amount-entry"><input inputMode="decimal" value={payAmount} onChange={(e) => setPayAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00"/><strong>USDC</strong></div><small>{formatAmount(app.available)} USDC available</small></label>
-      <div className="route-summary"><span className={`status-dot ${app.arcReachable ? 'online' : 'offline'}`}/><div><strong>{app.arcReachable ? 'Ready to settle on Arc Testnet' : payPeer && app.meshStarted ? 'Ready for nearby delivery' : 'Will queue safely until a route is available'}</strong><small>{app.arcReachable ? 'Sender-funded settlement' : 'Signed payment remains durable on this phone.'}</small></div></div>
-      {payError && <div className="inline-alert error"><Icon name="info"/><span>{payError}</span></div>}
-      <div className="sticky-action"><button className="primary-button" disabled={!payAddress || !payAmount} onClick={reviewSend}>Review USDC payment</button></div>
-    </div>
-  );
+  const renderSend = () => {
+    const sol = payAsset === 'sol';
+    const solRouteReady = app.solana.sessionReady && app.solana.offlineReady && app.meshStarted;
+    const solRouteTitle = !app.solana.sessionReady
+      ? 'Solana wallet is preparing'
+      : !app.solana.offlineReady
+        ? 'No prepared offline SOL slot'
+        : !app.meshStarted
+          ? 'Turn on Nearby to send SOL'
+          : 'Ready for offline SOL delivery';
+    return (
+      <div className="screen-content" data-blee-send-asset={payAsset}><ScreenHeader title="Send" onBack={() => goBack('home')}/>
+        <div className="filter-tabs" role="tablist" aria-label="Send asset">
+          <button className={!sol ? 'active' : ''} onClick={() => { setPayAsset('usdc'); setPayError(''); }}>USDC</button>
+          <button className={sol ? 'active' : ''} onClick={() => { setPayAsset('sol'); setPayError(''); }}>SOL</button>
+        </div>
+        {payPeer ? <div className="recipient-summary"><PersonAvatar name={payPeer.alias} src={app.identityFor(payPeer.address)?.avatar}/><span><small>TO</small><strong>{payPeer.alias}</strong><code>{short(payPeer.address)}</code></span></div> : <label className="field-block"><span>{sol ? 'Blee recipient' : 'Recipient'}</span><RecipientField value={payAddress} onChange={(value) => { setPayAddress(value); setPayAlias(''); }} onSelectContact={(contact) => setPayAlias(contact.displayName || '')}/></label>}
+        <label className="field-block"><span>Amount</span><div className="amount-entry"><input inputMode="decimal" value={payAmount} onChange={(e) => setPayAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00"/><strong>{sol ? 'SOL' : 'USDC'}</strong></div><small>{sol ? (app.solana.balance === null ? 'SOL balance unavailable' : `${formatAmount(app.solana.balance, 9)} SOL confirmed`) : `${formatAmount(app.available)} USDC available`}</small></label>
+        {sol ? <>
+          <div className="route-summary"><span className={`status-dot ${solRouteReady ? 'online' : 'offline'}`}/><div><strong>{solRouteTitle}</strong><small>Solana Mainnet · sender-funded · durable nonce · Blee Mesh</small></div></div>
+          <div className="quiet-note"><Icon name="shield"/><span>Blee never asks you for the recipient’s Solana address here. Their SOL address is accepted only from the cryptographically verified capability bound to this Blee identity.</span></div>
+        </> : <div className="route-summary"><span className={`status-dot ${app.arcReachable ? 'online' : 'offline'}`}/><div><strong>{app.arcReachable ? 'Ready to settle on Arc Testnet' : payPeer && app.meshStarted ? 'Ready for nearby delivery' : 'Will queue safely until a route is available'}</strong><small>{app.arcReachable ? 'Sender-funded settlement' : 'Signed payment remains durable on this phone.'}</small></div></div>}
+        {payError && <div className="inline-alert error"><Icon name="info"/><span>{payError}</span></div>}
+        <div className="sticky-action"><button className="primary-button" disabled={!payAddress || !payAmount || (sol && !solRouteReady)} onClick={reviewSend}>Review {sol ? 'SOL' : 'USDC'} payment</button></div>
+      </div>
+    );
+  };
 
   const renderConfirmSend = () => {
+    const sol = payAsset === 'sol';
     const recipientName = payAlias || payPeer?.alias || app.identityFor(payAddress)?.alias || short(payAddress);
-    return <div className="screen-content"><ScreenHeader title="Confirm send" onBack={() => goBack('send')}/>
+    return <div className="screen-content" data-blee-confirm-asset={payAsset}><ScreenHeader title="Confirm send" onBack={() => goBack('send')}/>
       <div className="confirm-recipient"><PersonAvatar name={recipientName} src={payPeer ? app.identityFor(payPeer.address)?.avatar : app.identityFor(payAddress)?.avatar} size="lg"/><strong>{recipientName}</strong><small>{short(payAddress)}</small></div>
-      <section className="confirm-card"><div><span>Amount</span><strong>{formatAmount(payAmount)} USDC</strong></div><div><span>Network</span><strong>Arc Testnet</strong></div><div><span>Settlement</span><strong>Sender-funded</strong></div><div><span>Delivery</span><strong>{app.arcReachable ? 'Online' : payPeer && app.meshStarted ? 'Nearby first' : 'Durable queue'}</strong></div></section>
-      <div className="quiet-note"><Icon name="shield"/><span>The amount, recipient and settlement authorization are signed by your wallet. Courier phones cannot change them or spend their own gas for your payment.</span></div>
+      {sol
+        ? <section className="confirm-card"><div><span>Amount</span><strong>{formatAmount(payAmount, 9)} SOL</strong></div><div><span>Network</span><strong>Solana Mainnet</strong></div><div><span>Settlement</span><strong>Sender-funded</strong></div><div><span>Offline signing</span><strong>Durable nonce</strong></div><div><span>Delivery</span><strong>Blee Mesh</strong></div></section>
+        : <section className="confirm-card"><div><span>Amount</span><strong>{formatAmount(payAmount)} USDC</strong></div><div><span>Network</span><strong>Arc Testnet</strong></div><div><span>Settlement</span><strong>Sender-funded</strong></div><div><span>Delivery</span><strong>{app.arcReachable ? 'Online' : payPeer && app.meshStarted ? 'Nearby first' : 'Durable queue'}</strong></div></section>}
+      <div className="quiet-note"><Icon name="shield"/><span>{sol ? 'Blee will reserve one prepared nonce, sign the exact SOL transaction locally, persist those exact bytes, and only then transmit them over Bluetooth Mesh.' : 'The amount, recipient and settlement authorization are signed by your wallet. Courier phones cannot change them or spend their own gas for your payment.'}</span></div>
       {payError && <div className="inline-alert error"><Icon name="info"/><span>{payError}</span></div>}
-      <div className="sticky-action"><button className="primary-button" disabled={app.busy} onClick={() => void submitSend()}>{app.busy ? 'Securing payment…' : 'Confirm and send'}</button></div>
+      <div className="sticky-action"><button className="primary-button" disabled={sol ? solPayBusy || !app.solana.offlineReady : app.busy} onClick={() => void submitSend()}>{sol ? (solPayBusy ? 'Signing SOL payment…' : 'Confirm and send SOL') : (app.busy ? 'Securing payment…' : 'Confirm and send')}</button></div>
     </div>;
   };
 
   const renderSendSuccess = () => {
+    if (payResult?.asset === 'sol') {
+      const delivered = payResult.state === 'mesh-delivered';
+      const broadcasting = payResult.state === 'mesh-broadcast';
+      const kicker = delivered ? 'DELIVERED NEARBY' : broadcasting ? 'SENDING NEARBY' : 'PAYMENT SECURED';
+      const title = delivered ? 'SOL payment delivered' : broadcasting ? 'SOL payment is on its way' : 'SOL payment queued safely';
+      const copy = delivered
+        ? 'The intended recipient durably stored and acknowledged the exact signed SOL transaction. On-chain submission is a separate settlement step.'
+        : broadcasting
+          ? 'The exact sender-signed SOL transaction is stored durably and has entered Blee Mesh. It is not marked delivered until the intended recipient acknowledges it.'
+          : 'The exact sender-signed SOL transaction is stored durably on this phone and can retry without rebuilding or re-signing it.';
+      return <div className="screen-content success-screen" data-blee-success-asset="sol"><button className="close-success" onClick={resetSend} aria-label="Close"><Icon name="close"/></button><div className="success-mark"><Icon name={delivered ? 'check' : 'clock'} size={34}/></div><span className="kicker">{kicker}</span><h1>{title}</h1><div className="success-amount">{formatAmount(payAmount, 9)} <span>SOL</span></div><p>{copy}</p><div className="quiet-note"><Icon name="network"/><span>Solana Mainnet · sender-funded · durable nonce. This screen does not claim on-chain confirmation.</span></div><div className="success-actions"><button className="primary-button" onClick={resetSend}>Done</button></div></div>;
+    }
+
     const state = payResult?.state || 'queued-local';
     const settled = state === 'settled';
     const submitted = state === 'submitted';
