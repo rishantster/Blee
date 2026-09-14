@@ -28,6 +28,7 @@ type Screen =
   | 'backup-recovery'
   | 'network-security';
 type BackupMode = 'overview' | 'reveal' | 'import-key' | 'restore';
+type ReceiveAsset = 'usdc' | 'sol';
 type IconName =
   | 'home' | 'send' | 'receive' | 'nearby' | 'activity' | 'person' | 'copy'
   | 'refresh' | 'close' | 'external' | 'wallet' | 'check' | 'wifi' | 'lock'
@@ -283,6 +284,7 @@ export function BleeApp() {
   const [payAmount, setPayAmount] = useState('');
   const [payError, setPayError] = useState('');
   const [payResult, setPayResult] = useState<{ route: string; state: string; txHash?: string } | null>(null);
+  const [receiveAsset, setReceiveAsset] = useState<ReceiveAsset>('usdc');
   const [passphrase, setPassphrase] = useState('');
   const [confirmPassphrase, setConfirmPassphrase] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -381,6 +383,14 @@ export function BleeApp() {
     setTimeout(() => setCopied(false), 1200);
   };
 
+  const copyReceiveAddress = async () => {
+    const address = receiveAsset === 'sol' ? app.solana.address : app.account?.address;
+    if (!address) return;
+    await copyText(address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  };
+
   const toggleNearby = async () => {
     setNearbyError('');
     try {
@@ -440,11 +450,11 @@ export function BleeApp() {
   };
 
   const shareAddress = async () => {
-    const address = app.account?.address;
+    const address = receiveAsset === 'sol' ? app.solana.address : app.account?.address;
     if (!address) return;
     try {
-      if (navigator.share) await navigator.share({ title: 'Blee address', text: address });
-      else await copyAddress();
+      if (navigator.share) await navigator.share({ title: `Blee ${receiveAsset === 'sol' ? 'SOL' : 'USDC'} address`, text: address });
+      else await copyReceiveAddress();
     } catch {}
   };
 
@@ -581,16 +591,22 @@ export function BleeApp() {
   }
 
   const renderHome = () => (
-    <div className="screen-content home-screen">
-      <div className="app-topbar"><Brand compact/><button className="status-chip" onClick={() => void app.refreshNetwork()}><span className={`status-dot ${app.arcReachable ? 'online' : app.arcReachable === null ? 'checking' : 'offline'}`}/>{app.arcReachable ? 'Online' : app.arcReachable === null ? 'Checking' : 'Offline'}</button></div>
+    <div className="screen-content home-screen" data-blee-multi-asset-ui="v1">
+      <div className="app-topbar"><Brand compact/><button className="status-chip" onClick={() => void app.refreshNetwork()}><span className={`status-dot ${app.arcReachable ? 'online' : app.arcReachable === null ? 'checking' : 'offline'}`}/>{app.arcReachable ? 'Arc online' : app.arcReachable === null ? 'Checking Arc' : 'Arc offline'}</button></div>
       <section className="balance-panel">
-        <div className="balance-heading"><div><span className="kicker">USDC BALANCE</span><small>Arc Testnet</small></div><button className="icon-button" onClick={() => void app.refreshNetwork()} aria-label="Refresh balance"><Icon name="refresh"/></button></div>
+        <div className="balance-heading"><div><span className="kicker">USDC BALANCE</span><small>Arc Testnet</small></div><button className="icon-button" onClick={() => void app.refreshNetwork()} aria-label="Refresh USDC balance"><Icon name="refresh"/></button></div>
         <div className="balance-number">{formatAmount(projectedBalance)} <span>USDC</span></div>
         <div className="balance-subline"><span>{app.pendingIncoming > 0 ? `${formatAmount(app.available)} confirmed · ${formatAmount(app.pendingIncoming)} pending` : app.reserved > 0 ? `${formatAmount(app.reserved)} reserved` : 'Confirmed spendable'}</span><span>{app.balanceAt ? `Updated ${new Date(app.balanceAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Awaiting sync'}</span></div>
       </section>
+      <section className="balance-panel" data-blee-asset="sol">
+        <div className="balance-heading"><div><span className="kicker">SOL BALANCE</span><small>Solana Mainnet</small></div><button className="icon-button" onClick={() => void app.solana.refresh()} aria-label="Refresh SOL balance"><Icon name="refresh"/></button></div>
+        <div className="balance-number">{app.solana.balance === null ? '—' : formatAmount(app.solana.balance, 9)} <span>SOL</span></div>
+        <div className="balance-subline"><span>{app.solana.offlineReady ? `${app.solana.readyNonceCount} offline payment slot${app.solana.readyNonceCount === 1 ? '' : 's'} ready` : app.solana.sessionReady ? 'Offline SOL slots not prepared yet' : 'Preparing Solana wallet'}</span><span>{app.solana.gatewayReachable === false ? 'Gateway offline' : app.solana.balanceAt ? `Updated ${new Date(app.solana.balanceAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : app.solana.loading ? 'Syncing' : 'Awaiting sync'}</span></div>
+      </section>
+      {app.solana.pendingOutboundCount > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>{app.solana.pendingOutboundCount} SOL payment{app.solana.pendingOutboundCount > 1 ? 's' : ''} pending delivery</strong><small>Signed transaction bytes remain durable on this phone and retry over Blee Mesh.</small></div></div>}
       {app.verifyingIncoming > 0 && <div className="pending-strip"><Icon name="shield"/><div><strong>Verifying nearby payment{app.verifyingIncoming > 1 ? 's' : ''}</strong><small>Stored durably on this phone. Sender authorization is being checked locally.</small></div></div>}
       {app.pendingIncoming > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>+{formatAmount(app.pendingIncoming)} USDC pending</strong><small>Received nearby and verified. Included in your displayed balance, but not spendable until Arc settlement is confirmed.</small></div></div>}
-      <div className="primary-actions"><button className="action-button send" onClick={() => openSend()}><Icon name="send"/><span>Send</span></button><button className="action-button" onClick={() => navigate('receive')}><Icon name="receive"/><span>Receive</span></button></div>
+      <div className="primary-actions"><button className="action-button send" onClick={() => openSend()}><Icon name="send"/><span>Send USDC</span></button><button className="action-button" onClick={() => navigate('receive')}><Icon name="receive"/><span>Receive</span></button></div>
       <section className="home-section"><div className="section-title"><div><span className="kicker">NEARBY</span><h2>People nearby</h2></div><button onClick={() => selectTab('nearby')}>See all</button></div>
         {nearbyPeers.length ? <div className="surface-list">{nearbyPeers.map((peer) => <button className="peer-row" key={`${peer.address}:${peer.transportId}`} onClick={() => openSend(peer)}><PersonAvatar name={peer.alias} src={app.identityFor(peer.address)?.avatar}/><span><strong>{peer.alias}</strong><small>{short(peer.address)}</small></span><span className="row-action">Pay</span></button>)}</div> : <EmptyState icon="nearby" title={app.meshStarted ? 'Looking for people nearby' : 'Nearby payments are off'} copy={app.meshStarted ? 'Blee is scanning over Bluetooth LE.' : 'Turn on Nearby to find other Blee users.'}/>}</section>
       <section className="home-section"><div className="section-title"><div><span className="kicker">RECENT</span><h2>Activity</h2></div><button onClick={() => selectTab('activity')}>See all</button></div>
@@ -632,7 +648,7 @@ export function BleeApp() {
       <label className="field-block"><span>Amount</span><div className="amount-entry"><input inputMode="decimal" value={payAmount} onChange={(e) => setPayAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00"/><strong>USDC</strong></div><small>{formatAmount(app.available)} USDC available</small></label>
       <div className="route-summary"><span className={`status-dot ${app.arcReachable ? 'online' : 'offline'}`}/><div><strong>{app.arcReachable ? 'Ready to settle on Arc Testnet' : payPeer && app.meshStarted ? 'Ready for nearby delivery' : 'Will queue safely until a route is available'}</strong><small>{app.arcReachable ? 'Sender-funded settlement' : 'Signed payment remains durable on this phone.'}</small></div></div>
       {payError && <div className="inline-alert error"><Icon name="info"/><span>{payError}</span></div>}
-      <div className="sticky-action"><button className="primary-button" disabled={!payAddress || !payAmount} onClick={reviewSend}>Review payment</button></div>
+      <div className="sticky-action"><button className="primary-button" disabled={!payAddress || !payAmount} onClick={reviewSend}>Review USDC payment</button></div>
     </div>
   );
 
@@ -667,9 +683,24 @@ export function BleeApp() {
     return <div className="screen-content success-screen"><button className="close-success" onClick={resetSend} aria-label="Close"><Icon name="close"/></button><div className="success-mark"><Icon name={settled ? 'check' : 'clock'} size={34}/></div><span className="kicker">{kicker}</span><h1>{title}</h1><div className="success-amount">{formatAmount(payAmount)} <span>USDC</span></div><p>{copy}</p>{payResult?.txHash && network.explorerUrl && <a className="secondary-button" href={`${network.explorerUrl}/tx/${payResult.txHash}`} target="_blank" rel="noreferrer">View on explorer <Icon name="external"/></a>}<div className="success-actions"><button className="primary-button" onClick={() => { historyRef.current = []; setScreen('activity'); }}>View activity</button><button className="text-action" onClick={resetSend}>Done</button></div></div>;
   };
 
-  const renderReceive = () => (
-    <div className="screen-content"><ScreenHeader title="Receive" onBack={() => goBack('home')}/><section className="receive-panel"><div className="qr-wrap"><QRCodeSVG value={app.account!.address} size={210} level="M" bgColor="#ffffff" fgColor="#090909"/></div><h2>{app.alias}</h2><button className="address-inline" onClick={copyAddress}>{short(app.account!.address)} <Icon name={copied ? 'check' : 'copy'} size={14}/></button><div className="token-pill">USDC · Arc Testnet</div></section><button className="secondary-button full" onClick={() => void shareAddress()}><Icon name="backup"/>Share address</button><div className="quiet-note"><Icon name="nearby"/><span>When Nearby is on, other Blee users can discover you without scanning this code.</span></div></div>
-  );
+  const renderReceive = () => {
+    const sol = receiveAsset === 'sol';
+    const address = sol ? app.solana.address : app.account!.address;
+    return (
+      <div className="screen-content" data-blee-receive-asset={receiveAsset}>
+        <ScreenHeader title="Receive" onBack={() => goBack('home')}/>
+        <div className="filter-tabs" role="tablist" aria-label="Receive asset">
+          <button className={!sol ? 'active' : ''} onClick={() => { setReceiveAsset('usdc'); setCopied(false); }}>USDC</button>
+          <button className={sol ? 'active' : ''} onClick={() => { setReceiveAsset('sol'); setCopied(false); }}>SOL</button>
+        </div>
+        {address ? <>
+          <section className="receive-panel"><div className="qr-wrap"><QRCodeSVG value={address} size={210} level="M" bgColor="#ffffff" fgColor="#090909"/></div><h2>{app.alias}</h2><button className="address-inline" onClick={() => void copyReceiveAddress()}>{short(address)} <Icon name={copied ? 'check' : 'copy'} size={14}/></button><div className="token-pill">{sol ? 'SOL · Solana Mainnet' : 'USDC · Arc Testnet'}</div></section>
+          <button className="secondary-button full" onClick={() => void shareAddress()}><Icon name="backup"/>Share {sol ? 'SOL' : 'USDC'} address</button>
+        </> : <EmptyState icon="wallet" title="Solana wallet is preparing" copy="Your SOL address appears here after the authenticated Solana session is ready."/>}
+        <div className="quiet-note"><Icon name="nearby"/><span>{sol ? 'Nearby SOL payments use the verified Solana identity bound to your Blee profile. No wallet address needs to be exchanged in person.' : 'When Nearby is on, other Blee users can discover you without scanning this code.'}</span></div>
+      </div>
+    );
+  };
 
   const renderActivityDetail = () => {
     if (!selectedPayment) return renderActivity();
@@ -683,7 +714,7 @@ export function BleeApp() {
   );
 
   const renderSettings = () => (
-    <div className="screen-content"><ScreenHeader title="Settings" onBack={() => goBack('profile')}/><div className="menu-list"><button onClick={() => navigate('backup-recovery')}><span className="menu-icon"><Icon name="backup"/></span><span><strong>Backup & recovery</strong><small>Encrypted backup, restore and private key</small></span><Icon name="chevron"/></button><button onClick={() => navigate('network-security')}><span className="menu-icon"><Icon name="network"/></span><span><strong>Network & security</strong><small>Arc Testnet, nearby payments and security</small></span><Icon name="chevron"/></button></div><div className="settings-toggle-list biometric-settings"><div><span className="menu-icon"><Icon name="fingerprint"/></span><span><strong>Fingerprint unlock</strong><small>{biometricStatus.enabled ? 'Enabled on this device' : biometricStatus.available ? 'Use fingerprint instead of typing your passphrase' : 'Not available on this device'}</small></span>{biometricStatus.enabled ? <button className="text-action" onClick={async () => { await BleeBiometric.disable(); await refreshBiometricStatus(); }}>Disable</button> : biometricStatus.available ? <button className="text-action" onClick={() => { window.localStorage.setItem('blee.biometric.setup', '1'); setUseBiometricNext(true); void app.lock(); }}>Set up</button> : <span className="status-badge">OFF</span>}</div></div><button className="logout-button" onClick={() => void app.lock()}><Icon name="logout"/>Log out</button><p className="build-note">Blee 2.7 · Source-first</p></div>
+    <div className="screen-content"><ScreenHeader title="Settings" onBack={() => goBack('profile')}/><div className="menu-list"><button onClick={() => navigate('backup-recovery')}><span className="menu-icon"><Icon name="backup"/></span><span><strong>Backup & recovery</strong><small>Encrypted backup, restore and private key</small></span><Icon name="chevron"/></button><button onClick={() => navigate('network-security')}><span className="menu-icon"><Icon name="network"/></span><span><strong>Network & security</strong><small>Arc Testnet + Solana Mainnet, nearby payments and security</small></span><Icon name="chevron"/></button></div><div className="settings-toggle-list biometric-settings"><div><span className="menu-icon"><Icon name="fingerprint"/></span><span><strong>Fingerprint unlock</strong><small>{biometricStatus.enabled ? 'Enabled on this device' : biometricStatus.available ? 'Use fingerprint instead of typing your passphrase' : 'Not available on this device'}</small></span>{biometricStatus.enabled ? <button className="text-action" onClick={async () => { await BleeBiometric.disable(); await refreshBiometricStatus(); }}>Disable</button> : biometricStatus.available ? <button className="text-action" onClick={() => { window.localStorage.setItem('blee.biometric.setup', '1'); setUseBiometricNext(true); void app.lock(); }}>Set up</button> : <span className="status-badge">OFF</span>}</div></div><button className="logout-button" onClick={() => void app.lock()}><Icon name="logout"/>Log out</button><p className="build-note">Blee 2.7 · Source-first</p></div>
   );
 
   const renderBackupRecovery = () => (
@@ -697,7 +728,12 @@ export function BleeApp() {
   );
 
   const renderNetworkSecurity = () => (
-    <div className="screen-content"><ScreenHeader title="Network & security" onBack={() => goBack('settings')}/><section className="network-card"><div className="network-title"><span className="menu-icon"><Icon name="network"/></span><div><span className="kicker">SETTLEMENT NETWORK</span><strong>Arc Testnet</strong><small>Chain 5042002</small></div><span className="status-badge">TESTNET</span></div><div className="network-detail"><span>Payment token</span><strong>USDC</strong></div><div className="network-detail"><span>Settlement model</span><strong>Sender-funded</strong></div></section><div className="settings-toggle-list"><div><span className="menu-icon"><Icon name="nearby"/></span><span><strong>Nearby payments</strong><small>Discover and pay Blee users nearby</small></span><button className={`switch ${app.meshStarted ? 'on' : ''}`} onClick={() => void toggleNearby()}><span/></button></div><div><span className="menu-icon"><Icon name="shield"/></span><span><strong>Automatic mesh relay</strong><small>Carry signed packets; relay phones never pay another user’s gas</small></span><span className="status-badge">ON</span></div><div><span className="menu-icon"><Icon name="activity"/></span><span><strong>Payment journal</strong><small>SQLite + WAL · durable local history</small></span><span className="status-badge">ACTIVE</span></div></div><div className="quiet-note"><Icon name="info"/><span>Blee supports USDC on Arc Testnet only in this build. There is no custom-network or multi-asset mode.</span></div></div>
+    <div className="screen-content"><ScreenHeader title="Network & security" onBack={() => goBack('settings')}/>
+      <section className="network-card"><div className="network-title"><span className="menu-icon"><Icon name="network"/></span><div><span className="kicker">USDC SETTLEMENT</span><strong>Arc Testnet</strong><small>Chain 5042002</small></div><span className="status-badge">TESTNET</span></div><div className="network-detail"><span>Payment token</span><strong>USDC</strong></div><div className="network-detail"><span>Settlement model</span><strong>Sender-funded</strong></div></section>
+      <section className="network-card" data-blee-solana-network="mainnet"><div className="network-title"><span className="menu-icon"><Icon name="network"/></span><div><span className="kicker">SOL SETTLEMENT</span><strong>Solana Mainnet</strong><small>{app.solana.address ? short(app.solana.address) : 'Wallet preparing'}</small></div><span className="status-badge">MAINNET</span></div><div className="network-detail"><span>Asset</span><strong>SOL</strong></div><div className="network-detail"><span>Offline readiness</span><strong>{app.solana.offlineReady ? `${app.solana.readyNonceCount} prepared` : 'Not prepared'}</strong></div><div className="network-detail"><span>RPC boundary</span><strong>Blee Gateway</strong></div></section>
+      <div className="settings-toggle-list"><div><span className="menu-icon"><Icon name="nearby"/></span><span><strong>Nearby payments</strong><small>Discover and pay Blee users nearby</small></span><button className={`switch ${app.meshStarted ? 'on' : ''}`} onClick={() => void toggleNearby()}><span/></button></div><div><span className="menu-icon"><Icon name="shield"/></span><span><strong>Automatic mesh relay</strong><small>Carry signed packets; relay phones never pay another user’s gas</small></span><span className="status-badge">ON</span></div><div><span className="menu-icon"><Icon name="activity"/></span><span><strong>Payment journal</strong><small>SQLite + WAL · durable local history</small></span><span className="status-badge">ACTIVE</span></div></div>
+      <div className="quiet-note"><Icon name="info"/><span>USDC and SOL are independent balances and are never combined. Arc Testnet remains the active USDC rail; SOL uses the separate Solana Mainnet identity and Blee Gateway boundary.</span></div>
+    </div>
   );
 
   const renderCurrent = () => {
