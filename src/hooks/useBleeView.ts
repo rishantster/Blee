@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatUnits } from 'viem';
 import { useBlee } from './useBlee';
 import { useSolanaWalletView } from './useSolanaWalletView';
-import { loadPayments } from '../lib/persistence';
+import { loadPayments, setPersistentValue } from '../lib/persistence';
 import type { PaymentRecord } from '../types/domain';
 import { ARC_USDC_DECIMALS } from '../lib/arc';
 import { isActiveArcPayment, paymentProjectionKey } from '../lib/paymentNetwork';
@@ -91,6 +91,19 @@ export function useBleeView() {
     };
   }, []);
 
+  // BLEE_NATIVE_PROFILE_IDENTITY_SYNC_V1
+  // The foreground profile editor owns the canonical name/photo, while raw BLE
+  // discovery runs in a native foreground service even when the WebView is idle.
+  // Mirror only this non-financial presentation metadata into the same native
+  // SQLite KV store so the transport can advertise it without internet access.
+  // Keep an explicit empty avatar tombstone so photo removal changes the native
+  // profile version and is propagated to peers rather than resurrecting a stale photo.
+  useEffect(() => {
+    if (!core.persistenceReady) return;
+    void setPersistentValue('profile.alias', core.alias).catch(() => undefined);
+    void setPersistentValue('profile.avatar', core.profilePhoto || '').catch(() => undefined);
+  }, [core.persistenceReady, core.alias, core.profilePhoto]);
+
   const payments = useMemo(
     () => mergePayments(core.payments, durablePayments),
     [core.payments, durablePayments],
@@ -98,11 +111,40 @@ export function useBleeView() {
   const pendingIncoming = useMemo(() => pendingIncomingAmount(payments), [payments]);
   const verifyingIncoming = useMemo(() => verifyingIncomingCount(payments), [payments]);
 
+  // BLEE_LIVE_NEARBY_IDENTITY_PROJECTION_V1
+  // A native BLE snapshot may carry fresher identity metadata than the browser
+  // cache. Prefer the live peer avatar/name, while retaining the durable cached
+  // identity as an offline fallback for Activity and previously-seen contacts.
+  const liveIdentities = useMemo(() => {
+    const map = new Map<string, { alias?: string; avatar?: string }>();
+    for (const peer of core.peers as any[]) {
+      const address = String(peer?.address || peer?.wallet || peer?.walletAddress || '').toLowerCase();
+      if (!/^0x[0-9a-f]{40}$/.test(address)) continue;
+      const alias = String(peer?.alias || peer?.displayName || peer?.name || '').trim() || undefined;
+      const avatar = typeof peer?.avatar === 'string' && peer.avatar ? peer.avatar : undefined;
+      map.set(address, { alias, avatar });
+    }
+    return map;
+  }, [core.peers]);
+
+  const identityFor = (address?: string | null) => {
+    const stored = core.identityFor(address);
+    if (!address) return stored;
+    const live = liveIdentities.get(address.toLowerCase());
+    if (!live) return stored;
+    return {
+      alias: live.alias || stored?.alias,
+      avatar: live.avatar || stored?.avatar,
+      updatedAt: stored?.updatedAt || Date.now(),
+    };
+  };
+
   return {
     ...core,
     payments,
     pendingIncoming,
     verifyingIncoming,
+    identityFor,
     solana,
   };
 }
