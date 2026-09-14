@@ -1,7 +1,8 @@
 /* BLEE_NEARBY_REFERENCE_V1
- * BLEE_NEARBY_DOTTED_RADAR_V3
+ * BLEE_NEARBY_DOTTED_RADAR_V4
  * Compact Nearby screen with a circular dotted discovery field and heartbeat
  * pulse. Native Blee Mesh remains the source of truth for discovered peers.
+ * The radar background is circular without masking the child avatar layer.
  */
 
 .nearby-screen {
@@ -100,16 +101,15 @@
   border-radius: 50%;
   isolation: isolate;
   overflow: visible;
-}
-
-/* Circular dotted field: no hard target rings. */
-.nearby-radar::marker { content: none; }
-.nearby-radar {
   background-image: radial-gradient(circle, rgba(9,9,9,.16) 1px, transparent 1.25px);
   background-size: 15px 15px;
-  -webkit-mask-image: radial-gradient(circle at center, #000 0 70%, rgba(0,0,0,.72) 82%, transparent 98%);
-  mask-image: radial-gradient(circle at center, #000 0 70%, rgba(0,0,0,.72) 82%, transparent 98%);
+  background-position: center;
+  -webkit-mask-image: none;
+  mask-image: none;
 }
+
+/* Circular dotted field: no hard target rings and no parent mask. */
+.nearby-radar::marker { content: none; }
 
 /* Two soft heartbeat waves expand through the dot field. */
 .nearby-radar::before,
@@ -157,17 +157,28 @@
   border-radius: 50%;
   display: grid;
   place-items: center;
-  overflow: hidden;
-  background: #ecece8;
-  border: 3px solid var(--bg);
-  box-shadow: 0 7px 22px rgba(0,0,0,.08);
+  overflow: visible;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
   color: var(--ink);
 }
-.radar-self-mark img {
+.radar-self-mark .person-avatar {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 3px solid var(--bg);
+  box-shadow: 0 7px 22px rgba(0,0,0,.08);
+}
+.radar-self-mark .person-avatar img {
   width: 100%;
   height: 100%;
+  max-width: none;
   display: block;
   object-fit: cover;
+  object-position: center center;
+  border-radius: inherit;
 }
 .radar-self-initial {
   font-size: 18px;
@@ -194,10 +205,21 @@
 .radar-peer .person-avatar {
   width: 46px;
   height: 46px;
+  border-radius: 50%;
+  overflow: hidden;
   border: 3px solid var(--bg);
   box-shadow: 0 5px 16px rgba(0,0,0,.08);
 }
-.radar-peer-avatar { position: relative; }
+.radar-peer .person-avatar img {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  display: block;
+  object-fit: cover;
+  object-position: center center;
+  border-radius: inherit;
+}
+.radar-peer-avatar { position: relative; border-radius: 50%; }
 .radar-peer-avatar::after {
   content: "";
   position: absolute;
@@ -272,7 +294,8 @@
   gap: 9px;
 }
 .nearby-person-row + .nearby-person-row { border-top: 1px solid var(--line); }
-.nearby-person-row > .person-avatar { width: 41px; height: 41px; flex: 0 0 auto; }
+.nearby-person-row > .person-avatar { width: 41px; height: 41px; flex: 0 0 auto; border-radius: 50%; overflow: hidden; }
+.nearby-person-row > .person-avatar img { width: 100%; height: 100%; object-fit: cover; object-position: center center; }
 .nearby-person-copy { min-width: 0; flex: 1; }
 .nearby-person-copy strong { display: block; font-size: 13px; line-height: 1.15; font-weight: 700; }
 .nearby-person-copy small { margin-top: 3px; display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 9.5px; }
@@ -317,6 +340,7 @@
   .nearby-radar-wrap { margin-top: 6px; }
   .nearby-radar { width: min(52vw, 214px); }
   .radar-self-mark { width: 44px; height: 44px; }
+  .radar-self-mark .person-avatar { width: 44px; height: 44px; }
   .radar-peer .person-avatar { width: 40px; height: 40px; }
   .nearby-people-section { margin-top: 7px; }
   .nearby-person-row { min-height: 53px; }
