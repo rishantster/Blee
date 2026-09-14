@@ -33,3 +33,28 @@ if grep -Eq 'createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solan
 fi
 
 printf 'VERIFIED: Solana mesh capability proof is dual-key bound above the unchanged BLE identity profile\n'
+
+# BLEE_SPRINT_5A2_LIVE_CAPABILITY_EXCHANGE_V1
+# Capability exchange is injected into the already EVM-signed hello packet, not
+# the native identity/profile characteristic. Solana signer warm-up may never
+# delay or break Arc discovery, and only dual-key-verified data is cached.
+[ -f src/lib/meshCapabilityStore.ts ] || fail "verified peer capability cache missing"
+grep -q "MESH_CAPABILITY_STORE_PREFIX = 'mesh.peer-capabilities.v1'" src/lib/meshCapabilityStore.ts || fail "peer capability cache key missing"
+grep -q "from './bleeStore'" src/lib/meshCapabilityStore.ts || fail "peer capability cache must use canonical SQLite-backed BleeStore"
+grep -q 'verifyMeshCapabilitiesV1' src/lib/meshCapabilityStore.ts || fail "cached peer capabilities are not re-verified"
+grep -q 'BLEE_MESH_CAPABILITY_HELLO_V1' src/lib/meshProtocol.ts || fail "live hello capability exchange marker missing"
+grep -q 'getSolanaSignerForPrimarySession' src/lib/meshProtocol.ts || fail "hello does not consult the authenticated Solana session"
+grep -q "type === 'hello'" src/lib/meshProtocol.ts || fail "capability data is not restricted to hello packets"
+grep -q 'createMeshCapabilitiesV1' src/lib/meshProtocol.ts || fail "local hello does not create a cryptographic capability proof"
+grep -q 'verifyMeshCapabilitiesV1' src/lib/meshProtocol.ts || fail "incoming hello capability proof is not verified"
+grep -q 'saveVerifiedPeerMeshCapabilities' src/lib/meshProtocol.ts || fail "verified peer capability is not durably cached"
+grep -q "rails: \['arc-usdc'\]" src/lib/meshProtocol.ts || fail "Arc-only fail-safe hello fallback missing"
+grep -q 'packet.origin.toLowerCase' src/lib/meshProtocol.ts || fail "hello display address is not bound to packet origin"
+if grep -Eq 'localStorage|sessionStorage' src/lib/meshCapabilityStore.ts; then
+  fail "peer capability cache must not use browser storage"
+fi
+if grep -Eq 'createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|helius-rpc[.]com' src/lib/meshProtocol.ts src/lib/meshCapabilityStore.ts; then
+  fail "live capability exchange introduced a direct Solana RPC path"
+fi
+
+printf 'VERIFIED: live nearby hello exchanges and durably caches only verified Solana capabilities\n'
