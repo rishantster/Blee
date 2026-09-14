@@ -18,14 +18,15 @@ import java.util.Locale;
  *
  * This is deliberately separate from payment state. It never creates a payment,
  * settlement job, courier envelope or notification. Packets are device-signed,
- * direct-only (hopLimit=0), durable, and suppressed whenever financial mesh work
- * is pending so identity imagery can never delay a payment.
+ * direct-only (hopLimit=0), durable, versioned and suppressed whenever financial
+ * mesh work is pending so identity imagery can never delay a payment.
  */
 final class BleeProfileIdentityTransport {
     static final String TYPE = "PROFILE_IDENTITY";
     private static final long PROFILE_TTL_MS = 24L * 60L * 60L * 1000L;
     private static final int PROFILE_COPY_BUDGET = 64;
     private static final int MAX_AVATAR_CHARS = 24_000;
+    private static final String REMOTE_VERSION_PREFIX = "peer.profile.updatedAt.";
 
     private BleeProfileIdentityTransport() {}
 
@@ -121,6 +122,7 @@ final class BleeProfileIdentityTransport {
             }
 
             String ownWallet = db.activeWallet();
+            long now = System.currentTimeMillis();
             for (String[] row : rows) {
                 String messageId = row[0];
                 String raw = row[1];
@@ -128,6 +130,7 @@ final class BleeProfileIdentityTransport {
                     JSONObject packet = new JSONObject(raw);
                     if (!TYPE.equals(packet.optString("type", ""))
                         || packet.optInt("hopLimit", -1) != 0
+                        || packet.optLong("expiresAt", 0L) <= now
                         || !verifyPacket(packet)) {
                         deleteInbox(db, messageId);
                         continue;
@@ -140,6 +143,20 @@ final class BleeProfileIdentityTransport {
                         continue;
                     }
 
+                    // The canonical BLE/Nearby identity exchange must resolve the
+                    // wallet first. If profile bytes arrive first, retain them in
+                    // the durable inbox and retry on the next worker pass instead
+                    // of accepting metadata for an unresolved wallet.
+                    JSONObject previous = db.peerIdentity(wallet);
+                    if (previous == null) continue;
+
+                    long remoteVersion = profile.optLong("updatedAt", packet.optLong("createdAt", 0L));
+                    long knownVersion = storedRemoteVersion(db, wallet);
+                    if (remoteVersion < knownVersion) {
+                        deleteInbox(db, messageId);
+                        continue;
+                    }
+
                     String displayName = cleanName(profile.optString("displayName", ""));
                     boolean hasAvatar = profile.optBoolean("hasAvatar", profile.has("avatar"));
                     String avatar = hasAvatar ? cleanAvatar(profile.optString("avatar", "")) : null;
@@ -148,10 +165,12 @@ final class BleeProfileIdentityTransport {
                         continue;
                     }
 
-                    JSONObject previous = db.peerIdentity(wallet);
-                    String oldName = previous == null ? "" : previous.optString("displayName", "");
-                    String oldAvatar = previous == null ? "" : previous.optString("avatar", "");
+                    String oldName = previous.optString("displayName", "");
+                    String oldAvatar = previous.optString("avatar", "");
 
+                    // Explicit avatar absence is a tombstone. Clear the durable
+                    // peer row before merge so BleeMeshDb cannot preserve a stale
+                    // image from an earlier radio sighting.
                     if (!hasAvatar) {
                         ContentValues clear = new ContentValues();
                         clear.putNull("avatar");
@@ -164,6 +183,7 @@ final class BleeProfileIdentityTransport {
                         packet.optString("originDeviceId", ""),
                         "native_ble_profile"
                     );
+                    db.setKv(remoteVersionKey(wallet), String.valueOf(remoteVersion));
 
                     JSONObject current = db.peerIdentity(wallet);
                     String newName = current == null ? "" : current.optString("displayName", "");
@@ -217,7 +237,8 @@ final class BleeProfileIdentityTransport {
 
     private static boolean outboxExists(BleeMeshDb db, String messageId) {
         try (Cursor c = db.db().rawQuery(
-            "SELECT 1 FROM mesh_outbox WHERE message_id=? LIMIT 1", new String[] { messageId }
+            "SELECT 1 FROM mesh_outbox WHERE message_id=? AND expires_at>? AND copy_budget>0 LIMIT 1",
+            new String[] { messageId, String.valueOf(System.currentTimeMillis()) }
         )) {
             return c.moveToFirst();
         } catch (Throwable ignored) {
@@ -249,8 +270,24 @@ final class BleeProfileIdentityTransport {
         return 0L;
     }
 
+    private static String remoteVersionKey(String wallet) {
+        return REMOTE_VERSION_PREFIX + wallet.toLowerCase(Locale.ROOT);
+    }
+
+    private static long storedRemoteVersion(BleeMeshDb db, String wallet) {
+        try {
+            String raw = db.getKv(remoteVersionKey(wallet));
+            return raw == null || raw.trim().isEmpty() ? 0L : Long.parseLong(raw.trim());
+        } catch (Throwable ignored) {
+            return 0L;
+        }
+    }
+
     private static String cleanName(String value) {
-        String name = value == null ? "" : value.trim().replaceAll("\\s+", " ");
+        String name = value == null ? "" : value
+            .replaceAll("[\\p{Cntrl}]", "")
+            .trim()
+            .replaceAll("\\s+", " ");
         if (name.length() > 64) name = name.substring(0, 64);
         return name;
     }
