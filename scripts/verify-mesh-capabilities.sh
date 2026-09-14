@@ -91,3 +91,27 @@ if grep -Eq 'sendSignedSolanaTransaction|createSolanaRpc|https://api[.](mainnet-
 fi
 
 printf 'VERIFIED: exact signed SOL mesh envelope is capability-bound and durably stored for recipient/courier custody\n'
+
+# BLEE_SPRINT_5B2_SOLANA_LIVE_RECEIVE_V1
+# Live receive must authenticate the outer EVM packet, validate the SOL envelope,
+# durably commit exact signed bytes, and only then ACK. Courier forwarding uses
+# the existing framed transport after verifyMeshPacket returns, so persistence
+# necessarily completes before the caller can forward the packet.
+grep -q 'BLEE_SOLANA_MESH_LIVE_RECEIVE_V1' src/lib/meshProtocol.ts || fail "live SOL receive marker missing"
+grep -q 'validateAuthenticatedSolanaMeshPaymentEnvelope' src/lib/meshProtocol.ts || fail "live SOL receive does not validate the authenticated inner envelope"
+grep -q 'storeVerifiedInboundSolanaMeshPayment' src/lib/meshProtocol.ts || fail "live SOL receive does not durably store before returning"
+grep -q 'allowCourier: true' src/lib/meshProtocol.ts || fail "live SOL courier custody is not enabled"
+grep -q 'BLEE_SOLANA_ACK_AFTER_DURABLE_STORE_V1' src/lib/meshProtocol.ts || fail "durable SOL ACK ordering marker missing"
+grep -q "createMeshPacket(input.account, 'sol-ack'" src/lib/meshProtocol.ts || fail "recipient durable SOL ACK packet missing"
+grep -q 'durable: true' src/lib/meshProtocol.ts || fail "recipient SOL ACK is not marked durable"
+grep -q 'verifyMeshCapabilitiesV1(packet.origin, raw.recipientCapabilities)' src/lib/meshProtocol.ts || fail "SOL ACK recipient capability proof is not verified"
+grep -q 'WeakRef<PrivateKeyAccount>' src/lib/meshProtocol.ts || fail "mesh runtime must not create a second strong global primary signer holder"
+grep -q "processSolanaRuntime: false" src/lib/solanaMeshEnvelope.ts || fail "standalone SOL validation can recursively re-enter the live receive runtime"
+grep -q 'storeVerifiedInboundSolanaMeshPayment' src/lib/solanaMeshStore.ts || fail "verified live custody entry point missing"
+grep -q "'sol-ack'" src/types/domain.ts || fail "SOL durable ACK packet type missing"
+grep -q 'export type SolanaMeshDeliveryAckV1' src/types/domain.ts || fail "SOL durable ACK domain type missing"
+if grep -Eq 'sendSignedSolanaTransaction|createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|helius-rpc[.]com' src/lib/meshProtocol.ts; then
+  fail "live SOL mesh receive must not submit on-chain or introduce direct RPC"
+fi
+
+printf 'VERIFIED: live SOL receive commits before ACK and courier forwarding remains exact-byte durable\n'

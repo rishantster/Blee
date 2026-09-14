@@ -1,13 +1,43 @@
 import { isAddress, recoverMessageAddress, type Address, type Hex } from 'viem';
 import type { PrivateKeyAccount } from 'viem/accounts';
-import type { MeshCapabilitiesV1, MeshPacket, MeshPacketType } from '../types/domain';
+import type {
+  MeshCapabilitiesV1,
+  MeshPacket,
+  MeshPacketType,
+  SolanaMeshDeliveryAckV1,
+} from '../types/domain';
 import { createMeshCapabilitiesV1, verifyMeshCapabilitiesV1 } from './meshCapabilities';
 import { saveVerifiedPeerMeshCapabilities } from './meshCapabilityStore';
+import { BleeNearby, nativeNearbyAvailable } from './nativeNearby';
+import { looksLikeSolanaPublicKey } from './solanaGateway';
 import { getSolanaSignerForPrimarySession } from './solanaSession';
+import { getSolanaVaultAddress } from './solanaVault';
+import { getVaultAddress } from './vault';
 
 const FRAME_PREFIX = 'AD1';
 const MAX_FRAME_DATA = 135;
 const SOLANA_CAPABILITY_WAIT_MS = 250;
+const ACTIVE_MESH_SIGNER_FRESH_MS = 15_000;
+const SOLANA_ACK_DIGEST_RE = /^[0-9a-f]{64}$/;
+const MAX_PAYMENT_ID_LENGTH = 160;
+
+let activeMeshAccountRef: WeakRef<PrivateKeyAccount> | null = null;
+let activeMeshAccountSeenAt = 0;
+
+function rememberActiveMeshAccount(account: PrivateKeyAccount): void {
+  activeMeshAccountRef = new WeakRef(account);
+  activeMeshAccountSeenAt = Date.now();
+}
+
+function currentActiveMeshAccount(): PrivateKeyAccount | null {
+  if (!activeMeshAccountRef || Date.now() - activeMeshAccountSeenAt > ACTIVE_MESH_SIGNER_FRESH_MS) return null;
+  const account = activeMeshAccountRef.deref() || null;
+  if (!account) {
+    activeMeshAccountRef = null;
+    activeMeshAccountSeenAt = 0;
+  }
+  return account;
+}
 
 function id(): string {
   const b = crypto.getRandomValues(new Uint8Array(12));
@@ -51,6 +81,7 @@ export async function createMeshPacket(account: PrivateKeyAccount, type: MeshPac
   // BLEE_MESH_CAPABILITY_HELLO_V1
   // Solana capability proof rides inside the already framed/signed hello packet.
   // The native 20-byte identity/profile characteristic is deliberately untouched.
+  rememberActiveMeshAccount(account);
   const packetPayload = type === 'hello'
     ? await helloPayloadWithCapabilities(account, payload)
     : payload;
@@ -59,7 +90,112 @@ export async function createMeshPacket(account: PrivateKeyAccount, type: MeshPac
   return { ...unsigned, ttl, hops: 0, signature };
 }
 
-export async function verifyMeshPacket(packet: MeshPacket): Promise<boolean> {
+async function sendRuntimeMeshPacket(packet: MeshPacket): Promise<void> {
+  if (!nativeNearbyAvailable()) return;
+  for (const frame of packetFrames(packet)) await BleeNearby.send({ data: frame });
+}
+
+async function validateSolanaDeliveryAck(packet: MeshPacket): Promise<boolean> {
+  if (!packet.payload || typeof packet.payload !== 'object' || Array.isArray(packet.payload)) return false;
+  const raw = packet.payload as Partial<SolanaMeshDeliveryAckV1>;
+  if (
+    raw.version !== 1
+    || raw.railId !== 'solana-sol'
+    || raw.networkId !== 'solana-mainnet'
+    || raw.durable !== true
+    || typeof raw.paymentId !== 'string'
+    || !raw.paymentId.trim()
+    || raw.paymentId.trim().length > MAX_PAYMENT_ID_LENGTH
+    || typeof raw.signedTransactionSha256 !== 'string'
+    || !SOLANA_ACK_DIGEST_RE.test(raw.signedTransactionSha256.toLowerCase())
+    || !isAddress(String(raw.recipientEvm || ''))
+    || String(raw.recipientEvm).toLowerCase() !== packet.origin.toLowerCase()
+    || !looksLikeSolanaPublicKey(String(raw.recipientSolana || ''))
+  ) {
+    return false;
+  }
+
+  const capabilities = await verifyMeshCapabilitiesV1(packet.origin, raw.recipientCapabilities);
+  return Boolean(
+    capabilities
+    && capabilities.rails.includes('solana-sol')
+    && capabilities.solana
+    && capabilities.solana.networkId === 'solana-mainnet'
+    && capabilities.solana.address === raw.recipientSolana,
+  );
+}
+
+async function emitSolanaDurableAck(input: {
+  account: PrivateKeyAccount;
+  paymentId: string;
+  signedTransactionSha256: string;
+  recipientSolana: string;
+}): Promise<void> {
+  const signer = await getSolanaSignerForPrimarySession(input.account);
+  if (!signer || signer.address !== input.recipientSolana) return;
+  const recipientCapabilities = await createMeshCapabilitiesV1({
+    evmOrigin: input.account.address,
+    solanaSigner: signer,
+  });
+  if (!recipientCapabilities.solana || recipientCapabilities.solana.address !== input.recipientSolana) return;
+
+  const ackPayload: SolanaMeshDeliveryAckV1 = {
+    version: 1,
+    railId: 'solana-sol',
+    networkId: 'solana-mainnet',
+    paymentId: input.paymentId,
+    signedTransactionSha256: input.signedTransactionSha256,
+    recipientEvm: input.account.address,
+    recipientSolana: input.recipientSolana,
+    durable: true,
+    recipientCapabilities,
+  };
+  const ack = await createMeshPacket(input.account, 'sol-ack', ackPayload);
+  await sendRuntimeMeshPacket(ack);
+}
+
+async function processLiveSolanaPayment(packet: MeshPacket): Promise<void> {
+  // BLEE_SOLANA_MESH_LIVE_RECEIVE_V1
+  // Outer EVM authentication has already passed. Validate the SOL envelope,
+  // COMMIT exact signed bytes to SQLite, and only then allow normal forwarding
+  // and (for the addressed recipient) emit a durable delivery ACK.
+  const { validateAuthenticatedSolanaMeshPaymentEnvelope } = await import('./solanaMeshEnvelope');
+  const { storeVerifiedInboundSolanaMeshPayment } = await import('./solanaMeshStore');
+  const envelope = await validateAuthenticatedSolanaMeshPaymentEnvelope(packet);
+
+  const activeAccount = currentActiveMeshAccount();
+  const localEvmAddress = activeAccount?.address || await getVaultAddress();
+  if (!localEvmAddress || !isAddress(localEvmAddress)) {
+    throw new Error('Local Blee identity is unavailable for SOL mesh custody');
+  }
+  const localSolanaAddress = await getSolanaVaultAddress().catch(() => null);
+
+  const custody = await storeVerifiedInboundSolanaMeshPayment({
+    packet,
+    envelope,
+    localEvmAddress,
+    localSolanaAddress,
+    allowCourier: true,
+  });
+  if (!custody) return;
+
+  if (custody.stored.role === 'recipient' && activeAccount) {
+    // BLEE_SOLANA_ACK_AFTER_DURABLE_STORE_V1
+    // storeVerifiedInboundSolanaMeshPayment has completed its SQLite write before
+    // this ACK can be constructed or transmitted.
+    await emitSolanaDurableAck({
+      account: activeAccount,
+      paymentId: envelope.paymentId,
+      signedTransactionSha256: envelope.signedTransactionSha256,
+      recipientSolana: envelope.recipientSolana,
+    });
+  }
+}
+
+export async function verifyMeshPacket(
+  packet: MeshPacket,
+  options?: { processSolanaRuntime?: boolean },
+): Promise<boolean> {
   try {
     if (packet.version !== 1 || packet.ttl < 0 || Date.now() - packet.createdAt > 48 * 60 * 60 * 1000) return false;
     const recovered = await recoverMessageAddress({
@@ -92,6 +228,12 @@ export async function verifyMeshPacket(packet: MeshPacket): Promise<boolean> {
         }
       }
     }
+
+    if (packet.type === 'sol-payment' && options?.processSolanaRuntime !== false) {
+      await processLiveSolanaPayment(packet);
+    }
+
+    if (packet.type === 'sol-ack' && !(await validateSolanaDeliveryAck(packet))) return false;
 
     return true;
   } catch { return false; }

@@ -122,26 +122,16 @@ function envelopeConflict(
   );
 }
 
-/**
- * BLEE_SOLANA_MESH_DURABLE_CUSTODY_V1
- *
- * Persists exact authenticated SOL payment bytes before a recipient ever ACKs
- * or a courier claims custody. Replays with the same paymentId are idempotent
- * only when the signed-transaction digest and all routing/payment metadata are
- * identical. A conflicting replay fails closed.
- *
- * This store does not submit transactions. Recipient/courier custody is an
- * offline transport state, not proof of on-chain settlement.
- */
-export async function storeInboundSolanaMeshPayment(input: {
+async function storeValidatedInboundSolanaMeshPayment(input: {
   packet: MeshPacket;
+  envelope: SolanaMeshPaymentEnvelopeV1;
   localEvmAddress: string;
   localSolanaAddress?: string | null;
   allowCourier: boolean;
 }): Promise<{ stored: StoredSolanaMeshPayment; envelope: SolanaMeshPaymentEnvelopeV1; duplicate: boolean } | null> {
   if (!isAddress(input.localEvmAddress)) throw new Error('Local Blee identity is invalid');
   const localEvmAddress = getAddress(input.localEvmAddress);
-  const envelope = await validateSolanaMeshPaymentEnvelope(input.packet);
+  const envelope = input.envelope;
 
   let role: SolanaMeshCustodyRole;
   if (envelope.recipientEvm.toLowerCase() === localEvmAddress.toLowerCase()) {
@@ -204,6 +194,53 @@ export async function storeInboundSolanaMeshPayment(input: {
     await persistInbox(inbox);
     return { stored: { ...stored }, envelope, duplicate: false };
   });
+}
+
+/**
+ * BLEE_SOLANA_MESH_DURABLE_CUSTODY_V1
+ *
+ * Persists exact authenticated SOL payment bytes before a recipient ever ACKs
+ * or a courier claims custody. Replays with the same paymentId are idempotent
+ * only when the signed-transaction digest and all routing/payment metadata are
+ * identical. A conflicting replay fails closed.
+ *
+ * This store does not submit transactions. Recipient/courier custody is an
+ * offline transport state, not proof of on-chain settlement.
+ */
+export async function storeInboundSolanaMeshPayment(input: {
+  packet: MeshPacket;
+  localEvmAddress: string;
+  localSolanaAddress?: string | null;
+  allowCourier: boolean;
+}): Promise<{ stored: StoredSolanaMeshPayment; envelope: SolanaMeshPaymentEnvelopeV1; duplicate: boolean } | null> {
+  const envelope = await validateSolanaMeshPaymentEnvelope(input.packet);
+  return storeValidatedInboundSolanaMeshPayment({ ...input, envelope });
+}
+
+/**
+ * Live mesh path used only after meshProtocol has authenticated the outer EVM
+ * packet and validateAuthenticatedSolanaMeshPaymentEnvelope has verified the
+ * SOL capability proof and exact signed-byte digest. This avoids recursively
+ * re-entering verifyMeshPacket while preserving the same SQLite durability and
+ * paymentId conflict rules as the standalone entry point.
+ */
+export async function storeVerifiedInboundSolanaMeshPayment(input: {
+  packet: MeshPacket;
+  envelope: SolanaMeshPaymentEnvelopeV1;
+  localEvmAddress: string;
+  localSolanaAddress?: string | null;
+  allowCourier: boolean;
+}): Promise<{ stored: StoredSolanaMeshPayment; envelope: SolanaMeshPaymentEnvelopeV1; duplicate: boolean } | null> {
+  if (input.packet.type !== 'sol-payment') throw new Error('Verified SOL custody requires a SOL payment packet');
+  const raw = input.packet.payload as Partial<SolanaMeshPaymentEnvelopeV1> | null;
+  if (
+    !raw
+    || raw.paymentId !== input.envelope.paymentId
+    || String(raw.signedTransactionSha256 || '').toLowerCase() !== input.envelope.signedTransactionSha256
+  ) {
+    throw new Error('Verified SOL custody envelope does not match its packet');
+  }
+  return storeValidatedInboundSolanaMeshPayment(input);
 }
 
 export async function loadStoredSolanaMeshPayments(): Promise<StoredSolanaMeshPayment[]> {

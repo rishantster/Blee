@@ -148,22 +148,15 @@ export async function prepareSolanaMeshPaymentPacket(input: {
 }
 
 /**
- * Revalidates a received SOL envelope from first principles before any durable
- * receiver/courier storage. This confirms:
- * - the existing EVM mesh signature,
- * - the Solana capability proof bound to packet.origin,
- * - exact rail/network/address metadata,
- * - exact signed wire-byte SHA-256 and Solana wire-size limit.
- *
- * Full on-chain transaction-shape validation remains a gateway responsibility
- * before broadcast. Offline recipients treat this as authenticated custody of
- * exact signed bytes, not as chain confirmation.
+ * Validates the SOL-specific inner envelope after the outer EVM mesh signature
+ * has already been authenticated by meshProtocol. Keeping this boundary
+ * separate lets the live receive path persist before forwarding without
+ * recursively re-entering the mesh runtime.
  */
-export async function validateSolanaMeshPaymentEnvelope(
+export async function validateAuthenticatedSolanaMeshPaymentEnvelope(
   packet: MeshPacket,
 ): Promise<SolanaMeshPaymentEnvelopeV1> {
   if (packet.type !== 'sol-payment') throw new Error('Mesh packet is not a SOL payment');
-  if (!(await verifyMeshPacket(packet))) throw new Error('SOL mesh packet failed Blee identity verification');
   if (!packet.payload || typeof packet.payload !== 'object' || Array.isArray(packet.payload)) {
     throw new Error('SOL mesh payment envelope is missing');
   }
@@ -215,4 +208,19 @@ export async function validateSolanaMeshPaymentEnvelope(
     signedTransactionSha256,
     senderCapabilities,
   };
+}
+
+/**
+ * Revalidates a received SOL envelope from first principles before standalone
+ * durable storage or diagnostics. The live mesh runtime passes
+ * processSolanaRuntime:false so cryptographic validation cannot recursively
+ * trigger receive-side persistence/ACK logic.
+ */
+export async function validateSolanaMeshPaymentEnvelope(
+  packet: MeshPacket,
+): Promise<SolanaMeshPaymentEnvelopeV1> {
+  if (!(await verifyMeshPacket(packet, { processSolanaRuntime: false }))) {
+    throw new Error('SOL mesh packet failed Blee identity verification');
+  }
+  return validateAuthenticatedSolanaMeshPaymentEnvelope(packet);
 }

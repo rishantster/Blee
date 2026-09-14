@@ -88,6 +88,18 @@ export type SolanaMeshPaymentEnvelopeV1 = {
   senderCapabilities: MeshCapabilitiesV1;
 };
 
+export type SolanaMeshDeliveryAckV1 = {
+  version: 1;
+  railId: 'solana-sol';
+  networkId: 'solana-mainnet';
+  paymentId: string;
+  signedTransactionSha256: string;
+  recipientEvm: Address;
+  recipientSolana: string;
+  durable: true;
+  recipientCapabilities: MeshCapabilitiesV1;
+};
+
 export type MeshPeer = {
   transport?: 'lan' | 'ble';
   transportId: string;
@@ -102,7 +114,7 @@ export type MeshPeer = {
   capabilitiesVerified?: boolean;
 };
 
-export type MeshPacketType = 'hello' | 'payment' | 'ack' | 'receipt' | 'sol-payment';
+export type MeshPacketType = 'hello' | 'payment' | 'ack' | 'receipt' | 'sol-payment' | 'sol-ack';
 
 export type MeshPacket = {
   version: 1;
