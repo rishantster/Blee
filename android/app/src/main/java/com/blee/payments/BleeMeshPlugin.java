@@ -6,6 +6,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -18,6 +20,9 @@ import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @CapacitorPlugin(
     name = "BleeMesh",
@@ -27,9 +32,13 @@ import java.util.List;
 )
 public class BleeMeshPlugin extends Plugin {
     private BroadcastReceiver receiver;
+    private ScheduledExecutorService profileExecutor;
+    private Handler mainHandler;
 
     @Override
     public void load() {
+        mainHandler = new Handler(Looper.getMainLooper());
+        final Context appContext = getContext().getApplicationContext();
         receiver = new BroadcastReceiver() {
             @Override public void onReceive(Context context, Intent intent) {
                 String action = intent.getAction();
@@ -41,15 +50,20 @@ public class BleeMeshPlugin extends Plugin {
                     return;
                 }
                 if (BleeMeshService.ACTION_PEER_CHANGED.equals(action)) {
-                    JSObject event = new JSObject();
-                    event.put("transportId", intent.getStringExtra(BleeMeshService.EXTRA_PEER_TRANSPORT_ID));
-                    event.put("wallet", intent.getStringExtra(BleeMeshService.EXTRA_PEER_WALLET));
-                    event.put("displayName", intent.getStringExtra(BleeMeshService.EXTRA_PEER_DISPLAY_NAME));
-                    event.put("avatar", intent.getStringExtra(BleeMeshService.EXTRA_PEER_AVATAR));
-                    event.put("rssi", intent.getIntExtra(BleeMeshService.EXTRA_PEER_RSSI, 0));
-                    event.put("lastSeen", intent.getLongExtra(BleeMeshService.EXTRA_PEER_LAST_SEEN, 0L));
+                    org.json.JSONObject raw = new org.json.JSONObject();
+                    try {
+                        raw.put("transportId", intent.getStringExtra(BleeMeshService.EXTRA_PEER_TRANSPORT_ID));
+                        raw.put("wallet", intent.getStringExtra(BleeMeshService.EXTRA_PEER_WALLET));
+                        raw.put("displayName", intent.getStringExtra(BleeMeshService.EXTRA_PEER_DISPLAY_NAME));
+                        raw.put("avatar", intent.getStringExtra(BleeMeshService.EXTRA_PEER_AVATAR));
+                        raw.put("rssi", intent.getIntExtra(BleeMeshService.EXTRA_PEER_RSSI, 0));
+                        raw.put("lastSeen", intent.getLongExtra(BleeMeshService.EXTRA_PEER_LAST_SEEN, 0L));
+                    } catch (Throwable ignored) {}
+                    BleeMeshDb db = new BleeMeshDb(appContext);
+                    org.json.JSONObject enriched = BleeProfileIdentityTransport.enrichPeer(db, raw);
+                    db.close();
+                    JSObject event = peerObject(enriched);
                     event.put("present", intent.getBooleanExtra(BleeMeshService.EXTRA_PEER_PRESENT, true));
-                    event.put("transport", "ble");
                     notifyListeners("peerChanged", event, true);
                 }
             }
@@ -59,6 +73,7 @@ public class BleeMeshPlugin extends Plugin {
         if (Build.VERSION.SDK_INT >= 33) getContext().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else getContext().registerReceiver(receiver, filter);
         BleeMeshService.start(getContext());
+        startProfileIdentityLoop(appContext);
     }
 
     @Override
@@ -67,13 +82,62 @@ public class BleeMeshPlugin extends Plugin {
             try { getContext().unregisterReceiver(receiver); } catch (Throwable ignored) {}
             receiver = null;
         }
+        if (profileExecutor != null) {
+            try { profileExecutor.shutdownNow(); } catch (Throwable ignored) {}
+            profileExecutor = null;
+        }
         super.handleOnDestroy();
+    }
+
+    // BLEE_NATIVE_OFFLINE_PROFILE_IDENTITY_V1
+    // Profile imagery is display metadata only. A tiny native worker keeps the
+    // signed direct-only profile packet durable and consumes received profile
+    // packets even when no payment event occurs. Financial packets remain owned
+    // exclusively by BleeMeshDb/BleeMeshService and always suppress profile sends.
+    private void startProfileIdentityLoop(Context context) {
+        if (profileExecutor != null) return;
+        profileExecutor = Executors.newSingleThreadScheduledExecutor();
+        profileExecutor.scheduleWithFixedDelay(() -> {
+            try {
+                BleeProfileIdentityTransport.syncLocalProfilePacket(context);
+                boolean changed = BleeProfileIdentityTransport.processIncoming(context);
+                if (changed && mainHandler != null) {
+                    mainHandler.post(this::emitEnrichedPeerSnapshot);
+                }
+            } catch (Throwable ignored) {}
+        }, 0L, 1500L, TimeUnit.MILLISECONDS);
+    }
+
+    private void emitEnrichedPeerSnapshot() {
+        BleeMeshDb db = new BleeMeshDb(getContext());
+        try {
+            for (org.json.JSONObject item : BleeMeshService.nearbyPeersSnapshot()) {
+                JSObject event = peerObject(BleeProfileIdentityTransport.enrichPeer(db, item));
+                event.put("present", true);
+                notifyListeners("peerChanged", event, true);
+            }
+        } finally {
+            db.close();
+        }
+    }
+
+    private static JSObject peerObject(org.json.JSONObject item) {
+        JSObject peer = new JSObject();
+        peer.put("transportId", item.optString("transportId", ""));
+        peer.put("wallet", item.optString("wallet", ""));
+        peer.put("displayName", item.optString("displayName", ""));
+        peer.put("avatar", item.optString("avatar", ""));
+        peer.put("rssi", item.optInt("rssi", 0));
+        peer.put("lastSeen", item.optLong("lastSeen", 0L));
+        peer.put("transport", "ble");
+        return peer;
     }
 
     @PluginMethod
     public void start(PluginCall call) {
         try {
             BleeMeshService.start(getContext());
+            BleeProfileIdentityTransport.syncLocalProfilePacket(getContext());
             JSObject result = new JSObject();
             result.put("running", true);
             result.put("protocol", "blee-mesh-v2");
@@ -103,6 +167,8 @@ public class BleeMeshPlugin extends Plugin {
     public void manualRefresh(PluginCall call) {
         try {
             BleeMeshService.start(getContext());
+            BleeProfileIdentityTransport.syncLocalProfilePacket(getContext());
+            if (BleeProfileIdentityTransport.processIncoming(getContext())) emitEnrichedPeerSnapshot();
 
             Intent refresh = new Intent(BleeMeshService.ACTION_LEDGER_CHANGED);
             refresh.setPackage(getContext().getPackageName());
@@ -170,17 +236,16 @@ public class BleeMeshPlugin extends Plugin {
     @PluginMethod
     public void nearbyPeers(PluginCall call) {
         try {
+            BleeProfileIdentityTransport.syncLocalProfilePacket(getContext());
+            BleeProfileIdentityTransport.processIncoming(getContext());
             JSArray peers = new JSArray();
-            for (org.json.JSONObject item : BleeMeshService.nearbyPeersSnapshot()) {
-                JSObject peer = new JSObject();
-                peer.put("transportId", item.optString("transportId", ""));
-                peer.put("wallet", item.optString("wallet", ""));
-                peer.put("displayName", item.optString("displayName", ""));
-                peer.put("avatar", item.optString("avatar", ""));
-                peer.put("rssi", item.optInt("rssi", 0));
-                peer.put("lastSeen", item.optLong("lastSeen", 0L));
-                peer.put("transport", "ble");
-                peers.put(peer);
+            BleeMeshDb db = new BleeMeshDb(getContext());
+            try {
+                for (org.json.JSONObject item : BleeMeshService.nearbyPeersSnapshot()) {
+                    peers.put(peerObject(BleeProfileIdentityTransport.enrichPeer(db, item)));
+                }
+            } finally {
+                db.close();
             }
             JSObject result = new JSObject();
             result.put("peers", peers);
