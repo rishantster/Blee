@@ -19,6 +19,63 @@
   outline: none;
 }
 
+.walletEntry {
+  grid-template-columns: 36px minmax(0, 1fr) 50px;
+  min-height: 74px;
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  background: var(--surface);
+  padding: 0 10px 0 16px;
+}
+
+.walletEntry input {
+  min-height: 70px;
+  border: 0;
+  border-radius: 0;
+  padding: 0 8px;
+  background: transparent;
+  font-size: 18px;
+}
+
+.walletLeading {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.walletEntry .actions {
+  grid-template-columns: 44px;
+}
+
+.walletEntry .actions button {
+  border: 0;
+  background: transparent;
+}
+
+.walletQuickActions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  margin-top: 16px;
+}
+
+.walletQuickActions button {
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 570;
+}
+
+.walletQuickActions button:disabled { opacity: .45; }
+.walletDivider { width: 1px; height: 32px; background: var(--line); }
+.bluetoothGlyph { font-size: 29px; line-height: 1; font-family: sans-serif; transform: rotate(90deg); }
+
 .actions {
   display: grid;
   grid-template-columns: 44px 44px;
@@ -46,16 +103,9 @@
 .close:active,
 .secondary:active,
 .saveCurrent:active,
-.main:active {
-  transform: scale(.97);
-}
+.main:active { transform: scale(.97); }
 
-.message {
-  display: block;
-  margin-top: 7px;
-  color: var(--muted);
-  font-size: 11px;
-}
+.message { display: block; margin-top: 7px; color: var(--muted); font-size: 11px; }
 
 .overlay {
   position: fixed;
@@ -80,36 +130,11 @@
   padding: 18px;
 }
 
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
-}
-
+.header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .header small,
-.section h3 {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 720;
-  letter-spacing: .07em;
-  text-transform: uppercase;
-}
-
-.header h2 {
-  margin: 3px 0 0;
-  font-size: 25px;
-  letter-spacing: -.04em;
-}
-
-.close {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  font-size: 24px;
-  line-height: 1;
-}
+.section h3 { color: var(--muted); font-size: 10px; font-weight: 720; letter-spacing: .07em; text-transform: uppercase; }
+.header h2 { margin: 3px 0 0; font-size: 25px; letter-spacing: -.04em; }
+.close { width: 40px; height: 40px; border-radius: 50%; font-size: 24px; line-height: 1; }
 
 .saveCurrent {
   width: 100%;
@@ -124,128 +149,32 @@
   text-align: left;
   margin-bottom: 16px;
 }
-
-.saveCurrent span {
-  font-weight: 680;
-}
-
+.saveCurrent span { font-weight: 680; }
 .saveCurrent code,
-.main code {
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-}
-
-.section {
-  margin-top: 18px;
-}
-
-.section h3 {
-  margin: 0 0 8px;
-}
-
-.list {
-  display: grid;
-  gap: 8px;
-}
-
-.row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--line);
-  border-radius: 17px;
-  background: var(--surface);
-  padding: 6px;
-}
-
-.main {
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-  padding: 4px;
-  text-align: left;
-}
-
-.main > span:last-child {
-  min-width: 0;
-}
-
-.main strong {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-}
-
-.main code {
-  display: block;
-  margin-top: 3px;
-}
-
-.avatar {
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
-  display: grid;
-  place-items: center;
-  object-fit: cover;
-  background: var(--surface-2);
-  color: var(--ink);
-  font-weight: 720;
-}
-
-.secondary {
-  min-height: 36px;
-  border-radius: 12px;
-  padding: 0 10px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 680;
-}
-
+.main code { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.section { margin-top: 18px; }
+.section h3 { margin: 0 0 8px; }
+.list { display: grid; gap: 8px; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); padding: 6px; }
+.main { min-width: 0; border: 0; background: transparent; display: grid; grid-template-columns: 42px minmax(0, 1fr); align-items: center; gap: 10px; padding: 4px; text-align: left; }
+.main > span:last-child { min-width: 0; }
+.main strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.main code { display: block; margin-top: 3px; }
+.avatar { width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; object-fit: cover; background: var(--surface-2); color: var(--ink); font-weight: 720; }
+.secondary { min-height: 36px; border-radius: 12px; padding: 0 10px; color: var(--muted); font-size: 11px; font-weight: 680; }
 .empty,
-.status {
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--surface-2);
-  padding: 14px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.empty strong {
-  display: block;
-  color: var(--ink);
-  font-size: 13px;
-}
-
-.empty p {
-  margin: 4px 0 0;
-}
-
-.status {
-  margin-top: 12px;
-}
+.status { border: 1px solid var(--line); border-radius: 16px; background: var(--surface-2); padding: 14px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.empty strong { display: block; color: var(--ink); font-size: 13px; }
+.empty p { margin: 4px 0 0; }
+.status { margin-top: 12px; }
 
 @media (max-width: 380px) {
-  .entry {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 6px;
-  }
-  .actions {
-    grid-template-columns: 40px 40px;
-    gap: 4px;
-  }
-  .actions button {
-    width: 40px;
-    height: 40px;
-  }
+  .walletEntry { min-height: 68px; }
+  .walletEntry input { min-height: 64px; font-size: 16px; }
+  .walletQuickActions { gap: 12px; }
+  .walletQuickActions button { font-size: 14px; gap: 7px; }
+  .entry { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+  .actions { grid-template-columns: 40px 40px; gap: 4px; }
+  .walletEntry .actions { grid-template-columns: 40px; }
+  .actions button { width: 40px; height: 40px; }
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { registerPlugin } from '@capacitor/core';
 import { isAddress } from 'viem';
 import { useContacts, type BleeContact } from '../hooks/useContacts';
@@ -55,7 +55,7 @@ function parseRecipientQr(rawValue: string): string {
 
 function ContactsIcon() {
   return (
-    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="9" cy="8" r="3" />
       <path d="M3.8 19c.7-3.7 2.5-5.6 5.2-5.6s4.5 1.9 5.2 5.6" />
       <path d="M16 7h5M18.5 4.5v5" />
@@ -65,17 +65,24 @@ function ContactsIcon() {
 
 function QrIcon() {
   return (
-    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" />
       <path d="M14 14h2v2h-2zM18 14h2v6h-6v-2M14 18h2" />
     </svg>
   );
 }
 
+function BluetoothIcon() {
+  return (
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v18l6-5-6-4 6-4-6-5Z" />
+      <path d="m6 7 12 9M6 17 18 8" />
+    </svg>
+  );
+}
+
 function ContactAvatar({ contact }: { contact: BleeContact }) {
-  if (contact.avatar) {
-    return <img className={styles.avatar} src={contact.avatar} alt="" />;
-  }
+  if (contact.avatar) return <img className={styles.avatar} src={contact.avatar} alt="" />;
   const initial = (contact.displayName || shortWallet(contact.wallet)).trim().charAt(0).toUpperCase() || 'B';
   return <span className={styles.avatar}>{initial}</span>;
 }
@@ -84,10 +91,16 @@ export function RecipientField({
   value,
   onChange,
   onSelectContact,
+  placeholder = '0x…',
+  onNearby,
+  walletLayout = false,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSelectContact?: (contact: BleeContact) => void;
+  placeholder?: string;
+  onNearby?: () => void;
+  walletLayout?: boolean;
 }) {
   const contacts = useContacts();
   const [open, setOpen] = useState(false);
@@ -135,13 +148,20 @@ export function RecipientField({
     }
   };
 
+  useEffect(() => {
+    if (!walletLayout || !action) return;
+    const timer = window.setTimeout(() => setAction(''), 2200);
+    return () => window.clearTimeout(timer);
+  }, [walletLayout, action]);
+
   return (
     <>
-      <div className={styles.entry}>
+      <div className={`${styles.entry} ${walletLayout ? styles.walletEntry : ''}`}>
+        {walletLayout && <span className={styles.walletLeading}><ContactsIcon /></span>}
         <input
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          placeholder="0x…"
+          placeholder={placeholder}
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
@@ -151,11 +171,22 @@ export function RecipientField({
           <button type="button" onClick={() => setOpen(true)} aria-label="Choose saved contact" title="Contacts">
             <ContactsIcon />
           </button>
-          <button type="button" onClick={() => void scan()} aria-label="Scan recipient QR code" title="Scan QR">
-            <QrIcon />
-          </button>
+          {!walletLayout && <button type="button" onClick={() => void scan()} aria-label="Scan recipient QR code" title="Scan QR"><QrIcon /></button>}
         </div>
       </div>
+
+      {walletLayout && (
+        <div className={styles.walletQuickActions}>
+          <button type="button" onClick={onNearby} disabled={!onNearby}>
+            <BluetoothIcon /><span>Nearby</span>
+          </button>
+          <span className={styles.walletDivider} />
+          <button type="button" onClick={() => void scan()}>
+            <QrIcon /><span>Scan Blee QR</span>
+          </button>
+        </div>
+      )}
+
       {action && !open && <small className={styles.message}>{action}</small>}
 
       {open && (
@@ -164,17 +195,13 @@ export function RecipientField({
         }}>
           <div className={styles.sheet}>
             <div className={styles.header}>
-              <div>
-                <small>RECIPIENTS</small>
-                <h2>Contacts</h2>
-              </div>
+              <div><small>RECIPIENTS</small><h2>Contacts</h2></div>
               <button type="button" className={styles.close} onClick={() => setOpen(false)} aria-label="Close contacts">×</button>
             </div>
 
             {isAddress(value) && !currentSaved && (
               <button type="button" className={styles.saveCurrent} onClick={() => void save({ wallet: value })}>
-                <span>Save current address</span>
-                <code>{shortWallet(value.toLowerCase())}</code>
+                <span>Save current address</span><code>{shortWallet(value.toLowerCase())}</code>
               </button>
             )}
 
@@ -186,14 +213,9 @@ export function RecipientField({
                     <div className={styles.row} key={contact.wallet}>
                       <button type="button" className={styles.main} onClick={() => select(contact)}>
                         <ContactAvatar contact={contact} />
-                        <span>
-                          <strong>{contact.displayName || shortWallet(contact.wallet)}</strong>
-                          <code>{shortWallet(contact.wallet)}</code>
-                        </span>
+                        <span><strong>{contact.displayName || shortWallet(contact.wallet)}</strong><code>{shortWallet(contact.wallet)}</code></span>
                       </button>
-                      <button type="button" className={styles.secondary} onClick={() => void remove(contact.wallet)} aria-label={`Remove ${contact.displayName || shortWallet(contact.wallet)}`}>
-                        Remove
-                      </button>
+                      <button type="button" className={styles.secondary} onClick={() => void remove(contact.wallet)} aria-label={`Remove ${contact.displayName || shortWallet(contact.wallet)}`}>Remove</button>
                     </div>
                   ))}
                 </div>
@@ -208,14 +230,9 @@ export function RecipientField({
                     <div className={styles.row} key={contact.wallet}>
                       <button type="button" className={styles.main} onClick={() => select(contact)}>
                         <ContactAvatar contact={contact} />
-                        <span>
-                          <strong>{contact.displayName || shortWallet(contact.wallet)}</strong>
-                          <code>{shortWallet(contact.wallet)}</code>
-                        </span>
+                        <span><strong>{contact.displayName || shortWallet(contact.wallet)}</strong><code>{shortWallet(contact.wallet)}</code></span>
                       </button>
-                      <button type="button" className={styles.secondary} onClick={() => void save(contact)}>
-                        Save
-                      </button>
+                      <button type="button" className={styles.secondary} onClick={() => void save(contact)}>Save</button>
                     </div>
                   ))}
                 </div>
@@ -223,10 +240,7 @@ export function RecipientField({
             )}
 
             {!contacts.loading && contacts.contacts.length === 0 && (
-              <div className={styles.empty}>
-                <strong>No contacts yet</strong>
-                <p>People you discover or pay will appear here. Save them once and you can select their wallet later even when they are not nearby.</p>
-              </div>
+              <div className={styles.empty}><strong>No contacts yet</strong><p>People you discover or pay will appear here. Save them once and you can select their wallet later even when they are not nearby.</p></div>
             )}
             {contacts.loading && <div className={styles.empty}>Loading contacts…</div>}
             {(contacts.error || action) && <div className={styles.status}>{contacts.error || action}</div>}
