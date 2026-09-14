@@ -95,8 +95,8 @@ async function sendRuntimeMeshPacket(packet: MeshPacket): Promise<void> {
   for (const frame of packetFrames(packet)) await BleeNearby.send({ data: frame });
 }
 
-async function validateSolanaDeliveryAck(packet: MeshPacket): Promise<boolean> {
-  if (!packet.payload || typeof packet.payload !== 'object' || Array.isArray(packet.payload)) return false;
+async function validateSolanaDeliveryAck(packet: MeshPacket): Promise<SolanaMeshDeliveryAckV1 | null> {
+  if (!packet.payload || typeof packet.payload !== 'object' || Array.isArray(packet.payload)) return null;
   const raw = packet.payload as Partial<SolanaMeshDeliveryAckV1>;
   if (
     raw.version !== 1
@@ -112,17 +112,40 @@ async function validateSolanaDeliveryAck(packet: MeshPacket): Promise<boolean> {
     || String(raw.recipientEvm).toLowerCase() !== packet.origin.toLowerCase()
     || !looksLikeSolanaPublicKey(String(raw.recipientSolana || ''))
   ) {
-    return false;
+    return null;
   }
 
   const capabilities = await verifyMeshCapabilitiesV1(packet.origin, raw.recipientCapabilities);
-  return Boolean(
-    capabilities
-    && capabilities.rails.includes('solana-sol')
-    && capabilities.solana
-    && capabilities.solana.networkId === 'solana-mainnet'
-    && capabilities.solana.address === raw.recipientSolana,
-  );
+  if (
+    !capabilities
+    || !capabilities.rails.includes('solana-sol')
+    || !capabilities.solana
+    || capabilities.solana.networkId !== 'solana-mainnet'
+    || capabilities.solana.address !== raw.recipientSolana
+  ) {
+    return null;
+  }
+
+  return {
+    version: 1,
+    railId: 'solana-sol',
+    networkId: 'solana-mainnet',
+    paymentId: raw.paymentId.trim(),
+    signedTransactionSha256: raw.signedTransactionSha256.toLowerCase(),
+    recipientEvm: raw.recipientEvm as Address,
+    recipientSolana: String(raw.recipientSolana),
+    durable: true,
+    recipientCapabilities: capabilities,
+  };
+}
+
+async function processSolanaDeliveryAck(packet: MeshPacket, ack: SolanaMeshDeliveryAckV1): Promise<void> {
+  // BLEE_SOLANA_ACK_CONSUME_V1
+  // A valid ACK can traverse couriers that do not own the outbound payment.
+  // The sender-side outbox applies it only if paymentId + exact tx digest +
+  // recipient identities all match the durable outbound record.
+  const { applyVerifiedSolanaDeliveryAck } = await import('./solanaMeshOutbox');
+  await applyVerifiedSolanaDeliveryAck({ ack, packetOrigin: packet.origin });
 }
 
 async function emitSolanaDurableAck(input: {
@@ -233,7 +256,11 @@ export async function verifyMeshPacket(
       await processLiveSolanaPayment(packet);
     }
 
-    if (packet.type === 'sol-ack' && !(await validateSolanaDeliveryAck(packet))) return false;
+    if (packet.type === 'sol-ack') {
+      const ack = await validateSolanaDeliveryAck(packet);
+      if (!ack) return false;
+      if (options?.processSolanaRuntime !== false) await processSolanaDeliveryAck(packet, ack);
+    }
 
     return true;
   } catch { return false; }

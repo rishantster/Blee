@@ -115,3 +115,30 @@ if grep -Eq 'sendSignedSolanaTransaction|createSolanaRpc|https://api[.](mainnet-
 fi
 
 printf 'VERIFIED: live SOL receive commits before ACK and courier forwarding remains exact-byte durable\n'
+
+# BLEE_SPRINT_5B3_SOLANA_OUTBOUND_DELIVERY_V1
+# Sender delivery persists the exact SOL envelope before transport, retries only
+# refresh the outer EVM-signed packet, and completion requires a matching durable
+# recipient ACK to update the SQLite-backed outbox.
+[ -f src/lib/solanaMeshOutbox.ts ] || fail "SOL mesh sender outbox missing"
+[ -f src/lib/solanaMeshDelivery.ts ] || fail "SOL mesh outbound delivery module missing"
+grep -q "SOLANA_MESH_OUTBOX_KEY = 'mesh.solana-outbox.v1'" src/lib/solanaMeshOutbox.ts || fail "SOL sender outbox key missing"
+grep -q "from './bleeStore'" src/lib/solanaMeshOutbox.ts || fail "SOL sender outbox must use canonical SQLite-backed BleeStore"
+grep -q 'BLEE_SOLANA_MESH_OUTBOX_V1' src/lib/solanaMeshOutbox.ts || fail "SOL sender outbox contract marker missing"
+grep -q 'applyVerifiedSolanaDeliveryAck' src/lib/solanaMeshOutbox.ts || fail "SOL sender outbox cannot consume durable ACK"
+grep -q 'BLEE_SOLANA_MESH_OUTBOUND_DELIVERY_V1' src/lib/solanaMeshDelivery.ts || fail "SOL outbound delivery contract marker missing"
+grep -q 'BLEE_SOLANA_OUTBOX_BEFORE_TRANSPORT_V1' src/lib/solanaMeshDelivery.ts || fail "SOL outbox-before-transport ordering marker missing"
+grep -q 'persistOutboundSolanaMeshPayment' src/lib/solanaMeshDelivery.ts || fail "SOL sender does not durably persist before transport"
+grep -q 'prepareSolanaMeshPaymentPacket' src/lib/solanaMeshDelivery.ts || fail "SOL sender does not use verified payment envelope builder"
+grep -q "createMeshPacket(input.primaryAccount, 'sol-payment', existing.envelope)" src/lib/solanaMeshDelivery.ts || fail "SOL retry does not refresh only the outer packet"
+grep -q 'existing.envelope.signedTransactionSha256' src/lib/solanaMeshDelivery.ts || fail "SOL retry exact-byte digest guard missing"
+grep -q 'BLEE_SOLANA_ACK_CONSUME_V1' src/lib/meshProtocol.ts || fail "live SOL ACK consumption marker missing"
+grep -q "import('./solanaMeshOutbox')" src/lib/meshProtocol.ts || fail "verified SOL ACK is not routed to durable sender outbox"
+if grep -Eq 'localStorage|sessionStorage' src/lib/solanaMeshOutbox.ts src/lib/solanaMeshDelivery.ts; then
+  fail "SOL sender delivery state must not use browser storage"
+fi
+if grep -Eq 'sendSignedSolanaTransaction|createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|helius-rpc[.]com' src/lib/solanaMeshOutbox.ts src/lib/solanaMeshDelivery.ts; then
+  fail "SOL outbound BLE delivery must not submit on-chain or introduce direct RPC"
+fi
+
+printf 'VERIFIED: outbound SOL delivery is durable-before-send, exact-byte retry safe and ACK-driven\n'
