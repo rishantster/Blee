@@ -66,3 +66,28 @@ if grep -Eq 'https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|helius-r
 fi
 
 printf 'VERIFIED: Solana nonce reservation is durable, single-owner and exact-byte replay safe\n'
+
+# BLEE_SPRINT_4B_SOLANA_PAYMENT_TRANSACTION_V1
+# Offline SOL signing is intentionally narrow: the local sender is fee payer,
+# nonce authority and transfer source; the durable nonce setter must prepend
+# exactly one AdvanceNonceAccount instruction before exactly one native SOL
+# transfer. Signed wire bytes are persisted before any transport/gateway use.
+[ -f src/lib/solanaTransaction.ts ] || fail "Solana durable payment transaction builder missing"
+grep -q 'BLEE_SOLANA_DURABLE_PAYMENT_TX_V1' src/lib/solanaTransaction.ts || fail "Solana payment transaction contract marker missing"
+grep -q 'setTransactionMessageFeePayerSigner(senderSigner' src/lib/solanaTransaction.ts || fail "SOL sender is not the transaction fee payer"
+grep -q 'setTransactionMessageLifetimeUsingDurableNonce' src/lib/solanaTransaction.ts || fail "SOL transaction is not durable-nonce bound"
+grep -q 'getTransferSolInstruction' src/lib/solanaTransaction.ts || fail "native SOL transfer instruction missing"
+grep -q 'instructions.length !== 2' src/lib/solanaTransaction.ts || fail "strict two-instruction SOL payment shape missing"
+grep -q 'SystemInstruction.AdvanceNonceAccount' src/lib/solanaTransaction.ts || fail "AdvanceNonceAccount instruction-0 guard missing"
+grep -q 'SystemInstruction.TransferSol' src/lib/solanaTransaction.ts || fail "native SOL transfer instruction-1 guard missing"
+grep -q 'signTransactionMessageWithSigners' src/lib/solanaTransaction.ts || fail "local SOL transaction signing missing"
+grep -q 'getBase64EncodedWireTransaction' src/lib/solanaTransaction.ts || fail "signed SOL wire serialization missing"
+grep -q 'persistSignedSolanaTransaction' src/lib/solanaTransaction.ts || fail "signed SOL bytes are not persisted before transport"
+grep -q 'reservation.signedTransactionBase64' src/lib/solanaTransaction.ts || fail "exact-byte SOL retry path missing"
+grep -q "from '@solana/kit'" src/lib/solanaTransaction.ts || fail "Solana Kit transaction primitives missing"
+grep -q "from '@solana-program/system'" src/lib/solanaTransaction.ts || fail "vetted System Program client missing"
+if grep -Eq 'sendSignedSolanaTransaction|createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|helius-rpc[.]com' src/lib/solanaTransaction.ts; then
+  fail "SOL transaction builder must not broadcast or bypass the Blee gateway"
+fi
+
+printf 'VERIFIED: offline SOL transaction is sender-signed, durable-nonce bound and exact-shape\n'
