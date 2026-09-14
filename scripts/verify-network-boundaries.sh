@@ -91,3 +91,33 @@ if grep -Eq 'sendSignedSolanaTransaction|createSolanaRpc|https://api[.](mainnet-
 fi
 
 printf 'VERIFIED: offline SOL transaction is sender-signed, durable-nonce bound and exact-shape\n'
+
+# BLEE_SPRINT_4C_SOLANA_NONCE_PREPARATION_V1
+# Nonce accounts are prepared only while online. The new account key is generated
+# locally, the sender locally signs CreateAccount + InitializeNonceAccount, exact
+# signed bytes are persisted before submission, and a slot is registered only
+# after the gateway can independently read and validate the initialized account.
+[ -f src/lib/solanaNoncePreparation.ts ] || fail "Solana nonce preparation lifecycle missing"
+grep -q 'BLEE_SOLANA_NONCE_PREPARATION_V1' src/lib/solanaNoncePreparation.ts || fail "Solana nonce preparation contract marker missing"
+grep -q "SOLANA_NONCE_PREPARATION_KEY_PREFIX = 'solana.nonce-preparation.v1'" src/lib/solanaNoncePreparation.ts || fail "durable nonce preparation storage key missing"
+grep -q 'generateKeyPairSigner' src/lib/solanaNoncePreparation.ts || fail "nonce account key is not generated locally"
+grep -q 'getSolanaRentExemption' src/lib/solanaNoncePreparation.ts || fail "nonce setup does not obtain rent through Blee gateway"
+grep -q 'getSolanaLatestBlockhash' src/lib/solanaNoncePreparation.ts || fail "nonce setup does not obtain latest blockhash through Blee gateway"
+grep -q 'getCreateAccountInstruction' src/lib/solanaNoncePreparation.ts || fail "nonce CreateAccount instruction missing"
+grep -q 'getInitializeNonceAccountInstruction' src/lib/solanaNoncePreparation.ts || fail "nonce InitializeNonceAccount instruction missing"
+grep -q 'setTransactionMessageFeePayerSigner(senderSigner' src/lib/solanaNoncePreparation.ts || fail "nonce setup sender is not fee payer"
+grep -q 'setTransactionMessageLifetimeUsingBlockhash' src/lib/solanaNoncePreparation.ts || fail "nonce setup recent blockhash lifetime missing"
+grep -q 'instructions.length !== 2' src/lib/solanaNoncePreparation.ts || fail "nonce setup is not restricted to two instructions"
+grep -q 'SystemInstruction.CreateAccount' src/lib/solanaNoncePreparation.ts || fail "nonce setup instruction-0 guard missing"
+grep -q 'SystemInstruction.InitializeNonceAccount' src/lib/solanaNoncePreparation.ts || fail "nonce setup instruction-1 guard missing"
+grep -q 'signTransactionMessageWithSigners' src/lib/solanaNoncePreparation.ts || fail "nonce setup is not locally signed"
+grep -q 'BleeStore.setValue' src/lib/solanaNoncePreparation.ts || fail "signed nonce setup bytes are not persisted durably"
+grep -q 'sendSignedSolanaNonceSetupTransaction' src/lib/solanaNoncePreparation.ts || fail "dedicated nonce setup gateway submission missing"
+grep -q 'registerPreparedSolanaNonceSlot' src/lib/solanaNoncePreparation.ts || fail "confirmed nonce setup is not registered into the offline pool"
+grep -q "'/v1/solana/latest-blockhash'" src/lib/solanaGateway.ts || fail "gateway latest-blockhash endpoint missing"
+grep -q "'/v1/solana/nonce-setup/send'" src/lib/solanaGateway.ts || fail "dedicated nonce-setup gateway endpoint missing"
+if grep -Eq 'localStorage|sessionStorage|createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|helius-rpc[.]com' src/lib/solanaNoncePreparation.ts; then
+  fail "Solana nonce preparation bypasses durable storage or the Blee gateway"
+fi
+
+printf 'VERIFIED: Solana nonce setup is locally signed, durable and gateway-isolated\n'

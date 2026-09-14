@@ -129,6 +129,11 @@ export type SolanaNonceState = {
   valid: boolean;
 };
 
+export type SolanaLatestBlockhash = {
+  blockhash: string;
+  lastValidBlockHeight: bigint;
+};
+
 export type SolanaSignatureStatus = {
   signature: string;
   confirmationStatus?: 'processed' | 'confirmed' | 'finalized' | null;
@@ -182,6 +187,22 @@ export async function getSolanaRentExemption(space: number): Promise<bigint> {
   }
 }
 
+export async function getSolanaLatestBlockhash(): Promise<SolanaLatestBlockhash> {
+  const result = await gatewayFetch<{ blockhash: string; lastValidBlockHeight: string | number }>('/v1/solana/latest-blockhash');
+  const blockhash = String(result.blockhash || '').trim();
+  if (!looksLikeSolanaPublicKey(blockhash)) {
+    throw new SolanaGatewayError('SOL_INTERNAL_ERROR', 'Gateway returned an invalid Solana blockhash');
+  }
+  let lastValidBlockHeight: bigint;
+  try { lastValidBlockHeight = BigInt(String(result.lastValidBlockHeight)); } catch {
+    throw new SolanaGatewayError('SOL_INTERNAL_ERROR', 'Gateway returned an invalid block height');
+  }
+  if (lastValidBlockHeight <= 0n) {
+    throw new SolanaGatewayError('SOL_INTERNAL_ERROR', 'Gateway returned an invalid block height');
+  }
+  return { blockhash, lastValidBlockHeight };
+}
+
 export async function getSolanaSignatureStatuses(signatures: string[]): Promise<SolanaSignatureStatus[]> {
   if (!Array.isArray(signatures) || signatures.length < 1 || signatures.length > 20 || signatures.some((value) => !looksLikeSolanaSignature(value))) {
     throw new SolanaGatewayError('SOL_INVALID_SIGNATURE', 'Invalid Solana transaction signature list');
@@ -219,4 +240,36 @@ export async function sendSignedSolanaTransaction(input: {
     method: 'POST',
     body: JSON.stringify({ rail: 'solana-sol', paymentId, signedTransactionBase64 }),
   }, 15_000);
+}
+
+/**
+ * Dedicated nonce-account setup boundary. The gateway must accept only the
+ * exact CreateAccount + InitializeNonceAccount shape and forward signed bytes
+ * unchanged. This endpoint is intentionally separate from payment submission.
+ */
+export async function sendSignedSolanaNonceSetupTransaction(input: {
+  setupId: string;
+  nonceAccountAddress: string;
+  signedTransactionBase64: string;
+}): Promise<{ signature: string; duplicate?: boolean }> {
+  const setupId = input.setupId.trim();
+  const nonceAccountAddress = input.nonceAccountAddress.trim();
+  const signedTransactionBase64 = input.signedTransactionBase64.trim();
+  if (!setupId || setupId.length > 160) {
+    throw new SolanaGatewayError('SOL_INVALID_TRANSACTION', 'Invalid Solana nonce setup ID');
+  }
+  if (!looksLikeSolanaPublicKey(nonceAccountAddress)) {
+    throw new SolanaGatewayError('SOL_INVALID_ADDRESS', 'Invalid Solana nonce account');
+  }
+  if (!signedTransactionBase64 || signedTransactionBase64.length > MAX_SIGNED_TRANSACTION_B64_CHARS) {
+    throw new SolanaGatewayError('SOL_TRANSACTION_TOO_LARGE', 'Signed Solana nonce setup is too large');
+  }
+  const result = await gatewayFetch<{ signature: string; duplicate?: boolean }>('/v1/solana/nonce-setup/send', {
+    method: 'POST',
+    body: JSON.stringify({ purpose: 'nonce-setup', setupId, nonceAccountAddress, signedTransactionBase64 }),
+  }, 15_000);
+  if (!looksLikeSolanaSignature(result.signature)) {
+    throw new SolanaGatewayError('SOL_INTERNAL_ERROR', 'Gateway returned an invalid nonce setup signature');
+  }
+  return result;
 }
