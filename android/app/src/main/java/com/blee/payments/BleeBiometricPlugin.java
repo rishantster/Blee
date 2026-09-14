@@ -3,6 +3,7 @@ package com.blee.payments;
 import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.hardware.biometrics.BiometricManager;
 import android.hardware.biometrics.BiometricPrompt;
 import android.hardware.fingerprint.FingerprintManager;
@@ -41,10 +42,11 @@ public class BleeBiometricPlugin extends Plugin {
     public void status(PluginCall call) {
         JSObject result = new JSObject();
         Availability availability = availability();
-        result.put("available", availability.available);
+        boolean usableFingerprint = availability.available && availability.enrolled;
+        result.put("available", usableFingerprint);
         result.put("enrolled", availability.enrolled);
-        result.put("enabled", hasCredential());
-        result.put("kind", availability.available ? "fingerprint" : "none");
+        result.put("enabled", usableFingerprint && hasCredential());
+        result.put("kind", usableFingerprint ? "fingerprint" : "none");
         if (availability.reason != null) result.put("reason", availability.reason);
         call.resolve(result);
     }
@@ -268,21 +270,25 @@ public class BleeBiometricPlugin extends Plugin {
             return new Availability(false, false, "Fingerprint unlock requires Android 9 or later");
         }
         try {
-            // Do not use generic BiometricManager as the primary hardware check:
-            // a face-only phone may report BIOMETRIC_SUCCESS even though Blee's UI
-            // explicitly offers fingerprint unlock. FingerprintManager is used as
-            // the hardware/enrollment gate on every supported Android version.
+            // A generic biometric service may succeed on face-only devices. Blee
+            // explicitly offers fingerprint unlock, so require Android's declared
+            // fingerprint hardware feature before showing any fingerprint UI.
+            PackageManager packageManager = getContext().getPackageManager();
+            if (packageManager == null || !packageManager.hasSystemFeature(PackageManager.FEATURE_FINGERPRINT)) {
+                return new Availability(false, false, "This phone has no fingerprint sensor");
+            }
+
             FingerprintManager fingerprint = (FingerprintManager) getContext().getSystemService(Context.FINGERPRINT_SERVICE);
             if (fingerprint == null || !fingerprint.isHardwareDetected()) {
-                return new Availability(false, false, "This phone has no fingerprint sensor");
+                return new Availability(false, false, "This phone has no usable fingerprint sensor");
             }
             if (!fingerprint.hasEnrolledFingerprints()) {
                 return new Availability(true, false, "Enroll a fingerprint in Android settings first");
             }
 
-            // On Android 11+ the key is explicitly strong-biometric gated. Check
-            // that capability too so we never surface a control that cannot unlock
-            // the Android Keystore key used for the wrapped Blee passphrase.
+            // On Android 11+ the keystore key is explicitly strong-biometric
+            // gated. Verify that capability as a second gate after the concrete
+            // fingerprint hardware/enrollment checks above.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 BiometricManager manager = (BiometricManager) getContext().getSystemService(Context.BIOMETRIC_SERVICE);
                 if (manager == null) return new Availability(false, false, "Biometric service unavailable");

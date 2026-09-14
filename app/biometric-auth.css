@@ -1,0 +1,44 @@
+/* BLEE_BIOMETRIC_UI_GATE_V2
+ * Fingerprint controls are hardware-gated by BleeBiometric.status().
+ * This stylesheet provides a second visual guard and replaces the old busy
+ * fingerprint glyph with the approved clean icon asset.
+ */
+html[data-blee-biometric="unavailable"] .biometric-opt-in,
+html[data-blee-biometric="unavailable"] .biometric-unlock,
+html[data-blee-biometric="unavailable"] .fingerprint-action {
+  display: none !important;
+}
+
+.biometric-icon {
+  position: relative;
+  overflow: hidden;
+}
+
+.biometric-icon > svg,
+.biometric-unlock > svg {
+  display: none !important;
+}
+
+.biometric-icon::before,
+.biometric-unlock::before {
+  content: "";
+  display: block;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  background: currentColor;
+  -webkit-mask: url('/brand/fingerprint-clean.svg') center / contain no-repeat;
+  mask: url('/brand/fingerprint-clean.svg') center / contain no-repeat;
+}
+
+.biometric-icon::before {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
+}
+
+.biometric-unlock {
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}

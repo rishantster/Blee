@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "check": "tsc --noEmit",
-    "verify": "bash scripts/verify-source.sh && bash scripts/verify-network-boundaries.sh && bash scripts/verify-mesh-capabilities.sh && bash scripts/verify-solana-wallet-view.sh && bash scripts/verify-multi-asset-ui.sh && bash scripts/verify-solana-send-ui.sh && bash scripts/verify-wallet-home-ui.sh && bash scripts/verify-nearby-ui.sh",
+    "verify": "bash scripts/verify-source.sh && bash scripts/verify-network-boundaries.sh && bash scripts/verify-mesh-capabilities.sh && bash scripts/verify-solana-wallet-view.sh && bash scripts/verify-multi-asset-ui.sh && bash scripts/verify-solana-send-ui.sh && bash scripts/verify-wallet-home-ui.sh && bash scripts/verify-nearby-ui.sh && bash scripts/verify-biometric-hardware-gate.sh",
     "android:sync": "npm run build && npx cap sync android",
     "android:build": "bash scripts/build-android.sh"
   },

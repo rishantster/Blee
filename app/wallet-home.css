@@ -1,32 +1,25 @@
 /* BLEE_WALLET_HOME_REFERENCE_V3
- * Premium wallet home matching the approved product reference.
- * The hero remains the active USDC rail; asset rows beneath it expose USDC and
- * SOL independently without changing settlement or balance semantics.
+ * BLEE_WALLET_HOME_COMPACT_V5
+ * One centered wallet balance hero, compact action/asset/activity hierarchy and
+ * official asset marks. Operational USDC/SOL state remains independently sourced.
  */
 
 .home-screen {
-  --home-edge: 22px;
-  padding: calc(var(--safe-top) + 14px) var(--home-edge) calc(34px + var(--safe-bottom));
+  --home-edge: 18px;
+  padding: calc(var(--safe-top) + 3px) var(--home-edge) calc(14px + var(--safe-bottom));
 }
 
 .home-screen .app-topbar {
-  min-height: 70px;
-  margin: 0 0 34px;
+  min-height: 42px;
+  margin: 0 0 2px;
   justify-content: space-between;
 }
-
-.home-screen .app-topbar .blee-brand {
-  min-height: 0;
-  justify-content: flex-start;
-}
-
-.home-screen .app-topbar .blee-wordmark {
-  width: 116px;
-}
+.home-screen .app-topbar .blee-brand { min-height: 0; justify-content: flex-start; }
+.home-screen .app-topbar .blee-wordmark { width: 84px; }
 
 .home-profile-button {
-  width: 48px;
-  height: 48px;
+  width: 38px;
+  height: 38px;
   border: 0;
   border-radius: 50%;
   padding: 0;
@@ -35,142 +28,88 @@
   background: var(--surface-2);
   overflow: hidden;
 }
-
 .home-profile-button .person-avatar {
-  width: 48px;
-  height: 48px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   background: transparent;
-  font-size: 17px;
+  font-size: 13px;
 }
 
+/* Hero intentionally contains only the centered primary balance. Network and
+ * testnet context belong to the asset row, not above/below the number. */
 .home-balance-hero {
-  padding: 0 0 4px;
+  min-height: 80px;
+  padding: 2px 0 6px;
+  display: grid;
+  place-items: center;
+  text-align: center;
 }
-
-.home-balance-label {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: #5d5d58;
-  font-size: 14px;
-  font-weight: 720;
-  letter-spacing: .035em;
-}
-
-.home-network-chip {
-  min-height: 30px;
-  padding: 0 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255,255,255,.58);
-  color: #5d5d58;
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0;
-}
-
+.home-balance-label,
+.home-balance-meta { display: none !important; }
 .home-balance-value {
-  margin-top: 12px;
-  display: flex;
+  margin: 0;
+  display: inline-flex;
   align-items: baseline;
-  gap: 10px;
+  justify-content: center;
+  gap: 7px;
   min-width: 0;
   color: var(--ink);
 }
-
 .home-balance-value strong {
   min-width: 0;
-  font-size: clamp(58px, 17vw, 78px);
+  font-size: clamp(46px, 13vw, 60px);
   line-height: .94;
-  letter-spacing: -.075em;
+  letter-spacing: -.07em;
   font-weight: 760;
   font-variant-numeric: tabular-nums;
 }
-
 .home-balance-value span {
-  font-size: clamp(24px, 7vw, 32px);
+  font-size: clamp(17px, 4.8vw, 22px);
   line-height: 1;
-  color: #565652;
-  font-weight: 580;
-  letter-spacing: -.035em;
-}
-
-.home-balance-meta {
-  margin-top: 10px;
-  color: #676762;
-  font-size: 14px;
-  line-height: 1.35;
+  color: #595955;
+  font-weight: 610;
+  letter-spacing: -.03em;
 }
 
 .home-screen > .primary-actions {
-  margin-top: 24px;
+  margin-top: 5px;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-
-.home-screen .action-button {
-  min-height: 66px;
-  border-radius: 18px;
-  font-size: 16px;
-  font-weight: 680;
-  gap: 11px;
-}
-
-.home-screen .action-button svg {
-  width: 24px;
-  height: 24px;
-}
-
-.home-screen .action-button.send {
-  background: #080808;
-  border-color: #080808;
-  color: #fff;
-}
-
-.home-screen .action-button:not(.send) {
-  background: rgba(255,255,255,.55);
-  border-color: var(--line-strong);
-}
-
-.home-alert-stack {
-  margin-top: 12px;
-  display: grid;
   gap: 8px;
 }
-
-.home-alert-stack .pending-strip {
-  margin: 0;
-  padding: 11px 13px;
-  border-radius: 14px;
-  background: rgba(255,255,255,.52);
+.home-screen .action-button {
+  min-height: 49px;
+  border-radius: 15px;
+  font-size: 14px;
+  font-weight: 690;
+  gap: 8px;
 }
+.home-screen .action-button svg { width: 20px; height: 20px; }
+.home-screen .action-button.send { background: #080808; border-color: #080808; color: #fff; }
+.home-screen .action-button:not(.send) { background: rgba(255,255,255,.56); border-color: var(--line-strong); }
 
-.home-modern-section {
-  margin-top: 30px;
-}
+.home-alert-stack { margin-top: 7px; display: grid; gap: 5px; }
+.home-alert-stack .pending-strip { margin: 0; padding: 7px 9px; border-radius: 11px; background: rgba(255,255,255,.54); }
+.home-alert-stack .pending-strip strong { font-size: 11px; }
+.home-alert-stack .pending-strip small { font-size: 9px; }
 
+.home-modern-section { margin-top: 12px; }
 .home-modern-heading {
-  min-height: 34px;
-  margin-bottom: 12px;
+  min-height: 23px;
+  margin-bottom: 5px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
 }
-
 .home-modern-heading h2 {
   margin: 0;
-  font-size: 24px;
+  font-size: 19px;
   line-height: 1.05;
-  font-weight: 730;
+  font-weight: 735;
   letter-spacing: -.045em;
 }
-
 .home-heading-action,
 .home-discovery-status {
   border: 0;
@@ -178,268 +117,171 @@
   background: transparent;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   color: #686863;
-  font-size: 13px;
-  font-weight: 560;
+  font-size: 10.5px;
+  font-weight: 580;
 }
-
-.home-heading-action svg {
-  width: 15px;
-  height: 15px;
-}
-
+.home-modern-section[aria-label="Assets"] .home-heading-action { display: none !important; }
+.home-heading-action svg { width: 12px; height: 12px; }
 .home-discovery-status .status-dot,
 .nearby-online-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: #14c96b;
   box-shadow: none;
 }
-
-.home-discovery-status.offline .status-dot {
-  background: #a4a49f;
-}
+.home-discovery-status.offline .status-dot { background: #a4a49f; }
 
 .home-nearby-card,
 .home-assets-card,
 .home-activity-card {
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 19px;
+  border-radius: 16px;
   background: rgba(255,255,255,.58);
 }
-
 .home-nearby-card {
   width: 100%;
-  min-height: 78px;
-  padding: 12px 14px;
-  border-color: var(--line);
+  min-height: 56px;
+  padding: 7px 10px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 9px;
   text-align: left;
 }
-
-.home-nearby-card > .person-avatar {
-  width: 50px;
-  height: 50px;
-  flex: 0 0 auto;
-}
-
-.home-nearby-copy {
-  min-width: 0;
-  flex: 1;
-}
-
-.home-nearby-copy strong {
-  display: block;
-  font-size: 16px;
-  line-height: 1.15;
-  font-weight: 690;
-}
-
-.home-nearby-copy small {
-  display: block;
-  margin-top: 5px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
+.home-nearby-card > .person-avatar { width: 40px; height: 40px; flex: 0 0 auto; }
+.home-nearby-copy { min-width: 0; flex: 1; }
+.home-nearby-copy strong { display: block; font-size: 13px; line-height: 1.15; font-weight: 700; }
+.home-nearby-copy small { display: block; margin-top: 2px; color: var(--muted); font-size: 9px; }
 .home-pay-button {
-  min-width: 66px;
-  height: 42px;
-  border-radius: 14px;
+  min-width: 55px;
+  height: 34px;
+  border-radius: 11px;
   display: inline-grid;
   place-items: center;
   background: #080808;
   color: #fff;
-  font-size: 13px;
-  font-weight: 680;
+  font-size: 11.5px;
+  font-weight: 690;
 }
-
 .home-nearby-empty {
-  min-height: 76px;
-  padding: 14px;
+  min-height: 54px;
+  padding: 7px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 9px;
 }
-
 .home-nearby-empty > span:first-child {
-  width: 42px;
-  height: 42px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   display: grid;
   place-items: center;
   background: var(--surface-2);
 }
-
 .home-nearby-empty strong,
-.home-nearby-empty small {
-  display: block;
-}
-
-.home-nearby-empty strong { font-size: 14px; }
-.home-nearby-empty small { margin-top: 4px; color: var(--muted); font-size: 11px; }
+.home-nearby-empty small { display: block; }
+.home-nearby-empty strong { font-size: 11.5px; }
+.home-nearby-empty small { margin-top: 2px; color: var(--muted); font-size: 8.8px; }
 
 .home-asset-row {
-  min-height: 76px;
-  padding: 12px 14px;
+  min-height: 52px;
+  padding: 6px 10px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 9px;
 }
-
 .home-asset-row + .home-asset-row,
-.home-activity-row + .home-activity-row {
-  border-top: 1px solid var(--line);
-}
-
+.home-activity-row + .home-activity-row { border-top: 1px solid var(--line); }
 .asset-token {
   position: relative;
-  width: 46px;
-  height: 46px;
+  width: 36px;
+  height: 36px;
   flex: 0 0 auto;
   border-radius: 50%;
   overflow: hidden;
-  display: grid;
-  place-items: center;
+  display: block;
+  background-position: center;
+  background-repeat: no-repeat;
 }
-
 .asset-token-usdc {
-  background: #2775ca;
-  color: #fff;
-  box-shadow: inset 0 0 0 3px rgba(255,255,255,.9);
+  background-color: transparent;
+  background-image: url('/brand/usdc-token.svg');
+  background-size: 100% 100%;
+  box-shadow: none;
 }
-
 .asset-token-usdc::before,
-.asset-token-usdc::after {
-  content: "";
-  position: absolute;
-  inset: 7px;
-  border: 2px dashed rgba(255,255,255,.9);
-  border-radius: 50%;
-}
-
-.asset-token-usdc span {
-  position: relative;
-  z-index: 1;
-  font-size: 22px;
-  font-weight: 760;
-}
-
+.asset-token-usdc::after,
+.asset-token-usdc > span { display: none !important; }
 .asset-token-sol {
-  background: #050505;
+  background-color: #050505;
+  background-image: url('/brand/solana-logomark.svg');
+  background-size: 72% auto;
 }
-
-.asset-token-sol i {
-  position: absolute;
-  left: 11px;
-  width: 24px;
-  height: 5px;
-  border-radius: 2px;
-  transform: skewX(-22deg);
-  background: linear-gradient(90deg, #5cf6c7, #74a7ff 48%, #a65cff);
-}
-
-.asset-token-sol i:nth-child(1) { top: 12px; }
-.asset-token-sol i:nth-child(2) { top: 20px; transform: skewX(22deg); }
-.asset-token-sol i:nth-child(3) { top: 28px; }
-
-.home-asset-main {
-  min-width: 0;
-  flex: 1;
-}
-
+.asset-token-sol > i { display: none !important; }
+.home-asset-main { min-width: 0; flex: 1; }
 .home-asset-main strong,
-.home-asset-value strong {
-  display: block;
-  font-size: 15px;
-  line-height: 1.15;
-  font-weight: 700;
-}
-
+.home-asset-value strong { display: block; font-size: 12px; line-height: 1.15; font-weight: 700; }
 .home-asset-main small,
-.home-asset-value small {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.2;
-}
-
-.home-asset-value {
-  flex: 0 0 auto;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
+.home-asset-value small { display: block; margin-top: 2px; color: var(--muted); font-size: 8.8px; line-height: 1.2; }
+.home-asset-value { flex: 0 0 auto; text-align: right; font-variant-numeric: tabular-nums; }
 
 .home-activity-row {
-  min-height: 74px;
+  min-height: 50px;
   width: 100%;
-  padding: 11px 14px;
+  padding: 6px 10px;
   border: 0;
   background: transparent;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 9px;
   text-align: left;
 }
-
 .home-activity-icon {
-  width: 42px;
-  height: 42px;
+  width: 34px;
+  height: 34px;
   flex: 0 0 auto;
   border-radius: 50%;
   display: grid;
   place-items: center;
   background: var(--surface-2);
 }
-
-.home-activity-copy {
-  min-width: 0;
-  flex: 1;
-}
-
+.home-activity-copy { min-width: 0; flex: 1; }
 .home-activity-copy strong,
-.home-activity-amount strong {
-  display: block;
-  font-size: 14px;
-  line-height: 1.2;
-  font-weight: 690;
-}
-
+.home-activity-amount strong { display: block; font-size: 11.5px; line-height: 1.2; font-weight: 690; }
 .home-activity-copy small,
-.home-activity-amount small {
-  display: block;
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.2;
-}
-
-.home-activity-amount {
-  flex: 0 0 auto;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
+.home-activity-amount small { display: block; margin-top: 2px; color: var(--muted); font-size: 8.5px; line-height: 1.2; }
+.home-activity-amount { flex: 0 0 auto; text-align: right; font-variant-numeric: tabular-nums; }
 .home-section-empty {
-  min-height: 90px;
+  min-height: 54px;
   display: grid;
   place-items: center;
-  padding: 18px;
+  padding: 10px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 9px;
+}
+
+/* Keep the primary wallet surface useful on shorter Android devices. */
+@media (max-height: 820px) {
+  .home-screen { padding-top: calc(var(--safe-top) + 1px); }
+  .home-screen .app-topbar { min-height: 39px; }
+  .home-screen .app-topbar .blee-wordmark { width: 80px; }
+  .home-balance-hero { min-height: 72px; padding-top: 0; }
+  .home-balance-value strong { font-size: clamp(42px, 12vw, 53px); }
+  .home-screen .action-button { min-height: 46px; }
+  .home-modern-section { margin-top: 9px; }
+  .home-modern-heading { margin-bottom: 4px; min-height: 21px; }
+  .home-nearby-card { min-height: 52px; }
+  .home-asset-row { min-height: 48px; }
+  .home-activity-row { min-height: 46px; }
+  .home-activity-row:nth-child(n+2) { display: none; }
 }
 
 @media (max-width: 380px) {
-  .home-screen { --home-edge: 18px; }
-  .home-balance-value strong { font-size: clamp(52px, 16vw, 68px); }
-  .home-balance-value span { font-size: 23px; }
-  .home-screen .action-button { min-height: 62px; }
-  .home-modern-section { margin-top: 26px; }
+  .home-screen { --home-edge: 15px; }
+  .home-balance-value strong { font-size: clamp(40px, 12.5vw, 52px); }
+  .home-balance-value span { font-size: 17px; }
 }
