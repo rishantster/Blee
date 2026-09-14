@@ -58,3 +58,36 @@ if grep -Eq 'createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solan
 fi
 
 printf 'VERIFIED: live nearby hello exchanges and durably caches only verified Solana capabilities\n'
+
+# BLEE_SPRINT_5B1_SOLANA_MESH_ENVELOPE_V1
+# Exact signed SOL bytes are wrapped only after recipient SOL support has been
+# cryptographically verified. Receiver/courier custody must persist the entire
+# authenticated packet in canonical SQLite storage and fail closed on a
+# paymentId conflict. This layer never submits or mutates the signed transaction.
+[ -f src/lib/solanaMeshEnvelope.ts ] || fail "SOL mesh payment envelope module missing"
+[ -f src/lib/solanaMeshStore.ts ] || fail "SOL mesh durable custody store missing"
+grep -q 'BLEE_SOLANA_MESH_PAYMENT_ENVELOPE_V1' src/lib/solanaMeshEnvelope.ts || fail "SOL mesh envelope contract marker missing"
+grep -q 'prepareSolanaMeshPaymentPacket' src/lib/solanaMeshEnvelope.ts || fail "SOL mesh packet preparation missing"
+grep -q 'loadVerifiedPeerMeshCapabilities' src/lib/solanaMeshEnvelope.ts || fail "SOL recipient is not sourced from verified peer capabilities"
+grep -q "createMeshPacket(input.primaryAccount, 'sol-payment'" src/lib/solanaMeshEnvelope.ts || fail "SOL exact signed bytes are not carried by the framed mesh packet"
+grep -q 'verifyMeshCapabilitiesV1(packet.origin' src/lib/solanaMeshEnvelope.ts || fail "SOL sender capability proof is not verified on receipt"
+grep -q 'MAX_WIRE_TRANSACTION_BYTES = 1232' src/lib/solanaMeshEnvelope.ts || fail "Solana wire-size ceiling missing"
+grep -q "crypto.subtle.digest('SHA-256'" src/lib/solanaMeshEnvelope.ts || fail "SOL wire digest verification missing"
+grep -q 'signedTransactionSha256' src/lib/solanaMeshEnvelope.ts || fail "SOL envelope exact-byte digest missing"
+grep -q 'BLEE_SOLANA_MESH_DURABLE_CUSTODY_V1' src/lib/solanaMeshStore.ts || fail "SOL durable custody contract marker missing"
+grep -q "SOLANA_MESH_INBOX_KEY = 'mesh.solana-inbox.v1'" src/lib/solanaMeshStore.ts || fail "SOL durable inbox key missing"
+grep -q "from './bleeStore'" src/lib/solanaMeshStore.ts || fail "SOL durable custody must use canonical SQLite-backed BleeStore"
+grep -q 'validateSolanaMeshPaymentEnvelope' src/lib/solanaMeshStore.ts || fail "stored SOL packets are not cryptographically revalidated"
+grep -q "role = 'recipient'" src/lib/solanaMeshStore.ts || fail "recipient custody role missing"
+grep -q "role = 'courier'" src/lib/solanaMeshStore.ts || fail "courier custody role missing"
+grep -q 'conflicts with different signed transaction bytes' src/lib/solanaMeshStore.ts || fail "SOL paymentId conflict is not fail-closed"
+grep -q "'sol-payment'" src/types/domain.ts || fail "SOL mesh packet type missing"
+grep -q 'export type SolanaMeshPaymentEnvelopeV1' src/types/domain.ts || fail "SOL mesh envelope domain type missing"
+if grep -Eq 'localStorage|sessionStorage' src/lib/solanaMeshEnvelope.ts src/lib/solanaMeshStore.ts; then
+  fail "SOL mesh envelope/custody must not use browser storage"
+fi
+if grep -Eq 'sendSignedSolanaTransaction|createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|helius-rpc[.]com' src/lib/solanaMeshEnvelope.ts src/lib/solanaMeshStore.ts; then
+  fail "SOL mesh layer must not broadcast or introduce a direct RPC path"
+fi
+
+printf 'VERIFIED: exact signed SOL mesh envelope is capability-bound and durably stored for recipient/courier custody\n'
