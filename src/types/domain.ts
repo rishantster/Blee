@@ -60,6 +60,18 @@ export type PaymentRecord = {
   settledAt?: number;
 };
 
+export type MeshSolanaCapabilityV1 = {
+  networkId: 'solana-mainnet';
+  address: string;
+  proofBase64: string;
+};
+
+export type MeshCapabilitiesV1 = {
+  version: 1;
+  rails: BleeRailId[];
+  solana?: MeshSolanaCapabilityV1;
+};
+
 export type MeshPeer = {
   transport?: 'lan' | 'ble';
   transportId: string;
@@ -69,6 +81,9 @@ export type MeshPeer = {
   rssi?: number;
   lastSeen: number;
   arcReachable?: boolean;
+  rails?: BleeRailId[];
+  solanaAddress?: string;
+  capabilitiesVerified?: boolean;
 };
 
 export type MeshPacketType = 'hello' | 'payment' | 'ack' | 'receipt';
