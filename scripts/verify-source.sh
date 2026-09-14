@@ -128,7 +128,25 @@ if grep -q 'notifyPaymentReceived' src/hooks/useBleeView.ts; then
 fi
 grep -q 'BleePaymentNotifier.received' android/app/src/main/java/com/blee/payments/BleeMeshPlugin.java || fail "verified receive path does not notify natively"
 grep -q 'PAYMENT_ENVELOPE_RECEIVED' android/app/src/main/java/com/blee/payments/BleePaymentEventReceiver.java || fail "transport detection notification path missing"
-grep -q 'post(context, paymentId, "receiver", "Payment received", body, true)' android/app/src/main/java/com/blee/payments/BleePaymentNotifier.java || fail "verified incoming payment notifications must alert"
+grep -q 'post(context, paymentId, "receiver", "Payment received", body, false)' android/app/src/main/java/com/blee/payments/BleePaymentNotifier.java || fail "verified receive must update the existing receiver notification without re-alerting"
+
+# BLEE_NOTIFICATION_SINGLE_OWNER_V1
+grep -q '"counterpartyAlias", "recipientName"' plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java || fail "sender notification does not prefer Blee counterparty alias"
+if grep -Fq 'BleePaymentNotifier.detected(this' android/app/src/main/java/com/blee/payments/BleeMeshService.java; then
+  fail "mesh service must not directly own receiver detection notifications"
+fi
+if grep -Fq 'BleePaymentNotifier.delivered(this' android/app/src/main/java/com/blee/payments/BleeMeshService.java; then
+  fail "delivery ACK must not create a sender lifecycle notification"
+fi
+if grep -Fq 'paymentNotification(result.notificationTitle' android/app/src/main/java/com/blee/payments/BleeMeshService.java; then
+  fail "mesh lifecycle ProcessResult still emits user notifications"
+fi
+if grep -Fq 'paymentNotification("Payment confirmed"' android/app/src/main/java/com/blee/payments/BleeMeshService.java; then
+  fail "chain confirmation must stay in Activity instead of creating another notification"
+fi
+SERVICE_PAYMENT_NOTIFICATION_CALLS="$(grep -c 'paymentNotification(' android/app/src/main/java/com/blee/payments/BleeMeshService.java)"
+[ "$SERVICE_PAYMENT_NOTIFICATION_CALLS" = "1" ] || fail "legacy mesh payment notification path still has call sites"
+printf 'VERIFIED: Android payment notifications are side-scoped, alias-aware and single-stream\n'
 
 grep -q "RecipientField" src/components/BleeApp.tsx || fail "Send screen is not using the canonical recipient control"
 if grep -q 'blee-recipient-qr-icon' src/components/BleeApp.tsx; then

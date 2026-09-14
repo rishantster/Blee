@@ -1306,7 +1306,6 @@ public class BleeMeshService extends Service {
                 receipt.put("verifiedBy", deviceId);
                 if (db.markChainConfirmed(paymentId, txHash, receipt, System.currentTimeMillis())) {
                     notifyLedgerChanged(paymentId, "CHAIN_CONFIRMED");
-                    paymentNotification("Payment confirmed", "Your Blee payment is confirmed on Arc Testnet.", paymentId);
                 }
             } catch (Throwable error) {
                 Log.d(TAG, "chain confirmation reconciliation skipped: " + error.getMessage());
@@ -1929,7 +1928,6 @@ public class BleeMeshService extends Service {
                         String eventType = "PAYMENT_ENVELOPE".equals(result.type) ? "PAYMENT_ENVELOPE_RECEIVED" : result.type;
                         notifyLedgerChanged(result.paymentId, eventType);
                     }
-                    if (result.notificationTitle != null) paymentNotification(result.notificationTitle, result.notificationBody, result.paymentId);
                     if (result.accepted) scheduleSenderFundedSettlement();
                 }
             } catch (Throwable error) {
@@ -3402,7 +3400,6 @@ public class BleeMeshService extends Service {
                 String eventType = "PAYMENT_ENVELOPE".equals(result.type) ? "PAYMENT_ENVELOPE_RECEIVED" : result.type;
                 notifyLedgerChanged(result.paymentId, eventType);
             }
-            if (result.notificationTitle != null) paymentNotification(result.notificationTitle, result.notificationBody, result.paymentId);
             if (result.accepted) scheduleSenderFundedSettlement();
             return result.accepted;
         } catch (Throwable error) {
@@ -3412,13 +3409,10 @@ public class BleeMeshService extends Service {
     }
 
     private void notifyLedgerChanged(String paymentId, String type) {
-        // BLEE_BACKGROUND_RECEIVE_NOTIFICATION_V2
-        // PAYMENT_ENVELOPE_RECEIVED is emitted by native transport immediately.
-        // Wording stays at "detected" until EIP-3009 verification promotes it.
-        if ("PAYMENT_ENVELOPE_RECEIVED".equals(type)) BleePaymentNotifier.detected(this, paymentId);
-
-        if ("DELIVERY_ACK".equals(type)) BleePaymentNotifier.delivered(this, paymentId);
-
+        // BLEE_NOTIFICATION_SINGLE_OWNER_V1
+        // Mesh lifecycle events update the durable ledger only. User-visible
+        // payment alerts are owned by the canonical payment notifier paths:
+        // sender persistence and recipient receive/verification.
         Intent intent = new Intent(ACTION_LEDGER_CHANGED);
         intent.setPackage(getPackageName());
         intent.putExtra(EXTRA_PAYMENT_ID, paymentId == null ? "" : paymentId);

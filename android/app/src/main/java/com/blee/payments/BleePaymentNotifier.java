@@ -56,7 +56,10 @@ public final class BleePaymentNotifier {
         // A verified durable receipt is independently user-visible. It must alert
         // even when no earlier transport-level detection notification was shown.
         // Reusing the same payment-scoped notification id prevents duplicates.
-        post(context, paymentId, "receiver", "Payment received", body, true);
+        // BLEE_NOTIFICATION_SINGLE_STREAM_V1
+        // Upgrade the existing incoming-payment card after verification without
+        // buzzing the receiver for the same payment a second time.
+        post(context, paymentId, "receiver", "Payment received", body, false);
     }
 
     private static String amountText(String amount, String verb) {
