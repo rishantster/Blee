@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatUnits } from 'viem';
 import { useBlee } from './useBlee';
 import { useSolanaWalletView } from './useSolanaWalletView';
-import { loadPayments, removePersistentValue, setPersistentValue } from '../lib/persistence';
+import { loadPayments, setPersistentValue } from '../lib/persistence';
 import type { PaymentRecord } from '../types/domain';
 import { ARC_USDC_DECIMALS } from '../lib/arc';
 import { isActiveArcPayment, paymentProjectionKey } from '../lib/paymentNetwork';
@@ -96,14 +96,12 @@ export function useBleeView() {
   // discovery runs in a native foreground service even when the WebView is idle.
   // Mirror only this non-financial presentation metadata into the same native
   // SQLite KV store so the transport can advertise it without internet access.
+  // Keep an explicit empty avatar tombstone so photo removal changes the native
+  // profile version and is propagated to peers rather than resurrecting a stale photo.
   useEffect(() => {
     if (!core.persistenceReady) return;
     void setPersistentValue('profile.alias', core.alias).catch(() => undefined);
-    if (core.profilePhoto) {
-      void setPersistentValue('profile.avatar', core.profilePhoto).catch(() => undefined);
-    } else {
-      void removePersistentValue('profile.avatar').catch(() => undefined);
-    }
+    void setPersistentValue('profile.avatar', core.profilePhoto || '').catch(() => undefined);
   }, [core.persistenceReady, core.alias, core.profilePhoto]);
 
   const payments = useMemo(
