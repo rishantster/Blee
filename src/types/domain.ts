@@ -43,6 +43,13 @@ export type PaymentRecord = {
   environment?: BleeEnvironment;
   chainFamily?: BleeChainFamily;
   authorization?: TransferAuthorization;
+  /**
+   * Exact EIP-3009 authorization retained for audit/history when this payment
+   * belongs to an Arc network other than the release-selected settlement
+   * network. Persistence writes it back as `authorization`, but runtime
+   * settlement code never sees it through the active `authorization` field.
+   */
+  archivedAuthorization?: TransferAuthorization;
   txHash?: Hex;
   error?: string;
   attempts?: number;

@@ -92,10 +92,26 @@ function canonicalPayment(input: StoredPayment, missingNetworkMode: MissingNetwo
   const direction = canonicalDirection(input.direction);
   if (!id || !direction) return null;
 
-  const authorization = (input.authorization || input.auth) as PaymentRecord['authorization'] | undefined;
+  const network = canonicalNetworkMetadata(input, missingNetworkMode);
+  const storedAuthorization = (input.authorization || input.auth || input.archivedAuthorization) as PaymentRecord['authorization'] | undefined;
+
+  // BLEE_INACTIVE_NETWORK_AUTH_ARCHIVE_V1
+  // A payment from another Arc environment remains in durable history, but its
+  // EIP-3009 authorization is moved out of the runtime settlement field. This
+  // prevents a future Mainnet release from reserving, retrying, relaying or
+  // reconciling an old Testnet authorization while preserving the exact signed
+  // payload for audit and for durable rewrite.
+  const activeArc = getActiveNetwork();
+  const settlementEligible = network.railId === 'arc-usdc'
+    && network.networkId === activeArc.id
+    && network.assetId === 'usdc'
+    && network.chainFamily === 'evm';
+  const authorization = settlementEligible ? storedAuthorization : undefined;
+  const archivedAuthorization = storedAuthorization && !settlementEligible ? storedAuthorization : undefined;
+
   const state = canonicalState(input.state);
-  const authFrom = wallet(authorization?.from);
-  const authTo = wallet(authorization?.to);
+  const authFrom = wallet(storedAuthorization?.from);
+  const authTo = wallet(storedAuthorization?.to);
   const rawCounterparty = wallet(input.counterparty || input.counterpartyWallet);
   const counterparty = direction === 'out'
     ? (authTo || rawCounterparty)
@@ -123,7 +139,6 @@ function canonicalPayment(input: StoredPayment, missingNetworkMode: MissingNetwo
   const updatedAt = Number(input.updatedAt || createdAt);
   const amount = String(input.amount || input.displayAmount || input.tokenAmount || '0');
   const route = canonicalRoute(input.route, state, input.state);
-  const network = canonicalNetworkMetadata(input, missingNetworkMode);
 
   return {
     ...(input as unknown as PaymentRecord),
@@ -139,13 +154,16 @@ function canonicalPayment(input: StoredPayment, missingNetworkMode: MissingNetwo
     route,
     ...network,
     authorization,
+    archivedAuthorization,
   };
 }
 
 /** Native mesh storage keys remain outgoing/incoming for compatibility. */
 function storagePayment(row: PaymentRecord): StoredPayment {
+  const { archivedAuthorization, ...durable } = row;
   return {
-    ...row,
+    ...durable,
+    authorization: row.authorization ?? archivedAuthorization,
     direction: row.direction === 'out' ? 'outgoing' : row.direction === 'in' ? 'incoming' : 'relay',
   };
 }
@@ -232,25 +250,65 @@ export async function setAlias(alias: string): Promise<string> {
   return safe;
 }
 
-export async function loadLastBalance(address: string): Promise<{ value: string; at: number } | null> {
-  const raw = await getPersistentValue(`balance.${address.toLowerCase()}`);
+// BLEE_NETWORK_SCOPED_CACHE_V1
+// Balance snapshots and scan cursors are settlement-network state. They must be
+// isolated by network ID so a Mainnet release can never display a cached Testnet
+// balance or start scanning Mainnet from a Testnet block cursor.
+function stateKey(kind: 'balance' | 'chainCursor', networkId: string, address: string): string {
+  return `${kind}.${networkId}.${address.toLowerCase()}`;
+}
+
+function parseBalanceSnapshot(raw: string | null): { value: string; at: number } | null {
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { value: string; at: number };
-    return typeof parsed.value === 'string' && Number.isFinite(parsed.at) ? parsed : null;
+    const parsed = JSON.parse(raw) as { value?: unknown; at?: unknown };
+    return typeof parsed.value === 'string' && Number.isFinite(parsed.at)
+      ? { value: parsed.value, at: Number(parsed.at) }
+      : null;
   } catch { return null; }
 }
 
-export async function saveLastBalance(address: string, value: string, at = Date.now()): Promise<void> {
-  await setPersistentValue(`balance.${address.toLowerCase()}`, JSON.stringify({ value, at }));
+export async function loadLastBalance(address: string): Promise<{ value: string; at: number } | null> {
+  const active = getActiveNetwork();
+  const scopedKey = stateKey('balance', active.id, address);
+  const scoped = parseBalanceSnapshot(await getPersistentValue(scopedKey));
+  if (scoped) return scoped;
+
+  // Blee <=2.7.1 stored an unscoped balance, and that app only supported Arc
+  // Testnet. Migrate it only when Testnet is still the active release network.
+  if (active.id !== ARC_TESTNET.id) return null;
+  const legacy = parseBalanceSnapshot(await getPersistentValue(`balance.${address.toLowerCase()}`));
+  if (!legacy) return null;
+  await setPersistentValue(scopedKey, JSON.stringify(legacy)).catch(() => undefined);
+  return legacy;
 }
 
-export async function loadChainCursor(address: string): Promise<bigint | null> {
-  const raw = await getPersistentValue(`chainCursor.${address.toLowerCase()}`);
+export async function saveLastBalance(address: string, value: string, at = Date.now()): Promise<void> {
+  const active = getActiveNetwork();
+  await setPersistentValue(stateKey('balance', active.id, address), JSON.stringify({ value, at }));
+}
+
+function parseCursor(raw: string | null): bigint | null {
   if (!raw) return null;
   try { return BigInt(raw); } catch { return null; }
 }
 
+export async function loadChainCursor(address: string): Promise<bigint | null> {
+  const active = getActiveNetwork();
+  const scopedKey = stateKey('chainCursor', active.id, address);
+  const scoped = parseCursor(await getPersistentValue(scopedKey));
+  if (scoped !== null) return scoped;
+
+  // Legacy cursors can only describe Arc Testnet because no other Arc network
+  // was selectable when the unscoped key existed.
+  if (active.id !== ARC_TESTNET.id) return null;
+  const legacy = parseCursor(await getPersistentValue(`chainCursor.${address.toLowerCase()}`));
+  if (legacy === null) return null;
+  await setPersistentValue(scopedKey, legacy.toString()).catch(() => undefined);
+  return legacy;
+}
+
 export async function saveChainCursor(address: string, block: bigint): Promise<void> {
-  await setPersistentValue(`chainCursor.${address.toLowerCase()}`, block.toString());
+  const active = getActiveNetwork();
+  await setPersistentValue(stateKey('chainCursor', active.id, address), block.toString());
 }
