@@ -257,7 +257,12 @@ async function sha256Base64Payload(value: string): Promise<string> {
     throw new Error('Signed Solana transaction is not valid base64');
   }
   if (bytes.byteLength < 64 || bytes.byteLength > 1232) throw new Error('Signed Solana transaction has an invalid wire size');
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  const digestInput = new Uint8Array(bytes.byteLength);
+  digestInput.set(bytes);
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', digestInput.buffer),
+  );
+  digestInput.fill(0);
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
