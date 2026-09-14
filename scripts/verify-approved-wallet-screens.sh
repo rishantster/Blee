@@ -11,10 +11,13 @@ fail() {
 
 APP="src/components/BleeApp.tsx"
 CSS="app/approved-wallet-ui.css"
+RESPONSIVE="app/responsive-mobile.css"
 RECIPIENT="src/components/RecipientField.tsx"
+LAYOUT="app/layout.tsx"
 
 [ -f "$APP" ] || fail "Blee app screen source missing"
 [ -f "$CSS" ] || fail "approved wallet stylesheet missing"
+[ -f "$RESPONSIVE" ] || fail "responsive mobile viewport contract missing"
 [ -f "$RECIPIENT" ] || fail "recipient control missing"
 
 # Profile / Edit profile
@@ -51,6 +54,25 @@ grep -q 'Only send SOL on Solana to this address.' "$APP" || fail "SOL receive n
 grep -q 'Copy address' "$APP" || fail "Receive copy action missing"
 grep -q 'Open Nearby' "$APP" || fail "Receive Nearby handoff missing"
 
+# Responsive viewport contract: design elements scale within sensible bounds rather
+# than increasing fixed sizes across every phone. Short screens get an explicit
+# height-aware treatment and auth remains scroll-safe.
+grep -q 'BLEE_RESPONSIVE_MOBILE_V1' "$RESPONSIVE" || fail "responsive mobile contract marker missing"
+grep -q -- '--blee-vp-x: clamp' "$RESPONSIVE" || fail "horizontal viewport spacing is not fluid"
+grep -q -- '--blee-touch: clamp' "$RESPONSIVE" || fail "touch target sizing is not bounded"
+grep -q '@media (max-height: 760px)' "$RESPONSIVE" || fail "short-screen adaptation missing"
+grep -q 'overflow-y: auto' "$RESPONSIVE" || fail "auth screen is not scroll-safe on short phones"
+grep -q 'width: clamp(220px, 68vw, 310px)' "$RESPONSIVE" || fail "Nearby discovery field is not viewport bounded"
+grep -q 'font-size: clamp(48px, 14vw, 68px)' "$RESPONSIVE" || fail "Send amount is not viewport bounded"
+grep -q 'width: min(68vw, 280px, 36dvh)' "$RESPONSIVE" || fail "Receive QR is not bounded by width and height"
+grep -q "import './responsive-mobile.css';" "$LAYOUT" || fail "responsive viewport contract is not loaded"
+[ "$(grep -n "import './responsive-mobile.css';" "$LAYOUT" | cut -d: -f1)" -gt "$(grep -n "import './approved-wallet-ui.css';" "$LAYOUT" | cut -d: -f1)" ] || fail "responsive viewport contract must load after approved screen styling"
+
+# Unlock/create must never return the user to whatever sub-screen was open when
+# the wallet was locked. Both passphrase and biometric success reset navigation.
+grep -Fq "await app.unlock(result.passphrase); historyRef.current = []; setScreen('home');" "$APP" || fail "biometric sign-in does not route to Home"
+grep -Fq "historyRef.current = []; setScreen('home'); setPassphrase(''); setConfirmPassphrase('');" "$APP" || fail "passphrase/create success does not route to Home"
+
 # Presentation must not recreate the removed DOM patch layer.
 if [ -e src/components/NearbySelfAvatarBridge.tsx ]; then
   fail "obsolete Nearby DOM avatar bridge is present"
@@ -59,4 +81,4 @@ if grep -Eq 'NearbySelfAvatarBridge|document[.]querySelector.*radar-self' app/la
   fail "wallet UI contains a DOM patch layer instead of React state"
 fi
 
-printf 'VERIFIED: approved Profile, Edit, Settings, Send and Receive screens preserve real wallet behavior without patch layers\n'
+printf 'VERIFIED: approved wallet screens are viewport-responsive and successful authentication always enters Home\n'

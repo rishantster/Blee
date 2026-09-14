@@ -26,8 +26,11 @@ grep -q 'fingerprint.hasEnrolledFingerprints()' "$NATIVE" || fail "native finger
 grep -q 'boolean usableFingerprint = availability.available && availability.enrolled' "$NATIVE" || fail "native status can expose unusable fingerprint state"
 grep -q 'const usable = Boolean(status.available && status.enrolled)' "$WEB" || fail "web biometric status is not enrollment-gated"
 grep -q 'BLEE_BIOMETRIC_CAPABILITY_GATE_V2' "$WEB" || fail "biometric capability gate v2 marker missing"
+grep -q 'BLEE_BIOMETRIC_UI_GATE_V3' "$CSS" || fail "bounded biometric UI gate missing"
 grep -q 'data-blee-biometric' "$CSS" || fail "unsupported-hardware visual guard missing"
 grep -q 'fingerprint-clean.svg' "$CSS" || fail "clean fingerprint asset not used"
+grep -q 'biometric-unlock > img' "$CSS" || fail "raw fingerprint image is not explicitly bounded/hidden"
+grep -q 'display: none !important' "$CSS" || fail "intrinsic fingerprint artwork can still expand the auth control"
 grep -q "import './biometric-auth.css';" "$LAYOUT" || fail "biometric auth stylesheet not loaded"
 
-printf 'VERIFIED: fingerprint UI is real-hardware/enrollment gated and uses the clean auth icon\n'
+printf 'VERIFIED: fingerprint UI is real-hardware/enrollment gated and intrinsic artwork cannot expand the auth viewport\n'

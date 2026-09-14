@@ -5,6 +5,7 @@ import './wallet-home.css';
 import './nearby-screen.css';
 import './biometric-auth.css';
 import './approved-wallet-ui.css';
+import './responsive-mobile.css';
 
 export const metadata: Metadata = {
   title: 'Blee',
