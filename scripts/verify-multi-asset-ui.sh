@@ -12,12 +12,14 @@ fail() {
 APP="src/components/BleeApp.tsx"
 [ -f "$APP" ] || fail "Blee wallet UI missing"
 
-# BLEE_SPRINT_6_MULTI_ASSET_UI_V2
-# This gate protects the cross-rail presentation invariants after SOL Send is
-# enabled. USDC must still use the established Arc send engine, while SOL stays
-# a separate Solana projection and may only enter the verified coordinator path.
+# BLEE_SPRINT_6_MULTI_ASSET_UI_V3
+# Cross-rail presentation invariants after the approved wallet-home redesign.
+# The Home screen may present a single active-rail hero plus an Assets list, but
+# USDC and SOL must remain separately sourced and separately routed.
 grep -q 'data-blee-multi-asset-ui="v1"' "$APP" || fail "multi-asset home marker missing"
-grep -q 'SOL BALANCE' "$APP" || fail "SOL balance card missing"
+grep -q 'home-assets-card' "$APP" || fail "multi-asset Assets surface missing"
+grep -q 'asset-token-usdc' "$APP" || fail "USDC asset presentation missing"
+grep -q 'asset-token-sol' "$APP" || fail "SOL asset presentation missing"
 grep -q 'Solana Mainnet' "$APP" || fail "Solana Mainnet label missing"
 grep -q 'app.solana.balance' "$APP" || fail "SOL balance is not sourced from isolated Solana projection"
 grep -q 'app.solana.offlineReady' "$APP" || fail "SOL offline readiness is not presented"

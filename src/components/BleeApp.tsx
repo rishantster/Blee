@@ -379,7 +379,7 @@ export function BleeApp() {
 
   const visiblePayments = useMemo(() => app.payments.filter((row) => row.direction !== 'relay'), [app.payments]);
   const filteredPayments = useMemo(() => visiblePayments.filter((row) => activityFilter === 'all' || (activityFilter === 'sent' ? row.direction === 'out' : row.direction === 'in')), [visiblePayments, activityFilter]);
-  const recentPayments = visiblePayments.slice(0, 3);
+  const recentPayments = visiblePayments.slice(0, 2);
   const nearbyPeers = app.peers.slice(0, 3);
   const pendingPayments = visiblePayments.filter((row) => row.state !== 'settled' && row.state !== 'failed');
   const projectedBalance = Number(app.available || 0) + Number(app.pendingIncoming || 0);
@@ -664,39 +664,131 @@ export function BleeApp() {
     );
   }
 
-  const renderHome = () => (
-    <div className="screen-content home-screen" data-blee-multi-asset-ui="v1">
-      <div className="app-topbar"><Brand compact/><button className="status-chip" onClick={() => void app.refreshNetwork()}><span className={`status-dot ${app.arcReachable ? 'online' : app.arcReachable === null ? 'checking' : 'offline'}`}/>{app.arcReachable ? 'Arc online' : app.arcReachable === null ? 'Checking Arc' : 'Arc offline'}</button></div>
-      <section className="balance-panel">
-        <div className="balance-heading"><div><span className="kicker">USDC BALANCE</span><small>Arc Testnet</small></div><button className="icon-button" onClick={() => void app.refreshNetwork()} aria-label="Refresh USDC balance"><Icon name="refresh"/></button></div>
-        <div className="balance-number">{formatAmount(projectedBalance)} <span>USDC</span></div>
-        <div className="balance-subline"><span>{app.pendingIncoming > 0 ? `${formatAmount(app.available)} confirmed · ${formatAmount(app.pendingIncoming)} pending` : app.reserved > 0 ? `${formatAmount(app.reserved)} reserved` : 'Confirmed spendable'}</span><span>{app.balanceAt ? `Updated ${new Date(app.balanceAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Awaiting sync'}</span></div>
-      </section>
-      <section className="balance-panel" data-blee-asset="sol">
-        <div className="balance-heading"><div><span className="kicker">SOL BALANCE</span><small>Solana Mainnet</small></div><button className="icon-button" onClick={() => void app.solana.refresh()} aria-label="Refresh SOL balance"><Icon name="refresh"/></button></div>
-        <div className="balance-number">{app.solana.balance === null ? '—' : formatAmount(app.solana.balance, 9)} <span>SOL</span></div>
-        <div className="balance-subline"><span>{app.solana.offlineReady ? `${app.solana.readyNonceCount} offline payment slot${app.solana.readyNonceCount === 1 ? '' : 's'} ready` : app.solana.sessionReady ? 'Offline SOL slots not prepared yet' : 'Preparing Solana wallet'}</span><span>{app.solana.gatewayReachable === false ? 'Gateway offline' : app.solana.balanceAt ? `Updated ${new Date(app.solana.balanceAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : app.solana.loading ? 'Syncing' : 'Awaiting sync'}</span></div>
-      </section>
-      {app.solana.pendingOutboundCount > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>{app.solana.pendingOutboundCount} SOL payment{app.solana.pendingOutboundCount > 1 ? 's' : ''} pending delivery</strong><small>Signed transaction bytes remain durable on this phone and retry over Blee Mesh.</small></div></div>}
-      {app.verifyingIncoming > 0 && <div className="pending-strip"><Icon name="shield"/><div><strong>Verifying nearby payment{app.verifyingIncoming > 1 ? 's' : ''}</strong><small>Stored durably on this phone. Sender authorization is being checked locally.</small></div></div>}
-      {app.pendingIncoming > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>+{formatAmount(app.pendingIncoming)} USDC pending</strong><small>Received nearby and verified. Included in your displayed balance, but not spendable until Arc settlement is confirmed.</small></div></div>}
-      <div className="primary-actions"><button className="action-button send" onClick={() => openSend()}><Icon name="send"/><span>Send</span></button><button className="action-button" onClick={() => navigate('receive')}><Icon name="receive"/><span>Receive</span></button></div>
-      <section className="home-section"><div className="section-title"><div><span className="kicker">NEARBY</span><h2>People nearby</h2></div><button onClick={() => selectTab('nearby')}>See all</button></div>
-        {nearbyPeers.length ? <div className="surface-list">{nearbyPeers.map((peer) => <button className="peer-row" key={`${peer.address}:${peer.transportId}`} onClick={() => openSend(peer)}><PersonAvatar name={peer.alias} src={app.identityFor(peer.address)?.avatar}/><span><strong>{peer.alias}</strong><small>{short(peer.address)}</small></span><span className="row-action">Pay</span></button>)}</div> : <EmptyState icon="nearby" title={app.meshStarted ? 'Looking for people nearby' : 'Nearby payments are off'} copy={app.meshStarted ? 'Blee is scanning over Bluetooth LE.' : 'Turn on Nearby to find other Blee users.'}/>}</section>
-      <section className="home-section"><div className="section-title"><div><span className="kicker">RECENT</span><h2>Activity</h2></div><button onClick={() => selectTab('activity')}>See all</button></div>
-        {recentPayments.length ? <div className="surface-list">{recentPayments.map((row) => <PaymentRow key={`${row.direction}:${row.id}`} row={row} identity={app.identityFor(row.counterparty)} onOpen={openPayment}/>)}</div> : <EmptyState icon="activity" title="No activity yet" copy="Your payments will appear here."/>}</section>
-    </div>
-  );
+  const renderHome = () => {
+    const featuredPeer = nearbyPeers[0];
+    const railBadge = network.environment === 'testnet' ? 'Testnet' : 'Mainnet';
+    const railNote = network.environment === 'testnet' ? 'Test funds' : 'Live funds';
+    return (
+      <div className="screen-content home-screen" data-blee-multi-asset-ui="v1" data-blee-home-ui="wallet-reference-v3">
+        <div className="app-topbar">
+          <Brand compact/>
+          <button className="home-profile-button" onClick={() => selectTab('profile')} aria-label="Open profile">
+            <PersonAvatar name={app.alias} src={app.profilePhoto}/>
+          </button>
+        </div>
 
-  const renderNearby = () => (
-    <div className="screen-content"><ScreenHeader title="Nearby" trailing={<button className="icon-button" onClick={() => void toggleNearby()} aria-label="Toggle nearby"><Icon name="refresh"/></button>}/>
-      <section className="discoverability-card"><div><span className="kicker">DISCOVERABILITY</span><strong>{app.meshStarted ? 'Visible to Blee users nearby' : 'Nearby is off'}</strong><small>{app.meshStarted ? 'Scanning and advertising over Bluetooth LE in the background.' : 'Enable Nearby to discover and pay people without relying on internet.'}</small></div><button className={`switch ${app.meshStarted ? 'on' : ''}`} onClick={() => void toggleNearby()} aria-label="Discoverability"><span/></button></section>
-      {nearbyError && <div className="inline-alert error"><Icon name="info"/><span>{nearbyError}</span></div>}
-      <div className="section-title simple"><div><span className="kicker">PEOPLE</span><h2>{app.peers.length ? `${app.peers.length} nearby` : 'Finding people nearby'}</h2></div></div>
-      {app.meshStarted && app.peers.length ? <div className="surface-list">{app.peers.map((peer) => <div className="peer-row static" key={`${peer.address}:${peer.transportId}`}><PersonAvatar name={peer.alias} src={app.identityFor(peer.address)?.avatar}/><span><strong>{peer.alias}</strong><small>{short(peer.address)} · seen {Math.max(1, Math.round((Date.now() - peer.lastSeen) / 1000))}s ago</small></span><button className="row-action" onClick={() => openSend(peer)}>Pay</button></div>)}</div> : <EmptyState icon="nearby" title={app.meshStarted ? 'Scanning nearby' : 'Nearby is off'} copy={app.meshStarted ? 'Keep Bluetooth enabled on both phones. Blee will surface authenticated peers here.' : 'Turn it on above to discover Blee users.'}/>} 
-      <div className="quiet-note"><Icon name="shield"/><span>A payment is shown as delivered only after the intended recipient stores it durably and acknowledges it.</span></div>
-    </div>
-  );
+        <section className="home-balance-hero" aria-label="USDC balance">
+          <div className="home-balance-label"><span>USDC BALANCE</span><span className="home-network-chip">{railBadge}</span></div>
+          <div className="home-balance-value"><strong>{formatAmount(projectedBalance, 2)}</strong><span>USDC</span></div>
+          <div className="home-balance-meta">{network.name} · {railNote}</div>
+        </section>
+
+        <div className="primary-actions">
+          <button className="action-button send" onClick={() => openSend()}><Icon name="send"/><span>Send</span></button>
+          <button className="action-button" onClick={() => navigate('receive')}><Icon name="receive"/><span>Receive</span></button>
+        </div>
+
+        {(app.solana.pendingOutboundCount > 0 || app.verifyingIncoming > 0 || app.pendingIncoming > 0) && <div className="home-alert-stack">
+          {app.solana.pendingOutboundCount > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>{app.solana.pendingOutboundCount} SOL payment{app.solana.pendingOutboundCount > 1 ? 's' : ''} pending delivery</strong><small>Signed transaction bytes remain durable on this phone and retry over Blee Mesh.</small></div></div>}
+          {app.verifyingIncoming > 0 && <div className="pending-strip"><Icon name="shield"/><div><strong>Verifying nearby payment{app.verifyingIncoming > 1 ? 's' : ''}</strong><small>Stored durably on this phone. Sender authorization is being checked locally.</small></div></div>}
+          {app.pendingIncoming > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>+{formatAmount(app.pendingIncoming)} USDC pending</strong><small>Received nearby and verified. Included in the displayed balance until Arc confirms settlement.</small></div></div>}
+        </div>}
+
+        <section className="home-modern-section" aria-label="Nearby">
+          <div className="home-modern-heading">
+            <h2>Nearby</h2>
+            <button className={`home-discovery-status ${app.meshStarted ? '' : 'offline'}`} onClick={() => selectTab('nearby')}><span className="status-dot"/>{app.meshStarted ? 'Discovering' : 'Nearby off'}</button>
+          </div>
+          {featuredPeer ? <button className="home-nearby-card" onClick={() => openSend(featuredPeer)} aria-label={`Pay ${featuredPeer.alias}`}>
+            <PersonAvatar name={featuredPeer.alias} src={app.identityFor(featuredPeer.address)?.avatar}/>
+            <span className="home-nearby-copy"><strong>{featuredPeer.alias}</strong><small>Nearby via Bluetooth</small></span>
+            <span className="home-pay-button">Pay</span>
+          </button> : <div className="home-nearby-card"><div className="home-nearby-empty"><span><Icon name="nearby"/></span><span><strong>{app.meshStarted ? 'Looking for someone nearby' : 'Nearby is off'}</strong><small>{app.meshStarted ? 'Keep Bluetooth on. Blee is discovering people around you.' : 'Turn on Nearby to find another Blee user.'}</small></span></div></div>}
+        </section>
+
+        <section className="home-modern-section" aria-label="Assets">
+          <div className="home-modern-heading">
+            <h2>Assets</h2>
+            <button className="home-heading-action" onClick={() => navigate('network-security')}>View all <Icon name="chevron" size={15}/></button>
+          </div>
+          <div className="home-assets-card">
+            <div className="home-asset-row">
+              <span className="asset-token asset-token-usdc" aria-hidden="true"><span>$</span></span>
+              <span className="home-asset-main"><strong>USDC</strong><small>{network.name}</small></span>
+              <span className="home-asset-value"><strong>{formatAmount(projectedBalance, 2)} USDC</strong><small>{railNote}</small></span>
+            </div>
+            <div className="home-asset-row">
+              <span className="asset-token asset-token-sol" aria-hidden="true"><i/><i/><i/></span>
+              <span className="home-asset-main"><strong>Solana</strong><small>Mainnet</small></span>
+              <span className="home-asset-value"><strong>{app.solana.balance === null ? '—' : `${formatAmount(app.solana.balance, 4)} SOL`}</strong><small>{app.solana.balance === null ? 'Not synced' : app.solana.gatewayReachable === false ? 'Gateway offline' : app.solana.offlineReady ? `${app.solana.readyNonceCount} offline slot${app.solana.readyNonceCount === 1 ? '' : 's'} ready` : 'Synced'}</small></span>
+            </div>
+          </div>
+        </section>
+
+        <section className="home-modern-section" aria-label="Activity">
+          <div className="home-modern-heading"><h2>Activity</h2><button className="home-heading-action" onClick={() => selectTab('activity')}>View all <Icon name="chevron" size={15}/></button></div>
+          <div className="home-activity-card">
+            {recentPayments.length ? recentPayments.map((row) => {
+              const incoming = row.direction === 'in';
+              const identity = app.identityFor(row.counterparty);
+              const name = row.counterpartyAlias || identity?.alias || short(row.counterparty);
+              const symbol = row.assetSymbol || 'USDC';
+              return <button className="home-activity-row" key={`${row.direction}:${row.id}`} onClick={() => openPayment(row)}>
+                <span className="home-activity-icon"><Icon name={incoming ? 'receive' : 'send'} size={20}/></span>
+                <span className="home-activity-copy"><strong>{incoming ? `Received from ${name}` : `Sent to ${name}`}</strong><small>{paymentStatus(row)} · {new Date(row.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></span>
+                <span className="home-activity-amount"><strong>{incoming ? '+' : '−'}{formatAmount(row.amount, symbol === 'SOL' ? 4 : 2)} {symbol}</strong></span>
+              </button>;
+            }) : <div className="home-section-empty">Your payments will appear here.</div>}
+          </div>
+        </section>
+      </div>
+    );
+  };
+
+  const renderNearby = () => {
+    const radarPeers = app.peers.slice(0, 3);
+    return (
+      <div className="screen-content nearby-screen" data-blee-nearby-ui="radar-reference-v1">
+        <header className="nearby-screen-header">
+          <div><h1>Nearby</h1><p>Find someone. Tap to pay.</p></div>
+          <button className="nearby-info-button" aria-label="How nearby payments work" onClick={() => document.getElementById('nearby-help')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><Icon name="info" size={24}/></button>
+        </header>
+
+        <section className="nearby-visibility-card">
+          <span className="nearby-bluetooth-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v18l6-5-6-4 6-4-6-5Z"/><path d="m6 7 12 9M6 17 18 8"/></svg></span>
+          <span className="nearby-visibility-copy"><strong>{app.meshStarted ? 'Visible to nearby people' : 'Nearby visibility is off'}</strong><small>{app.meshStarted ? 'Others can find you on Blee' : 'Turn it on so other Blee users can find you'}</small></span>
+          <button className={`switch ${app.meshStarted ? 'on' : ''}`} onClick={() => void toggleNearby()} aria-label="Nearby visibility"><span/></button>
+        </section>
+
+        {nearbyError && <div className="nearby-error-wrap"><div className="inline-alert error"><Icon name="info"/><span>{nearbyError}</span></div></div>}
+
+        <section className="nearby-radar-wrap" aria-label="Nearby discovery radar">
+          <div className="nearby-radar">
+            <span className="nearby-radar-ring r1"/><span className="nearby-radar-ring r2"/><span className="nearby-radar-ring r3"/><span className="nearby-radar-ring r4"/>
+            <div className="radar-self"><span className="radar-self-mark"><img src="/brand/blee-mark.svg" alt=""/></span><small>You</small></div>
+            {radarPeers.map((peer, index) => <button className={`radar-peer radar-peer-${index}`} key={`radar:${peer.address}:${peer.transportId}`} onClick={() => openSend(peer)} aria-label={`Pay ${peer.alias}`}>
+              <span className="radar-peer-avatar"><PersonAvatar name={peer.alias} src={app.identityFor(peer.address)?.avatar} size="lg"/></span><span className="radar-peer-name">{peer.alias}</span>
+            </button>)}
+          </div>
+          <div className={`nearby-radar-status ${app.meshStarted ? '' : 'offline'}`}><span className="nearby-online-dot"/>{app.meshStarted ? 'Looking for people nearby' : 'Nearby is off'}</div>
+          <p className="nearby-radar-helper">{app.meshStarted ? 'Keep Bluetooth on to stay connected' : 'Turn on visibility to discover people around you'}</p>
+        </section>
+
+        <section className="nearby-people-section">
+          <div className="nearby-people-heading"><h2>People nearby</h2><span className="nearby-count-pill">{app.peers.length}</span><button className="nearby-refresh-button" aria-label="Refresh nearby people" onClick={() => window.dispatchEvent(new CustomEvent('blee:refresh-all', { detail: { source: 'nearby-screen' } }))}><Icon name="refresh" size={22}/></button></div>
+          <div className="nearby-people-list">
+            {app.meshStarted && app.peers.length ? app.peers.map((peer) => <div className="nearby-person-row" key={`${peer.address}:${peer.transportId}`}>
+              <PersonAvatar name={peer.alias} src={app.identityFor(peer.address)?.avatar}/>
+              <span className="nearby-person-copy"><strong>{peer.alias}</strong><small><span className="nearby-online-dot"/>Available to pay</small></span>
+              <button className="nearby-pay-button" onClick={() => openSend(peer)}>Pay</button>
+            </div>) : <div className="nearby-list-empty"><strong>{app.meshStarted ? 'No one nearby yet' : 'Nearby is off'}</strong><small>{app.meshStarted ? 'Blee is still scanning. Keep Bluetooth enabled on both phones.' : 'Turn on visibility above to start discovering Blee users.'}</small></div>}
+          </div>
+        </section>
+
+        <footer className="nearby-trust-footer" id="nearby-help"><div className="nearby-trust-line"><Icon name="shield" size={20}/><span>No wallet address. No QR code.</span></div><button className="nearby-help-link" onClick={() => navigate('network-security')}>How nearby payments work</button></footer>
+      </div>
+    );
+  };
 
   const renderActivity = () => (
     <div className="screen-content"><ScreenHeader title="Activity" trailing={pendingPayments.length ? <span className="count-badge">{pendingPayments.length}</span> : null}/>

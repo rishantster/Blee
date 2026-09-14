@@ -1,0 +1,403 @@
+/* BLEE_NEARBY_REFERENCE_V1
+ * Approved Nearby screen: visibility control, radar discovery, nearby people,
+ * and trust footer. Presentation only; mesh/discovery behavior stays native.
+ */
+
+.nearby-screen {
+  padding: calc(var(--safe-top) + 18px) 22px calc(38px + var(--safe-bottom));
+}
+
+.nearby-screen-header {
+  margin: 0 0 22px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.nearby-screen-header h1 {
+  margin: 0;
+  font-size: clamp(42px, 12vw, 54px);
+  line-height: .95;
+  letter-spacing: -.065em;
+  font-weight: 760;
+}
+
+.nearby-screen-header p {
+  margin: 11px 0 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.25;
+  letter-spacing: -.02em;
+}
+
+.nearby-info-button {
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+}
+
+.nearby-visibility-card {
+  min-height: 96px;
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(255,255,255,.58);
+}
+
+.nearby-bluetooth-mark {
+  width: 50px;
+  height: 50px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+}
+
+.nearby-bluetooth-mark svg {
+  width: 24px;
+  height: 24px;
+}
+
+.nearby-visibility-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.nearby-visibility-copy strong {
+  display: block;
+  font-size: 16px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -.025em;
+}
+
+.nearby-visibility-copy small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.nearby-screen .switch {
+  width: 54px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 3px;
+  background: #d9d9d5;
+}
+
+.nearby-screen .switch > span {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 5px rgba(0,0,0,.12);
+}
+
+.nearby-screen .switch.on {
+  background: #090909;
+}
+
+.nearby-screen .switch.on > span {
+  transform: translateX(22px);
+}
+
+.nearby-radar-wrap {
+  margin: 30px auto 0;
+  text-align: center;
+}
+
+.nearby-radar {
+  position: relative;
+  width: min(78vw, 360px);
+  aspect-ratio: 1;
+  margin: 0 auto;
+}
+
+.nearby-radar-ring {
+  position: absolute;
+  inset: 50%;
+  border: 1px solid rgba(9,9,9,.11);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.nearby-radar-ring.r1 { width: 42%; height: 42%; }
+.nearby-radar-ring.r2 { width: 66%; height: 66%; }
+.nearby-radar-ring.r3 { width: 88%; height: 88%; }
+.nearby-radar-ring.r4 { width: 100%; height: 100%; }
+
+.radar-self {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  z-index: 3;
+}
+
+.radar-self-mark {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #050505;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0,0,0,.08);
+}
+
+.radar-self-mark img {
+  width: 33px;
+  height: 33px;
+  object-fit: contain;
+  filter: invert(1);
+}
+
+.radar-self small {
+  color: #5f5f5b;
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.radar-peer {
+  position: absolute;
+  z-index: 4;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  transform: translate(-50%, -50%);
+}
+
+.radar-peer-0 { left: 77%; top: 27%; }
+.radar-peer-1 { left: 26%; top: 72%; }
+.radar-peer-2 { left: 27%; top: 25%; }
+
+.radar-peer .person-avatar {
+  width: 58px;
+  height: 58px;
+  border: 3px solid var(--bg);
+  box-shadow: 0 5px 18px rgba(0,0,0,.08);
+}
+
+.radar-peer-avatar {
+  position: relative;
+}
+
+.radar-peer-avatar::after {
+  content: "";
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  background: #14c96b;
+}
+
+.radar-peer-name {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.nearby-radar-status {
+  margin-top: -2px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 690;
+}
+
+.nearby-radar-status.offline .nearby-online-dot {
+  background: #a4a49f;
+}
+
+.nearby-radar-helper {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.nearby-error-wrap {
+  margin-top: 14px;
+}
+
+.nearby-people-section {
+  margin-top: 30px;
+}
+
+.nearby-people-heading {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nearby-people-heading h2 {
+  margin: 0;
+  font-size: 25px;
+  line-height: 1.05;
+  letter-spacing: -.045em;
+  font-weight: 730;
+}
+
+.nearby-count-pill {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  background: var(--surface-2);
+  color: #5e5e5a;
+  font-size: 12px;
+  font-weight: 660;
+}
+
+.nearby-refresh-button {
+  width: 38px;
+  height: 38px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: #5f5f5b;
+}
+
+.nearby-people-list {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 19px;
+  background: rgba(255,255,255,.58);
+}
+
+.nearby-person-row {
+  min-height: 82px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.nearby-person-row + .nearby-person-row {
+  border-top: 1px solid var(--line);
+}
+
+.nearby-person-row > .person-avatar {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+}
+
+.nearby-person-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.nearby-person-copy strong {
+  display: block;
+  font-size: 16px;
+  line-height: 1.15;
+  font-weight: 700;
+}
+
+.nearby-person-copy small {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.nearby-pay-button {
+  min-width: 70px;
+  height: 44px;
+  border: 0;
+  border-radius: 14px;
+  background: #080808;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 680;
+}
+
+.nearby-list-empty {
+  min-height: 108px;
+  padding: 18px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.nearby-list-empty strong {
+  font-size: 14px;
+}
+
+.nearby-list-empty small {
+  max-width: 260px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.nearby-trust-footer {
+  margin: 28px 0 2px;
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+  color: #61615d;
+}
+
+.nearby-trust-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+}
+
+.nearby-help-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #5d5d59;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 380px) {
+  .nearby-screen { padding-left: 18px; padding-right: 18px; }
+  .nearby-screen-header h1 { font-size: 43px; }
+  .nearby-radar { width: min(82vw, 330px); }
+  .radar-peer .person-avatar { width: 54px; height: 54px; }
+}

@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from 'next';
 import '@fontsource-variable/plus-jakarta-sans';
 import './globals.css';
+import './wallet-home.css';
+import './nearby-screen.css';
 
 export const metadata: Metadata = {
   title: 'Blee',
