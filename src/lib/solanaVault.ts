@@ -1,12 +1,13 @@
 import { BleeStore } from './bleeStore';
+import { recoverPendingWalletRestore } from './walletRestore';
 
-const SOLANA_VAULT_KEY = 'wallet.solana.v1';
+export const SOLANA_VAULT_KEY = 'wallet.solana.v1';
 const SOLANA_VAULT_VERSION = 1;
 const SOLANA_KDF_ITERATIONS = 600_000;
 const MIN_PASSPHRASE_LENGTH = 8;
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
-type StoredSolanaVault = {
+export type StoredSolanaVault = {
   version: 1;
   algorithm: 'Ed25519';
   address: string;
@@ -63,6 +64,27 @@ function base58Encode(bytes: Uint8Array): string {
   return '1'.repeat(leadingZeroes) + encoded;
 }
 
+function base58Decode(value: string): Uint8Array {
+  if (!value || value.length > 64) throw new Error('Solana wallet address is invalid');
+  let number = 0n;
+  for (const char of value) {
+    const index = BASE58_ALPHABET.indexOf(char);
+    if (index < 0) throw new Error('Solana wallet address is invalid');
+    number = number * 58n + BigInt(index);
+  }
+
+  const body: number[] = [];
+  while (number > 0n) {
+    body.push(Number(number & 0xffn));
+    number >>= 8n;
+  }
+  body.reverse();
+
+  let leadingZeroes = 0;
+  while (leadingZeroes < value.length && value[leadingZeroes] === '1') leadingZeroes += 1;
+  return Uint8Array.from([...new Array(leadingZeroes).fill(0), ...body]);
+}
+
 async function ensureStore(): Promise<void> {
   const result = await BleeStore.init();
   if (!result.ready) throw new Error('Blee payment storage is unavailable');
@@ -85,18 +107,22 @@ async function deriveVaultKey(passphrase: string, salt: Uint8Array, iterations: 
   );
 }
 
-function validateStoredVault(vault: StoredSolanaVault): void {
-  if (vault.version !== SOLANA_VAULT_VERSION || vault.algorithm !== 'Ed25519') {
+export function validateSolanaVaultSnapshot(input: unknown): StoredSolanaVault {
+  const vault = input as Partial<StoredSolanaVault> | null | undefined;
+  if (!vault || vault.version !== SOLANA_VAULT_VERSION || vault.algorithm !== 'Ed25519') {
     throw new Error('Unsupported Solana wallet version');
   }
-  if (!vault.address || vault.address.length < 32 || vault.address.length > 44) {
+  if (typeof vault.address !== 'string' || base58Decode(vault.address).byteLength !== 32) {
     throw new Error('Solana wallet address is invalid');
   }
-  if (!Number.isInteger(vault.iterations) || vault.iterations < 100_000 || vault.iterations > 2_000_000) {
+  if (!Number.isInteger(vault.iterations) || (vault.iterations as number) < 100_000 || (vault.iterations as number) > 2_000_000) {
     throw new Error('Solana wallet key-derivation parameters are invalid');
   }
-  if (!Number.isFinite(vault.createdAt) || vault.createdAt <= 0) {
+  if (!Number.isFinite(vault.createdAt) || (vault.createdAt as number) <= 0) {
     throw new Error('Solana wallet timestamp is invalid');
+  }
+  if (typeof vault.salt !== 'string' || typeof vault.iv !== 'string' || typeof vault.ciphertext !== 'string') {
+    throw new Error('Solana wallet data is incomplete');
   }
 
   const salt = fromBase64(vault.salt, 'salt');
@@ -107,21 +133,34 @@ function validateStoredVault(vault: StoredSolanaVault): void {
   if (ciphertext.byteLength < 48 || ciphertext.byteLength > 512) {
     throw new Error('Solana wallet ciphertext has an invalid length');
   }
+
+  return {
+    version: SOLANA_VAULT_VERSION,
+    algorithm: 'Ed25519',
+    address: vault.address,
+    salt: vault.salt,
+    iv: vault.iv,
+    ciphertext: vault.ciphertext,
+    iterations: vault.iterations as number,
+    createdAt: vault.createdAt as number,
+  };
 }
 
 async function readStoredVault(): Promise<StoredSolanaVault | null> {
+  // Keep the secondary identity consistent with the primary Arc identity after
+  // a crash during Backup v2 restore.
+  await recoverPendingWalletRestore();
   await ensureStore();
   const { value } = await BleeStore.getValue({ key: SOLANA_VAULT_KEY });
   if (!value) return null;
 
-  let parsed: StoredSolanaVault;
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(value) as StoredSolanaVault;
+    parsed = JSON.parse(value) as unknown;
   } catch {
     throw new Error('Solana wallet data is damaged');
   }
-  validateStoredVault(parsed);
-  return parsed;
+  return validateSolanaVaultSnapshot(parsed);
 }
 
 function packKeyMaterial(privateKeyPkcs8: Uint8Array, publicKeyRaw: Uint8Array): Uint8Array {
@@ -185,6 +224,15 @@ export async function hasSolanaVault(): Promise<boolean> {
  */
 export async function getSolanaVaultAddress(): Promise<string | null> {
   return (await readStoredVault())?.address || null;
+}
+
+/**
+ * Returns only the already-encrypted persisted vault representation for Backup
+ * v2. No private key plaintext or extractable CryptoKey is exposed.
+ */
+export async function getEncryptedSolanaVaultSnapshot(): Promise<StoredSolanaVault | null> {
+  const vault = await readStoredVault();
+  return vault ? { ...vault } : null;
 }
 
 /**
