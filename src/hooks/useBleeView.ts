@@ -5,6 +5,7 @@ import { formatUnits } from 'viem';
 import { useBlee } from './useBlee';
 import { useSolanaWalletView } from './useSolanaWalletView';
 import { loadPayments, setPersistentValue } from '../lib/persistence';
+import { getSolUsdPrice } from '../lib/marketData';
 import type { PaymentRecord } from '../types/domain';
 import { ARC_USDC_DECIMALS } from '../lib/arc';
 import { isActiveArcPayment, paymentProjectionKey } from '../lib/paymentNetwork';
@@ -54,14 +55,19 @@ function verifyingIncomingCount(payments: PaymentRecord[]): number {
  * Historical Testnet rows therefore remain visible without ever contributing to
  * a later Mainnet balance, pending total or verification badge.
  *
- * BLEE_MULTI_ASSET_PRESENTATION_BOUNDARY_V1
- * Arc/USDC remains the existing primary projection. Solana/SOL is exposed as a
- * separate nested read model and is never summed into the Arc balance.
+ * BLEE_MULTI_ASSET_PRESENTATION_BOUNDARY_V2
+ * Arc/USDC and SOL/Solana remain independent operational balances. A separate,
+ * read-only portfolio projection may value SOL in USD and add that valuation to
+ * USDC for Home display only. That valuation is never used for spend checks,
+ * signing, settlement, nonce ownership or payment routing.
  */
 export function useBleeView() {
   const core = useBlee();
   const solana = useSolanaWalletView(core.account);
   const [durablePayments, setDurablePayments] = useState<PaymentRecord[]>([]);
+  const [solUsdPrice, setSolUsdPrice] = useState<number | null>(null);
+  const [solUsdPriceAt, setSolUsdPriceAt] = useState<number | null>(null);
+  const [solUsdPriceError, setSolUsdPriceError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -111,6 +117,68 @@ export function useBleeView() {
   const pendingIncoming = useMemo(() => pendingIncomingAmount(payments), [payments]);
   const verifyingIncoming = useMemo(() => verifyingIncomingCount(payments), [payments]);
 
+  // BLEE_PORTFOLIO_VALUATION_V1
+  // SOL/USD is market presentation data only. Operational SOL balance still
+  // comes solely from useSolanaWalletView/Blee Gateway. Market pricing also
+  // enters through the Blee gateway, so provider credentials stay server-side
+  // and never affect send eligibility or any persisted financial state.
+  useEffect(() => {
+    if (!core.account || !solana.address) {
+      setSolUsdPrice(null);
+      setSolUsdPriceAt(null);
+      setSolUsdPriceError(null);
+      return;
+    }
+
+    let active = true;
+    const refreshPrice = async () => {
+      try {
+        const value = await getSolUsdPrice();
+        if (!active) return;
+        setSolUsdPrice(value);
+        setSolUsdPriceAt(Date.now());
+        setSolUsdPriceError(null);
+      } catch (error) {
+        if (!active) return;
+        setSolUsdPriceError(error instanceof Error ? error.message : 'SOL USD price is unavailable');
+      }
+    };
+
+    void refreshPrice();
+    const timer = window.setInterval(() => { void refreshPrice(); }, 60_000);
+    const onOnline = () => { void refreshPrice(); };
+    const onFocus = () => { void refreshPrice(); };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [core.account, solana.address]);
+
+  const usdcQuantity = useMemo(
+    () => Number(core.available || 0) + pendingIncoming,
+    [core.available, pendingIncoming],
+  );
+  const solQuantity = useMemo(() => {
+    if (solana.balance === null) return null;
+    const value = Number(solana.balance);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  }, [solana.balance]);
+  const solUsdValue = useMemo(() => {
+    if (solQuantity === null) return null;
+    if (solQuantity === 0) return 0;
+    if (solUsdPrice === null) return null;
+    return solQuantity * solUsdPrice;
+  }, [solQuantity, solUsdPrice]);
+  const totalUsdcEquivalent = useMemo(
+    () => usdcQuantity + (solUsdValue ?? 0),
+    [usdcQuantity, solUsdValue],
+  );
+  const valuationComplete = solQuantity !== null && (solQuantity === 0 || solUsdValue !== null);
+
   // BLEE_LIVE_NEARBY_IDENTITY_PROJECTION_V1
   // A native BLE snapshot may carry fresher identity metadata than the browser
   // cache. Prefer the live peer avatar/name, while retaining the durable cached
@@ -146,5 +214,16 @@ export function useBleeView() {
     verifyingIncoming,
     identityFor,
     solana,
+    portfolio: {
+      usdcQuantity,
+      solQuantity,
+      solUsdPrice,
+      solUsdValue,
+      totalUsdcEquivalent,
+      valuationComplete,
+      priceAt: solUsdPriceAt,
+      priceError: solUsdPriceError,
+      pricingSource: 'blee-gateway' as const,
+    },
   };
 }

@@ -22,9 +22,13 @@ SOL="public/brand/solana-logomark.svg"
 [ -f "$SOL" ] || fail "Solana mark missing"
 grep -q 'data-blee-home-ui="approved-v4"' "$APP" || fail "approved wallet home marker missing"
 grep -q 'home-balance-hero' "$APP" || fail "single balance hero missing"
+grep -q 'aria-label="Portfolio balance"' "$APP" || fail "Home hero is not a cumulative portfolio valuation"
+grep -q 'app.portfolio.totalUsdcEquivalent' "$APP" || fail "Home portfolio total is not sourced from valuation projection"
 grep -q 'home-assets-card' "$APP" || fail "assets section missing"
 grep -q 'TokenLogo asset="usdc"' "$APP" || fail "USDC asset row missing official mark"
 grep -q 'TokenLogo asset="sol"' "$APP" || fail "Solana asset row missing official mark"
+grep -q 'projectedBalance' "$APP" || fail "USDC row no longer shows its own quantity"
+grep -q 'app.portfolio.solUsdValue' "$APP" || fail "SOL row does not show its USD value"
 grep -q 'home-nearby-card' "$APP" || fail "nearby home preview missing"
 grep -q 'home-activity-card' "$APP" || fail "home activity preview missing"
 grep -q "import './wallet-home.css';" "$LAYOUT" || fail "wallet home base stylesheet is not loaded"
@@ -38,11 +42,4 @@ if grep -Eq 'aria-label="Assets"[^\n]*home-heading-action' "$APP"; then
   fail "Assets section must not expose a redundant View all action"
 fi
 
-# UI may display both assets but must not numerically combine independent rails.
-grep -q 'projectedBalance' "$APP" || fail "USDC balance projection missing"
-grep -q 'app.solana.balance' "$APP" || fail "SOL balance projection missing"
-if grep -Eq 'projectedBalance.*solana|solana.*projectedBalance' "$APP"; then
-  fail "home UI must not combine USDC and SOL operational balances"
-fi
-
-printf 'VERIFIED: approved wallet Home centers USDC, breathes correctly and uses official independent asset marks\n'
+printf 'VERIFIED: approved wallet Home shows cumulative USDC-equivalent value with independent USDC and SOL asset rows\n'
