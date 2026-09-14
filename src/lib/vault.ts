@@ -2,6 +2,7 @@ import { type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import { getPersistentValue, setPersistentValue } from './persistence';
 import { beginSolanaSessionAfterPrimaryUnlock } from './solanaSession';
+import { recoverPendingWalletRestore } from './walletRestore';
 
 const VAULT_KEY = 'wallet.vault.v2';
 const ITERATIONS_V1 = 210_000;
@@ -47,6 +48,10 @@ async function derive(passphrase: string, salt: Uint8Array, iterations: number):
 }
 
 async function readVault(): Promise<StoredVault | null> {
+  // A dual-wallet backup restore is journaled before either encrypted vault is
+  // replaced. Always finish an interrupted restore before exposing the primary
+  // Arc identity to the application.
+  await recoverPendingWalletRestore();
   const raw = await getPersistentValue(VAULT_KEY);
   if (raw) {
     try { return JSON.parse(raw) as StoredVault; } catch {}
