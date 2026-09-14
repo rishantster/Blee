@@ -11,15 +11,17 @@
     "android:build": "bash scripts/build-android.sh"
   },
   "dependencies": {
+    "@blee/nearby": "file:plugins/blee-nearby",
+    "@blee/store": "file:plugins/blee-store",
     "@capacitor/core": "8.5.1",
+    "@fontsource-variable/plus-jakarta-sans": "latest",
+    "@solana-program/system": "0.14.1",
+    "@solana/kit": "8.3.0",
     "next": "16.3.4",
+    "qrcode.react": "^4.2.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "viem": "2.56.3",
-    "@blee/store": "file:plugins/blee-store",
-    "@fontsource-variable/plus-jakarta-sans": "latest",
-    "@blee/nearby": "file:plugins/blee-nearby",
-    "qrcode.react": "^4.2.0"
+    "viem": "2.56.3"
   },
   "devDependencies": {
     "@capacitor/android": "8.5.1",
