@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { formatUnits } from 'viem';
 import { useBlee } from './useBlee';
+import { useSolanaWalletView } from './useSolanaWalletView';
 import { loadPayments } from '../lib/persistence';
 import type { PaymentRecord } from '../types/domain';
 import { ARC_USDC_DECIMALS } from '../lib/arc';
@@ -52,9 +53,14 @@ function verifyingIncomingCount(payments: PaymentRecord[]): number {
  * Network identity is part of the projection key and active-balance projection.
  * Historical Testnet rows therefore remain visible without ever contributing to
  * a later Mainnet balance, pending total or verification badge.
+ *
+ * BLEE_MULTI_ASSET_PRESENTATION_BOUNDARY_V1
+ * Arc/USDC remains the existing primary projection. Solana/SOL is exposed as a
+ * separate nested read model and is never summed into the Arc balance.
  */
 export function useBleeView() {
   const core = useBlee();
+  const solana = useSolanaWalletView(core.account);
   const [durablePayments, setDurablePayments] = useState<PaymentRecord[]>([]);
 
   useEffect(() => {
@@ -97,5 +103,6 @@ export function useBleeView() {
     payments,
     pendingIncoming,
     verifyingIncoming,
+    solana,
   };
 }
