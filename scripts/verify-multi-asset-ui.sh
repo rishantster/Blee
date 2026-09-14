@@ -16,7 +16,7 @@ MARKET="src/lib/marketData.ts"
 [ -f "$VIEW" ] || fail "Blee presentation projection missing"
 [ -f "$MARKET" ] || fail "SOL market valuation source missing"
 
-# BLEE_SPRINT_6_MULTI_ASSET_UI_V6
+# BLEE_SPRINT_6_MULTI_ASSET_UI_V7
 # USDC and SOL remain independent operational/spendable balances. Home may show
 # their aggregate USDC-equivalent market value as a presentation-only portfolio.
 grep -q 'data-blee-multi-asset-ui="v1"' "$APP" || fail "multi-asset home marker missing"
@@ -37,12 +37,19 @@ grep -q 'valuationComplete' "$VIEW" || fail "portfolio valuation completeness st
 grep -q 'app.portfolio.totalUsdcEquivalent' "$APP" || fail "Home hero is not using cumulative portfolio valuation"
 grep -q 'projectedBalance' "$APP" || fail "USDC asset quantity is not kept independent"
 grep -q 'app.portfolio.solUsdValue' "$APP" || fail "SOL asset row does not show its USD value"
-grep -q 'BLEE_MARKET_DATA_V2' "$MARKET" || fail "gateway-isolated market-data boundary missing"
-grep -q "from './solanaGateway'" "$MARKET" || fail "market valuation does not reuse the Blee gateway boundary"
-grep -q '/v1/market/sol-usd' "$MARKET" || fail "SOL USD gateway endpoint missing"
-grep -q "pricingSource: 'blee-gateway'" "$VIEW" || fail "portfolio pricing source is not the Blee gateway"
-if grep -Eq 'api[.]jup[.]ag|helius-rpc[.]com|api[.]coingecko[.]com|api[.]binance[.]com|x-api-key|api[_-]?key|authorization:[[:space:]]*bearer' "$MARKET"; then
-  fail "APK market valuation bypasses the Blee gateway or embeds provider credentials"
+
+# BLEE_MARKET_DATA_V3
+# Public market quotation is intentionally direct and keyless. This is separate
+# from operational Solana RPC, which must continue to use the Blee gateway.
+grep -q 'BLEE_MARKET_DATA_V3' "$MARKET" || fail "direct DIA market-data boundary missing"
+grep -Fq "https://api.diadata.org/v1/assetQuotation/Solana/0x0000000000000000000000000000000000000000" "$MARKET" || fail "canonical DIA SOL quotation endpoint missing"
+grep -q 'Number(body.Price)' "$MARKET" || fail "DIA Price field is not used for SOL/USD valuation"
+grep -q "pricingSource: 'dia-direct'" "$VIEW" || fail "portfolio pricing source is not direct DIA"
+if grep -q "from './solanaGateway'" "$MARKET"; then
+  fail "presentation-only DIA pricing must not be routed through the Solana gateway"
+fi
+if grep -Eq '/v1/market/sol-usd|rpc[.]blee[.]app|api[.]jup[.]ag|helius-rpc[.]com|api[.]coingecko[.]com|api[.]binance[.]com|x-api-key|api[_-]?key|authorization:[[:space:]]*bearer' "$MARKET"; then
+  fail "SOL market valuation uses an unintended gateway/provider or credential surface"
 fi
 
 grep -q "type ReceiveAsset = 'usdc' | 'sol'" "$APP" || fail "Receive rail selector type missing"
@@ -62,4 +69,4 @@ if grep -Eq 'sendSignedSolanaTransaction|createSolanaRpc|https://api[.](mainnet-
   fail "multi-asset UI bypasses guarded Solana coordinator/gateway boundary"
 fi
 
-printf 'VERIFIED: Home aggregates gateway-valued SOL into presentation total while USDC and SOL remain separate spendable rails\n'
+printf 'VERIFIED: Home uses direct DIA SOL/USD valuation while USDC and SOL remain separate spendable rails\n'

@@ -118,10 +118,9 @@ export function useBleeView() {
   const verifyingIncoming = useMemo(() => verifyingIncomingCount(payments), [payments]);
 
   // BLEE_PORTFOLIO_VALUATION_V1
-  // SOL/USD is market presentation data only. Operational SOL balance still
-  // comes solely from useSolanaWalletView/Blee Gateway. Market pricing also
-  // enters through the Blee gateway, so provider credentials stay server-side
-  // and never affect send eligibility or any persisted financial state.
+  // SOL/USD is presentation-only market data fetched directly from DIA's public,
+  // keyless endpoint. Operational SOL chain state still comes solely through the
+  // isolated Solana wallet view/Blee gateway and remains the only SOL spend source.
   useEffect(() => {
     if (!core.account || !solana.address) {
       setSolUsdPrice(null);
@@ -145,7 +144,7 @@ export function useBleeView() {
     };
 
     void refreshPrice();
-    const timer = window.setInterval(() => { void refreshPrice(); }, 60_000);
+    const timer = window.setInterval(() => { void refreshPrice(); }, 120_000);
     const onOnline = () => { void refreshPrice(); };
     const onFocus = () => { void refreshPrice(); };
     window.addEventListener('online', onOnline);
@@ -223,7 +222,7 @@ export function useBleeView() {
       valuationComplete,
       priceAt: solUsdPriceAt,
       priceError: solUsdPriceError,
-      pricingSource: 'blee-gateway' as const,
+      pricingSource: 'dia-direct' as const,
     },
   };
 }
