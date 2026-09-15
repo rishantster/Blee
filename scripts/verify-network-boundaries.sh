@@ -40,7 +40,7 @@ ACTIVE_PROJECTION_GUARDS="$(grep -c 'isActiveArcPayment(row)' src/hooks/useBleeV
 
 printf 'VERIFIED: payment presentation identity and active Arc projections are network-isolated\n'
 
-# BLEE_SPRINT_4A_SOLANA_NONCE_RESERVATION_V1
+# BLEE_SPRINT_4A_SOLANA_NONCE_RESERVATION_V2
 # A durable nonce must be persisted as owned by exactly one logical payment
 # before signing. Exact signed bytes are persisted in that same durable record
 # and retries may only replay those bytes. An observed on-chain nonce change
@@ -57,12 +57,12 @@ grep -q 'export async function reconcileSolanaNoncePool' src/lib/solanaNoncePool
 grep -q "slot.state = 'advanced'" src/lib/solanaNoncePool.ts || fail "advanced nonce quarantine missing"
 grep -q 'export async function rearmAdvancedSolanaNonceSlot' src/lib/solanaNoncePool.ts || fail "explicit Solana nonce rearm boundary missing"
 grep -q "from './bleeStore'" src/lib/solanaNoncePool.ts || fail "Solana nonce pool must use canonical SQLite-backed BleeStore"
-grep -q "from './solanaGateway'" src/lib/solanaNoncePool.ts || fail "Solana nonce verification must use the Blee gateway"
+grep -q "from './solanaGateway'" src/lib/solanaNoncePool.ts || fail "Solana nonce verification must use the canonical Secure RPC adapter"
 if grep -Eq 'localStorage|sessionStorage' src/lib/solanaNoncePool.ts; then
   fail "Solana nonce reservation state must not use browser storage"
 fi
-if grep -Eq 'https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|helius-rpc[.]com' src/lib/solanaNoncePool.ts; then
-  fail "Solana nonce pool bypasses the Blee gateway"
+if grep -Eq 'https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|[?&]api-key=|x-api-key|HELIUS_API_KEY' src/lib/solanaNoncePool.ts; then
+  fail "Solana nonce pool bypasses the canonical Secure RPC adapter"
 fi
 
 printf 'VERIFIED: Solana nonce reservation is durable, single-owner and exact-byte replay safe\n'
@@ -71,7 +71,7 @@ printf 'VERIFIED: Solana nonce reservation is durable, single-owner and exact-by
 # Offline SOL signing is intentionally narrow: the local sender is fee payer,
 # nonce authority and transfer source; the durable nonce setter must prepend
 # exactly one AdvanceNonceAccount instruction before exactly one native SOL
-# transfer. Signed wire bytes are persisted before any transport/gateway use.
+# transfer. Signed wire bytes are persisted before any transport/RPC use.
 [ -f src/lib/solanaTransaction.ts ] || fail "Solana durable payment transaction builder missing"
 grep -q 'BLEE_SOLANA_DURABLE_PAYMENT_TX_V1' src/lib/solanaTransaction.ts || fail "Solana payment transaction contract marker missing"
 grep -q 'setTransactionMessageFeePayerSigner(senderSigner' src/lib/solanaTransaction.ts || fail "SOL sender is not the transaction fee payer"
@@ -86,23 +86,23 @@ grep -q 'persistSignedSolanaTransaction' src/lib/solanaTransaction.ts || fail "s
 grep -q 'reservation.signedTransactionBase64' src/lib/solanaTransaction.ts || fail "exact-byte SOL retry path missing"
 grep -q "from '@solana/kit'" src/lib/solanaTransaction.ts || fail "Solana Kit transaction primitives missing"
 grep -q "from '@solana-program/system'" src/lib/solanaTransaction.ts || fail "vetted System Program client missing"
-if grep -Eq 'sendSignedSolanaTransaction|createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|helius-rpc[.]com' src/lib/solanaTransaction.ts; then
-  fail "SOL transaction builder must not broadcast or bypass the Blee gateway"
+if grep -Eq 'sendSignedSolanaTransaction|createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|[?&]api-key=|x-api-key|HELIUS_API_KEY' src/lib/solanaTransaction.ts; then
+  fail "SOL transaction builder must not broadcast or own provider configuration"
 fi
 
 printf 'VERIFIED: offline SOL transaction is sender-signed, durable-nonce bound and exact-shape\n'
 
-# BLEE_SPRINT_4C_SOLANA_NONCE_PREPARATION_V1
+# BLEE_SPRINT_4C_SOLANA_NONCE_PREPARATION_V2
 # Nonce accounts are prepared only while online. The new account key is generated
 # locally, the sender locally signs CreateAccount + InitializeNonceAccount, exact
-# signed bytes are persisted before submission, and a slot is registered only
-# after the gateway can independently read and validate the initialized account.
+# signed bytes are persisted before direct Secure RPC submission, and a slot is
+# registered only after RPC independently reads and validates the initialized account.
 [ -f src/lib/solanaNoncePreparation.ts ] || fail "Solana nonce preparation lifecycle missing"
 grep -q 'BLEE_SOLANA_NONCE_PREPARATION_V1' src/lib/solanaNoncePreparation.ts || fail "Solana nonce preparation contract marker missing"
 grep -q "SOLANA_NONCE_PREPARATION_KEY_PREFIX = 'solana.nonce-preparation.v1'" src/lib/solanaNoncePreparation.ts || fail "durable nonce preparation storage key missing"
 grep -q 'generateKeyPairSigner' src/lib/solanaNoncePreparation.ts || fail "nonce account key is not generated locally"
-grep -q 'getSolanaRentExemption' src/lib/solanaNoncePreparation.ts || fail "nonce setup does not obtain rent through Blee gateway"
-grep -q 'getSolanaLatestBlockhash' src/lib/solanaNoncePreparation.ts || fail "nonce setup does not obtain latest blockhash through Blee gateway"
+grep -q 'getSolanaRentExemption' src/lib/solanaNoncePreparation.ts || fail "nonce setup does not obtain rent through canonical RPC adapter"
+grep -q 'getSolanaLatestBlockhash' src/lib/solanaNoncePreparation.ts || fail "nonce setup does not obtain latest blockhash through canonical RPC adapter"
 grep -q 'getCreateAccountInstruction' src/lib/solanaNoncePreparation.ts || fail "nonce CreateAccount instruction missing"
 grep -q 'getInitializeNonceAccountInstruction' src/lib/solanaNoncePreparation.ts || fail "nonce InitializeNonceAccount instruction missing"
 grep -q 'setTransactionMessageFeePayerSigner(senderSigner' src/lib/solanaNoncePreparation.ts || fail "nonce setup sender is not fee payer"
@@ -112,12 +112,13 @@ grep -q 'SystemInstruction.CreateAccount' src/lib/solanaNoncePreparation.ts || f
 grep -q 'SystemInstruction.InitializeNonceAccount' src/lib/solanaNoncePreparation.ts || fail "nonce setup instruction-1 guard missing"
 grep -q 'signTransactionMessageWithSigners' src/lib/solanaNoncePreparation.ts || fail "nonce setup is not locally signed"
 grep -q 'BleeStore.setValue' src/lib/solanaNoncePreparation.ts || fail "signed nonce setup bytes are not persisted durably"
-grep -q 'sendSignedSolanaNonceSetupTransaction' src/lib/solanaNoncePreparation.ts || fail "dedicated nonce setup gateway submission missing"
+grep -q 'sendSignedSolanaNonceSetupTransaction' src/lib/solanaNoncePreparation.ts || fail "nonce setup exact-byte RPC submission missing"
 grep -q 'registerPreparedSolanaNonceSlot' src/lib/solanaNoncePreparation.ts || fail "confirmed nonce setup is not registered into the offline pool"
-grep -q "'/v1/solana/latest-blockhash'" src/lib/solanaGateway.ts || fail "gateway latest-blockhash endpoint missing"
-grep -q "'/v1/solana/nonce-setup/send'" src/lib/solanaGateway.ts || fail "dedicated nonce-setup gateway endpoint missing"
-if grep -Eq 'localStorage|sessionStorage|createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|helius-rpc[.]com' src/lib/solanaNoncePreparation.ts; then
-  fail "Solana nonce preparation bypasses durable storage or the Blee gateway"
+grep -q "rpcCall<{ value?: { blockhash?: string; lastValidBlockHeight?: number | string } }>('getLatestBlockhash'" src/lib/solanaGateway.ts || fail "direct latest-blockhash RPC call missing"
+grep -q "rpcCall<string>('sendTransaction'" src/lib/solanaGateway.ts || fail "direct signed transaction submission missing"
+grep -q "rpcCall<{ value?: unknown }>('getAccountInfo'" src/lib/solanaGateway.ts || fail "direct nonce account verification call missing"
+if grep -Eq 'localStorage|sessionStorage|createSolanaRpc|https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com|[?&]api-key=|x-api-key|HELIUS_API_KEY' src/lib/solanaNoncePreparation.ts; then
+  fail "Solana nonce preparation bypasses durable storage or canonical Secure RPC adapter"
 fi
 
-printf 'VERIFIED: Solana nonce setup is locally signed, durable and gateway-isolated\n'
+printf 'VERIFIED: Solana nonce setup is locally signed, durable, and direct-Secure-RPC verified\n'
