@@ -5,6 +5,7 @@ const MAX_WIRE_TRANSACTION_BYTES = 1232;
 const BASE58_RE = /^[1-9A-HJ-NP-Za-km-z]+$/;
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const SYSTEM_PROGRAM_ADDRESS = '11111111111111111111111111111111';
+const SECURE_RPC_MIN_START_INTERVAL_MS = 225;
 
 /**
  * BLEE_HELIUS_SECURE_RPC_V1
@@ -63,6 +64,23 @@ type JsonRpcEnvelope<T> = {
   error?: JsonRpcError;
 };
 
+let rpcStartGate: Promise<void> = Promise.resolve();
+let nextRpcStartAt = 0;
+
+async function reserveSecureRpcStart(): Promise<void> {
+  let release!: () => void;
+  const previous = rpcStartGate;
+  rpcStartGate = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try {
+    const delay = Math.max(0, nextRpcStartAt - Date.now());
+    if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    nextRpcStartAt = Date.now() + SECURE_RPC_MIN_START_INTERVAL_MS;
+  } finally {
+    release();
+  }
+}
+
 function configuredSecureRpcUrl(): string {
   const raw = String(process.env.NEXT_PUBLIC_BLEE_HELIUS_SECURE_RPC || '').trim();
   if (!raw) {
@@ -84,11 +102,10 @@ function configuredSecureRpcUrl(): string {
     || url.hash
     || !hostname.endsWith('-fast-mainnet.helius-rpc.com')
     || hostname === 'fast-mainnet.helius-rpc.com'
-    || hostname === 'sender.helius-rpc.com'
   ) {
     throw new SolanaGatewayError(
       'SOL_RPC_UNAVAILABLE',
-      'Blee requires a Helius Secure Mainnet RPC URL with no API key, query string or Sender endpoint',
+      'Blee requires a Helius Secure Mainnet RPC URL with no API key or query string',
     );
   }
   return url.toString().replace(/\/$/, '');
@@ -117,6 +134,7 @@ function normalizeRpcError(error: JsonRpcError | undefined, status?: number): So
 
 async function rpcCall<T>(method: string, params: unknown[] = [], timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
   const endpoint = configuredSecureRpcUrl();
+  await reserveSecureRpcStart();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
