@@ -8,17 +8,13 @@ const SYSTEM_PROGRAM_ADDRESS = '11111111111111111111111111111111';
 const SECURE_RPC_MIN_START_INTERVAL_MS = 225;
 
 /**
- * BLEE_HELIUS_SECURE_RPC_V1
+ * BLEE_SOLANA_RPC_GATEWAY_V1
  *
- * Option A: the APK talks directly to a Helius Secure RPC endpoint. Secure RPC
- * URLs are masked by Helius for frontend/mobile use and contain no API-key
- * query parameter. The endpoint is supplied at build time through a public Next
- * environment variable, so no account-specific URL is committed to the repo.
- *
- * The historical file/class names remain temporarily for import compatibility;
- * this module no longer routes through a Blee gateway or generic RPC proxy.
+ * The APK talks only to Blee-controlled infrastructure. Provider credentials
+ * and upstream RPC URLs remain server-side behind the gateway. No Helius API
+ * key or provider-specific endpoint is embedded in the Android/WebView bundle.
  */
-export const BLEE_HELIUS_SECURE_RPC_ENV = 'NEXT_PUBLIC_BLEE_HELIUS_SECURE_RPC' as const;
+export const BLEE_SOLANA_RPC_GATEWAY_URL = 'https://rpc.paywithblee.xyz/api/solana' as const;
 
 export type SolanaGatewayErrorCode =
   | 'SOL_GATEWAY_UNAVAILABLE'
@@ -82,46 +78,24 @@ async function reserveSecureRpcStart(): Promise<void> {
 }
 
 function configuredSecureRpcUrl(): string {
-  const raw = String(process.env.NEXT_PUBLIC_BLEE_HELIUS_SECURE_RPC || '').trim();
-  if (!raw) {
-    throw new SolanaGatewayError(
-      'SOL_RPC_UNAVAILABLE',
-      `${BLEE_HELIUS_SECURE_RPC_ENV} is not configured for this Blee build`,
-    );
-  }
-  let url: URL;
-  try { url = new URL(raw); } catch {
-    throw new SolanaGatewayError('SOL_RPC_UNAVAILABLE', 'Blee Helius Secure RPC URL is invalid');
-  }
-  const hostname = url.hostname.toLowerCase();
-  if (
-    url.protocol !== 'https:'
-    || url.username
-    || url.password
-    || url.search
-    || url.hash
-    || !hostname.endsWith('-fast-mainnet.helius-rpc.com')
-    || hostname === 'fast-mainnet.helius-rpc.com'
-  ) {
-    throw new SolanaGatewayError(
-      'SOL_RPC_UNAVAILABLE',
-      'Blee requires a Helius Secure Mainnet RPC URL with no API key or query string',
-    );
-  }
-  return url.toString().replace(/\/$/, '');
+  return BLEE_SOLANA_RPC_GATEWAY_URL;
 }
 
+/**
+ * @deprecated Historical export retained temporarily for import compatibility.
+ * Returns the Blee-owned gateway, never a provider endpoint.
+ */
 export function getConfiguredHeliusSecureRpcUrl(): string {
-  return configuredSecureRpcUrl();
+  return BLEE_SOLANA_RPC_GATEWAY_URL;
 }
 
 function normalizeRpcError(error: JsonRpcError | undefined, status?: number): SolanaGatewayError {
   const message = String(error?.message || `Solana RPC request failed${status ? ` (${status})` : ''}`).trim();
   if (status === 429 || /rate.?limit|too many requests/i.test(message)) {
-    return new SolanaGatewayError('SOL_RPC_RATE_LIMITED', 'Helius Secure RPC rate limit reached', status, error?.code);
+    return new SolanaGatewayError('SOL_RPC_RATE_LIMITED', 'Blee Solana RPC gateway rate limit reached', status, error?.code);
   }
   if (status && status >= 500) {
-    return new SolanaGatewayError('SOL_RPC_UNAVAILABLE', 'Helius Secure RPC is unavailable', status, error?.code);
+    return new SolanaGatewayError('SOL_RPC_UNAVAILABLE', 'Blee Solana RPC gateway is unavailable', status, error?.code);
   }
   if (/invalid param|invalid request|invalid transaction|failed to sanitize/i.test(message)) {
     return new SolanaGatewayError('SOL_INVALID_TRANSACTION', message, status, error?.code);
@@ -155,15 +129,15 @@ async function rpcCall<T>(method: string, params: unknown[] = [], timeoutMs = DE
     if (!response.ok) throw normalizeRpcError(body?.error, response.status);
     if (!body || body.error) throw normalizeRpcError(body?.error, response.status);
     if (!Object.prototype.hasOwnProperty.call(body, 'result')) {
-      throw new SolanaGatewayError('SOL_INTERNAL_ERROR', 'Helius Secure RPC returned no result');
+      throw new SolanaGatewayError('SOL_INTERNAL_ERROR', 'Blee Solana RPC gateway returned no result');
     }
     return body.result as T;
   } catch (error) {
     if (error instanceof SolanaGatewayError) throw error;
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new SolanaGatewayError('SOL_RPC_UNAVAILABLE', 'Helius Secure RPC request timed out');
+      throw new SolanaGatewayError('SOL_RPC_UNAVAILABLE', 'Blee Solana RPC gateway request timed out');
     }
-    throw new SolanaGatewayError('SOL_RPC_UNAVAILABLE', 'Helius Secure RPC is unavailable');
+    throw new SolanaGatewayError('SOL_RPC_UNAVAILABLE', 'Blee Solana RPC gateway is unavailable');
   } finally {
     clearTimeout(timeout);
   }
@@ -300,7 +274,7 @@ function signatureFromSignedWire(value: string): string {
 
 export async function getSolanaHealth(): Promise<SolanaHealth> {
   const result = await rpcCall<string>('getHealth');
-  if (result !== 'ok') throw new SolanaGatewayError('SOL_RPC_UNAVAILABLE', 'Helius Secure RPC health check failed');
+  if (result !== 'ok') throw new SolanaGatewayError('SOL_RPC_UNAVAILABLE', 'Blee Solana RPC gateway health check failed');
   return { ok: true, cluster: 'mainnet-beta' };
 }
 
@@ -401,7 +375,7 @@ function parsedInstruction(input: unknown): { program: string; programId: string
 
 /**
  * Independently verifies the settled Blee payment shape from Solana RPC data.
- * The direct provider never gets to redefine Blee semantics: only exactly
+ * The provider never gets to redefine Blee semantics: only exactly
  * AdvanceNonceAccount + native SOL Transfer is accepted, with no inner calls.
  */
 export async function getSolanaTransaction(signature: string): Promise<SolanaTransactionSummary> {
@@ -498,8 +472,8 @@ export async function sendSignedSolanaTransaction(input: {
 
 /**
  * Nonce-account setup is already locally constrained to exactly CreateAccount +
- * InitializeNonceAccount before signing. Direct RPC receives only those stored,
- * exact signed bytes and cannot mutate or re-sign them.
+ * InitializeNonceAccount before signing. The Blee gateway receives only those
+ * stored exact signed bytes and cannot mutate or re-sign them.
  */
 export async function sendSignedSolanaNonceSetupTransaction(input: {
   setupId: string;
