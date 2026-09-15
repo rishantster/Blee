@@ -15,6 +15,7 @@ required=(
   next.config.ts
   tsconfig.json
   capacitor.config.ts
+  .env.example
   app/globals.css
   src/components/BleeApp.tsx
   src/components/BleeRuntime.tsx
@@ -84,6 +85,8 @@ if git ls-files 'android/**/build/**' 'plugins/**/android/build/**' | grep -q .;
 fi
 
 grep -q 'plugins/\*\*/android/build/' .gitignore || fail "native plugin build output is not ignored"
+grep -q '^\.env\.local$' .gitignore || fail "local Helius build configuration must stay untracked"
+grep -q '^NEXT_PUBLIC_BLEE_HELIUS_SECURE_RPC=https://YOUR-SECURE-ENDPOINT-fast-mainnet[.]helius-rpc[.]com$' .env.example || fail "Helius Secure RPC example configuration missing"
 
 if grep -q 'configure-native[.]mjs' package.json; then
   fail "package.json still references removed configure-native.mjs"
@@ -173,11 +176,16 @@ grep -q "state === 'verification-pending'" src/hooks/useBleeView.ts || fail "unv
 grep -q 'projectedBalance' src/components/BleeApp.tsx || fail "verified offline receive is not projected into displayed balance"
 grep -q 'senderName: aliasRef.current' src/hooks/useBlee.ts || fail "durable payment envelope is missing sender display identity"
 
-# BLEE_SOLANA_SECRET_BOUNDARY_V1
-# Solana provider credentials must never enter APK-bound source. The client may
-# know only the public Blee gateway; provider selection and credentials live on
-# the server side.
-grep -q "BLEE_SOLANA_GATEWAY = 'https://rpc.blee.app'" src/lib/solanaGateway.ts || fail "canonical Solana gateway URL missing"
+# BLEE_SOLANA_SECRET_BOUNDARY_V2
+# The APK may contain only a Helius Secure RPC URL generated specifically for
+# frontend/mobile use. Ordinary Helius API keys, query-key endpoints, Sender,
+# and generic public Solana RPC fallbacks remain forbidden.
+grep -q 'BLEE_HELIUS_SECURE_RPC_V1' src/lib/solanaGateway.ts || fail "Helius Secure RPC client boundary missing"
+grep -q 'NEXT_PUBLIC_BLEE_HELIUS_SECURE_RPC' src/lib/solanaGateway.ts || fail "Helius Secure RPC build-time configuration missing"
+grep -q -- "-fast-mainnet.helius-rpc.com" src/lib/solanaGateway.ts || fail "Helius Secure Mainnet hostname restriction missing"
+grep -q "url.protocol !== 'https:'" src/lib/solanaGateway.ts || fail "Helius Secure RPC HTTPS restriction missing"
+grep -q 'url.search' src/lib/solanaGateway.ts || fail "Helius Secure RPC query-string rejection missing"
+grep -q "rpcCall<string>('sendTransaction'" src/lib/solanaGateway.ts || fail "direct standard Solana transaction submission missing"
 grep -q "id: 'solana-sol'" src/lib/rails.ts || fail "Solana payment rail registry missing"
 grep -q "settlementModel: 'solana-durable-nonce'" src/lib/rails.ts || fail "Solana durable-nonce settlement model missing"
 
@@ -230,18 +238,25 @@ grep -q "supportedNetworkIds" src/lib/rails.ts || fail "Arc rail does not declar
 APK_BOUND_DIRS=(src android plugins public app)
 for dir in "${APK_BOUND_DIRS[@]}"; do
   [ -e "$dir" ] || continue
-  if grep -RIEq --exclude='*.map' 'helius-rpc[.]com|HELIUS_API_KEY|NEXT_PUBLIC_HELIUS|VITE_HELIUS|EXPO_PUBLIC_HELIUS' "$dir"; then
-    fail "provider credential material or Helius endpoint found in APK-bound source: $dir"
+  if grep -RIEq --exclude='*.map' '[?&]api-key=|x-api-key|HELIUS_API_KEY|VITE_HELIUS|EXPO_PUBLIC_HELIUS' "$dir"; then
+    fail "provider API credential material found in APK-bound source: $dir"
   fi
   if grep -RIEq --exclude='*.map' 'https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com' "$dir"; then
-    fail "direct Solana RPC endpoint found in APK-bound source: $dir; use rpc.blee.app"
+    fail "generic public Solana RPC endpoint found in APK-bound source: $dir"
+  fi
+  if grep -RIEq --exclude='*.map' 'https://mainnet[.]helius-rpc[.]com|https://beta[.]helius-rpc[.]com|https://devnet[.]helius-rpc[.]com' "$dir"; then
+    fail "ordinary Helius API-key RPC endpoint found in APK-bound source: $dir"
   fi
 done
+
+if grep -RIEq --exclude='*.map' 'sender[.]helius-rpc[.]com' src; then
+  fail "Helius Sender is forbidden for Blee V1 because it requires a third tip instruction"
+fi
 
 printf 'VERIFIED: Blee 2.7.1 source-first repository contract\n'
 printf 'VERIFIED: offline receive projection, notifications and contacts contract\n'
 printf 'VERIFIED: single plugin ownership and generated-output hygiene\n'
-printf 'VERIFIED: Solana client is gateway-only with no provider credential surface\n'
+printf 'VERIFIED: Solana client uses keyless Helius Secure RPC with no API-key surface\n'
 printf 'VERIFIED: Solana identity vault is isolated, encrypted and BleeStore-backed\n'
 printf 'VERIFIED: Backup v2 is encrypted, crash-safe and legacy-v1 compatible\n'
 printf 'VERIFIED: network identity is durable and Arc Mainnet remains release-gated\n'
