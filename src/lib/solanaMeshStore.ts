@@ -3,6 +3,7 @@ import type { MeshPacket, SolanaMeshPaymentEnvelopeV1 } from '../types/domain';
 import { BleeStore } from './bleeStore';
 import { looksLikeSolanaPublicKey } from './solanaGateway';
 import { validateSolanaMeshPaymentEnvelope } from './solanaMeshEnvelope';
+import { signalSolanaActivityChanged } from './solanaActivitySignal';
 
 export const SOLANA_MESH_INBOX_KEY = 'mesh.solana-inbox.v1';
 const INBOX_VERSION = 1;
@@ -102,6 +103,7 @@ async function readInbox(): Promise<StoredSolanaMeshInbox> {
 async function persistInbox(inbox: StoredSolanaMeshInbox): Promise<void> {
   inbox.updatedAt = Date.now();
   await BleeStore.setValue({ key: SOLANA_MESH_INBOX_KEY, value: JSON.stringify(inbox) });
+  signalSolanaActivityChanged();
 }
 
 function envelopeConflict(

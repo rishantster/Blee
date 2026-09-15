@@ -3,6 +3,7 @@ import type { SolanaMeshDeliveryAckV1, SolanaMeshPaymentEnvelopeV1 } from '../ty
 import { BleeStore } from './bleeStore';
 import { verifyMeshCapabilitiesV1 } from './meshCapabilities';
 import { looksLikeSolanaPublicKey } from './solanaGateway';
+import { signalSolanaActivityChanged } from './solanaActivitySignal';
 
 export const SOLANA_MESH_OUTBOX_KEY = 'mesh.solana-outbox.v1';
 const OUTBOX_VERSION = 1;
@@ -187,6 +188,7 @@ async function readOutbox(): Promise<StoredSolanaMeshOutbox> {
 async function persistOutbox(outbox: StoredSolanaMeshOutbox): Promise<void> {
   outbox.updatedAt = Date.now();
   await BleeStore.setValue({ key: SOLANA_MESH_OUTBOX_KEY, value: JSON.stringify(outbox) });
+  signalSolanaActivityChanged();
 }
 
 function envelopesConflict(a: SolanaMeshPaymentEnvelopeV1, b: SolanaMeshPaymentEnvelopeV1, aSenderEvm: string, bSenderEvm: string): boolean {

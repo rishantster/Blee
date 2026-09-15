@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { formatUnits } from 'viem';
 import { useBlee } from './useBlee';
 import { useSolanaWalletView } from './useSolanaWalletView';
+import { useSolanaActivityView } from './useSolanaActivityView';
 import { loadPayments, setPersistentValue } from '../lib/persistence';
 import { getSolUsdPrice } from '../lib/marketData';
 import type { PaymentRecord } from '../types/domain';
@@ -59,11 +60,13 @@ function verifyingIncomingCount(payments: PaymentRecord[]): number {
  * Arc/USDC and SOL/Solana remain independent operational balances. A separate,
  * read-only portfolio projection may value SOL in USD and add that valuation to
  * USDC for Home display only. That valuation is never used for spend checks,
- * signing, settlement, nonce ownership or payment routing.
+ * signing, settlement, nonce ownership or payment routing. SOL Activity is also
+ * a separate read-only durable projection and is merged only at presentation.
  */
 export function useBleeView() {
   const core = useBlee();
   const solana = useSolanaWalletView(core.account);
+  const solanaActivity = useSolanaActivityView(core.account?.address ?? null);
   const [durablePayments, setDurablePayments] = useState<PaymentRecord[]>([]);
   const [solUsdPrice, setSolUsdPrice] = useState<number | null>(null);
   const [solUsdPriceAt, setSolUsdPriceAt] = useState<number | null>(null);
@@ -113,6 +116,13 @@ export function useBleeView() {
   const payments = useMemo(
     () => mergePayments(core.payments, durablePayments),
     [core.payments, durablePayments],
+  );
+  // BLEE_UNIFIED_ACTIVITY_PRESENTATION_V1
+  // SOL rows join Arc rows only here, after both rails have independently
+  // produced durable read models. The operational Arc ledger remains `payments`.
+  const activityPayments = useMemo(
+    () => mergePayments(payments, solanaActivity.payments),
+    [payments, solanaActivity.payments],
   );
   const pendingIncoming = useMemo(() => pendingIncomingAmount(payments), [payments]);
   const verifyingIncoming = useMemo(() => verifyingIncomingCount(payments), [payments]);
@@ -209,10 +219,12 @@ export function useBleeView() {
   return {
     ...core,
     payments,
+    activityPayments,
     pendingIncoming,
     verifyingIncoming,
     identityFor,
     solana,
+    solanaActivity,
     portfolio: {
       usdcQuantity,
       solQuantity,
