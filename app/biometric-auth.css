@@ -1,0 +1,46 @@
+/* BLEE_BIOMETRIC_UI_GATE_V3
+ * Fingerprint controls are hardware-gated by BleeBiometric.status().
+ * Artwork is rendered only through the bounded mask below so an intrinsic SVG
+ * can never expand an auth control or dominate the device viewport.
+ */
+html[data-blee-biometric="unavailable"] .biometric-opt-in,
+html[data-blee-biometric="unavailable"] .biometric-unlock,
+html[data-blee-biometric="unavailable"] .fingerprint-action {
+  display: none !important;
+}
+
+.biometric-icon {
+  position: relative;
+  overflow: hidden;
+}
+
+.biometric-icon > svg,
+.biometric-icon > img,
+.biometric-unlock > svg,
+.biometric-unlock > img {
+  display: none !important;
+}
+
+.biometric-icon::before,
+.biometric-unlock::before {
+  content: "";
+  display: block;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  background: currentColor;
+  -webkit-mask: url('/brand/fingerprint-clean.svg') center / contain no-repeat;
+  mask: url('/brand/fingerprint-clean.svg') center / contain no-repeat;
+}
+
+.biometric-icon::before {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
+}
+
+.biometric-unlock {
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}

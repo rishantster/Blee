@@ -5,9 +5,10 @@ import android.content.Context;
 import android.content.Intent;
 
 /**
- * Bridges durable native mesh events to user-visible payment notifications.
- * A transport receipt is deliberately labelled as detected, not received: the
- * WebView still performs EIP-3009 verification before recipient acceptance.
+ * Ledger broadcasts wake/update application state only. They are intentionally
+ * not user-notification events: BLE retries and transport detection may occur
+ * repeatedly for the same payment. User-visible notifications are emitted only
+ * by the terminal native paths in BleePaymentNotifier.sent()/received().
  */
 public final class BleePaymentEventReceiver extends BroadcastReceiver {
     @Override
@@ -16,9 +17,11 @@ public final class BleePaymentEventReceiver extends BroadcastReceiver {
         if (!BleeMeshService.ACTION_LEDGER_CHANGED.equals(intent.getAction())) return;
 
         String eventType = intent.getStringExtra(BleeMeshService.EXTRA_EVENT_TYPE);
-        String paymentId = intent.getStringExtra(BleeMeshService.EXTRA_PAYMENT_ID);
-        if ("PAYMENT_ENVELOPE_RECEIVED".equals(eventType) && paymentId != null && !paymentId.isEmpty()) {
-            BleePaymentNotifier.detected(context, paymentId);
+        if ("PAYMENT_ENVELOPE_RECEIVED".equals(eventType)) {
+            // BLEE_PAYMENT_NOTIFICATION_TERMINAL_ONLY_V1
+            // Transport detection is deliberately silent. The verified
+            // BleeMeshPlugin.acceptEnvelope path owns "Payment received".
+            return;
         }
     }
 }

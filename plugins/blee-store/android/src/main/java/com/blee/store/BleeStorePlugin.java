@@ -497,7 +497,7 @@ public class BleeStorePlugin extends Plugin {
     }
 
     private static String noticeCounterparty(JSONObject row) {
-        for (String key : new String[] { "recipientName", "receiverName", "toName", "counterpartyName" }) {
+        for (String key : new String[] { "counterpartyAlias", "recipientName", "receiverName", "toName", "counterpartyName" }) {
             String value = row.optString(key, "").trim();
             if (!value.isEmpty()) return value;
         }

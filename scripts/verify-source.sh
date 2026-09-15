@@ -15,6 +15,7 @@ required=(
   next.config.ts
   tsconfig.json
   capacitor.config.ts
+  .env.example
   app/globals.css
   src/components/BleeApp.tsx
   src/components/BleeRuntime.tsx
@@ -28,6 +29,12 @@ required=(
   src/lib/payments.ts
   src/lib/atomicSigning.ts
   src/lib/walletRecovery.ts
+  src/lib/walletRestore.ts
+  src/lib/networkConfig.ts
+  src/lib/rails.ts
+  src/lib/solanaGateway.ts
+  src/lib/solanaVault.ts
+  src/lib/solanaSession.ts
   plugins/blee-store/package.json
   plugins/blee-nearby/package.json
   android/gradlew
@@ -78,6 +85,7 @@ if git ls-files 'android/**/build/**' 'plugins/**/android/build/**' | grep -q .;
 fi
 
 grep -q 'plugins/\*\*/android/build/' .gitignore || fail "native plugin build output is not ignored"
+grep -q 'https://rpc.paywithblee.xyz/api/solana' .env.example || fail "Blee Solana gateway example missing"
 
 if grep -q 'configure-native[.]mjs' package.json; then
   fail "package.json still references removed configure-native.mjs"
@@ -122,7 +130,25 @@ if grep -q 'notifyPaymentReceived' src/hooks/useBleeView.ts; then
 fi
 grep -q 'BleePaymentNotifier.received' android/app/src/main/java/com/blee/payments/BleeMeshPlugin.java || fail "verified receive path does not notify natively"
 grep -q 'PAYMENT_ENVELOPE_RECEIVED' android/app/src/main/java/com/blee/payments/BleePaymentEventReceiver.java || fail "transport detection notification path missing"
-grep -q 'post(context, paymentId, "receiver", "Payment received", body, true)' android/app/src/main/java/com/blee/payments/BleePaymentNotifier.java || fail "verified incoming payment notifications must alert"
+grep -q 'post(context, paymentId, "receiver", "Payment received", body, false)' android/app/src/main/java/com/blee/payments/BleePaymentNotifier.java || fail "verified receive must update the existing receiver notification without re-alerting"
+
+# BLEE_NOTIFICATION_SINGLE_OWNER_V1
+grep -q '"counterpartyAlias", "recipientName"' plugins/blee-store/android/src/main/java/com/blee/store/BleeStorePlugin.java || fail "sender notification does not prefer Blee counterparty alias"
+if grep -Fq 'BleePaymentNotifier.detected(this' android/app/src/main/java/com/blee/payments/BleeMeshService.java; then
+  fail "mesh service must not directly own receiver detection notifications"
+fi
+if grep -Fq 'BleePaymentNotifier.delivered(this' android/app/src/main/java/com/blee/payments/BleeMeshService.java; then
+  fail "delivery ACK must not create a sender lifecycle notification"
+fi
+if grep -Fq 'paymentNotification(result.notificationTitle' android/app/src/main/java/com/blee/payments/BleeMeshService.java; then
+  fail "mesh lifecycle ProcessResult still emits user notifications"
+fi
+if grep -Fq 'paymentNotification("Payment confirmed"' android/app/src/main/java/com/blee/payments/BleeMeshService.java; then
+  fail "chain confirmation must stay in Activity instead of creating another notification"
+fi
+SERVICE_PAYMENT_NOTIFICATION_CALLS="$(grep -c 'paymentNotification(' android/app/src/main/java/com/blee/payments/BleeMeshService.java)"
+[ "$SERVICE_PAYMENT_NOTIFICATION_CALLS" = "1" ] || fail "legacy mesh payment notification path still has call sites"
+printf 'VERIFIED: Android payment notifications are side-scoped, alias-aware and single-stream\n'
 
 grep -q "RecipientField" src/components/BleeApp.tsx || fail "Send screen is not using the canonical recipient control"
 if grep -q 'blee-recipient-qr-icon' src/components/BleeApp.tsx; then
@@ -139,7 +165,6 @@ if grep -Eq 'listContacts|saveContact|deleteContact|contactCandidates' android/a
   fail "contacts API leaked back into transport plugin"
 fi
 
-
 grep -q 'PROFILE_UUID' android/app/src/main/java/com/blee/payments/BleeMeshService.java || fail "connection-bound BLE profile characteristic missing"
 grep -q 'BleePeerProfile.decodeBound' android/app/src/main/java/com/blee/payments/BleeMeshService.java || fail "BLE profile is not bound to authenticated wallet session"
 grep -q 'verification_pending' android/app/src/main/java/com/blee/payments/BleeMeshDb.java || fail "recipient verification-pending lifecycle missing"
@@ -150,6 +175,82 @@ grep -q "state === 'verification-pending'" src/hooks/useBleeView.ts || fail "unv
 grep -q 'projectedBalance' src/components/BleeApp.tsx || fail "verified offline receive is not projected into displayed balance"
 grep -q 'senderName: aliasRef.current' src/hooks/useBlee.ts || fail "durable payment envelope is missing sender display identity"
 
+# BLEE_SOLANA_SECRET_BOUNDARY_V3
+# The APK may know only the public Blee gateway. Helius/provider credentials and
+# provider-specific RPC hosts must remain outside APK-bound source.
+grep -q 'BLEE_SOLANA_RPC_GATEWAY_V1' src/lib/solanaGateway.ts || fail "Blee Solana RPC gateway boundary missing"
+grep -Fq "BLEE_SOLANA_RPC_GATEWAY_URL = 'https://rpc.paywithblee.xyz/api/solana'" src/lib/solanaGateway.ts || fail "canonical Blee Solana RPC gateway URL missing"
+grep -q "rpcCall<string>('sendTransaction'" src/lib/solanaGateway.ts || fail "standard Solana transaction submission missing"
+grep -q "id: 'solana-sol'" src/lib/rails.ts || fail "Solana payment rail registry missing"
+grep -q "settlementModel: 'solana-durable-nonce'" src/lib/rails.ts || fail "Solana durable-nonce settlement model missing"
+if grep -Eq 'helius-rpc[.]com|[?&]api-key=|x-api-key|HELIUS_API_KEY|NEXT_PUBLIC_BLEE_HELIUS_SECURE_RPC|https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com' src/lib/solanaGateway.ts; then
+  fail "Solana gateway adapter contains a direct provider or credential surface"
+fi
+
+# BLEE_SOLANA_VAULT_V1
+# Solana identity is stored in an independent encrypted vault. The working
+# Arc/EVM vault must remain unchanged and Solana private key material must not be
+# persisted in plaintext or exposed through a reusable client secret.
+grep -q "SOLANA_VAULT_KEY = 'wallet.solana.v1'" src/lib/solanaVault.ts || fail "Solana vault storage key missing"
+grep -q "algorithm: 'Ed25519'" src/lib/solanaVault.ts || fail "Solana vault is not Ed25519"
+grep -q "SOLANA_KDF_ITERATIONS = 600_000" src/lib/solanaVault.ts || fail "Solana vault PBKDF2 work factor changed unexpectedly"
+grep -q "name: 'PBKDF2'" src/lib/solanaVault.ts || fail "Solana vault PBKDF2 derivation missing"
+grep -q "name: 'AES-GCM'" src/lib/solanaVault.ts || fail "Solana vault AES-GCM encryption missing"
+grep -q "name: 'Ed25519'" src/lib/solanaVault.ts || fail "Solana vault Ed25519 key generation/import missing"
+grep -q "from './bleeStore'" src/lib/solanaVault.ts || fail "Solana vault must use canonical BleeStore persistence"
+if grep -Eq 'localStorage|sessionStorage' src/lib/solanaVault.ts; then
+  fail "Solana key material must not use browser storage"
+fi
+
+# BLEE_MULTI_WALLET_BACKUP_V2
+# Backup v2 exports only encrypted vault objects. Restore is journaled before
+# either wallet is replaced, so an interrupted dual-wallet restore rolls forward
+# before Arc or Solana identity can be read again.
+grep -q "formatVersion: 2" src/lib/walletRecovery.ts || fail "Backup v2 export missing"
+grep -q "wallets:" src/lib/walletRecovery.ts || fail "Backup v2 wallet bundle missing"
+grep -q "BLEE_BACKUP_V1_COMPAT_V1" src/lib/walletRecovery.ts || fail "Backup v1 compatibility guard missing"
+grep -q "WALLET_RESTORE_JOURNAL_KEY = 'wallet.restore.v2.pending'" src/lib/walletRestore.ts || fail "crash-safe wallet restore journal missing"
+grep -q "commitWalletRestoreCrashSafe" src/lib/walletRecovery.ts || fail "Backup v2 import does not use crash-safe restore"
+grep -q "recoverPendingWalletRestore" src/lib/vault.ts || fail "Arc vault does not recover interrupted dual-wallet restore"
+grep -q "recoverPendingWalletRestore" src/lib/solanaVault.ts || fail "Solana vault does not recover interrupted dual-wallet restore"
+grep -q "getEncryptedSolanaVaultSnapshot" src/lib/walletRecovery.ts || fail "Backup v2 does not include encrypted Solana vault snapshot"
+if grep -Eq 'revealPrivateKey\(|unlockSolanaVault\(' src/lib/walletRestore.ts; then
+  fail "wallet restore journal must never decrypt private keys"
+fi
+
+# BLEE_NETWORK_IDENTITY_V1
+# Network identity is data attached to every durable payment. Legacy 2.7.1 rows
+# without metadata are permanently interpreted as Arc Testnet, while newly
+# created rows inherit only the release-approved active Arc profile.
+grep -q "id: 'arc-mainnet'" src/lib/networkConfig.ts || fail "Arc Mainnet approved profile slot missing"
+grep -q "operational: false" src/lib/networkConfig.ts || fail "Arc Mainnet must remain disabled until official parameters are populated"
+grep -q "ACTIVE_ARC_NETWORK_ID: ArcNetworkId = 'arc-testnet'" src/lib/networkConfig.ts || fail "unexpected Arc release selector"
+grep -q "networkId?: BleeNetworkId" src/types/domain.ts || fail "payment network identity missing from domain"
+grep -q "railId?: BleeRailId" src/types/domain.ts || fail "payment rail identity missing from domain"
+grep -q "BLEE_LEGACY_NETWORK_IDENTITY_V1" src/lib/persistence.ts || fail "legacy Arc Testnet history guard missing"
+grep -q "normalizePayments(rows, 'legacy-testnet')" src/lib/persistence.ts || fail "legacy payment load must pin missing network metadata to Arc Testnet"
+grep -q "normalizePayments(rows, 'active-release')" src/lib/persistence.ts || fail "new payments do not inherit release-selected network identity"
+grep -q "export const ARC_CHAIN_ID = BLEE_ACTIVE_NETWORK.chainId" src/lib/arc.ts || fail "Arc chain ID remains hardcoded outside approved network config"
+grep -q "supportedNetworkIds" src/lib/rails.ts || fail "Arc rail does not declare Testnet/Mainnet capability"
+
+APK_BOUND_DIRS=(src android plugins public app)
+for dir in "${APK_BOUND_DIRS[@]}"; do
+  [ -e "$dir" ] || continue
+  if grep -RIEq --exclude='*.map' '[?&]api-key=|x-api-key|HELIUS_API_KEY|VITE_HELIUS|EXPO_PUBLIC_HELIUS|NEXT_PUBLIC_BLEE_HELIUS_SECURE_RPC' "$dir"; then
+    fail "provider API credential material found in APK-bound source: $dir"
+  fi
+  if grep -RIEq --exclude='*.map' 'https://api[.](mainnet-beta|devnet|testnet)[.]solana[.]com' "$dir"; then
+    fail "generic public Solana RPC endpoint found in APK-bound source: $dir"
+  fi
+  if grep -RIEq --exclude='*.map' 'helius-rpc[.]com' "$dir"; then
+    fail "direct Helius provider hostname found in APK-bound source: $dir"
+  fi
+done
+
 printf 'VERIFIED: Blee 2.7.1 source-first repository contract\n'
 printf 'VERIFIED: offline receive projection, notifications and contacts contract\n'
 printf 'VERIFIED: single plugin ownership and generated-output hygiene\n'
+printf 'VERIFIED: Solana client is gateway-only with no provider credential surface\n'
+printf 'VERIFIED: Solana identity vault is isolated, encrypted and BleeStore-backed\n'
+printf 'VERIFIED: Backup v2 is encrypted, crash-safe and legacy-v1 compatible\n'
+printf 'VERIFIED: network identity is durable and Arc Mainnet remains release-gated\n'

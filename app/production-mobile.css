@@ -1,0 +1,403 @@
+/* BLEE_PRODUCTION_MOBILE_UI_V1
+ * Production-grade global design umbrella for Android phones.
+ * Loaded last. It normalizes density, typography, radii, safe areas, forms,
+ * imagery and sticky actions without changing wallet/transport/settlement logic.
+ */
+
+:root {
+  --blee-prod-x: clamp(16px, 4.4vw, 20px);
+  --blee-prod-top: clamp(12px, 2dvh, 18px);
+  --blee-prod-gap-1: 6px;
+  --blee-prod-gap-2: 10px;
+  --blee-prod-gap-3: 14px;
+  --blee-prod-gap-4: 18px;
+  --blee-prod-touch: clamp(50px, 6.2dvh, 54px);
+  --blee-prod-row: clamp(62px, 7.8dvh, 72px);
+  --blee-prod-radius-sm: 12px;
+  --blee-prod-radius: 16px;
+  --blee-prod-radius-lg: 20px;
+}
+
+html,
+body,
+.blee-app,
+.blee-phone {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.blee-phone { max-width: 480px; }
+
+.screen-content,
+.approved-screen {
+  padding-left: var(--blee-prod-x) !important;
+  padding-right: var(--blee-prod-x) !important;
+}
+
+.approved-screen,
+.screen-content:not(.success-screen) {
+  padding-top: max(var(--blee-prod-top), env(safe-area-inset-top)) !important;
+  padding-bottom: calc(18px + max(env(safe-area-inset-bottom), 8px)) !important;
+}
+
+.screen-header,
+.approved-screen .screen-header {
+  min-height: 46px;
+  margin-bottom: clamp(12px, 2dvh, 18px);
+  grid-template-columns: 42px 1fr 42px;
+}
+
+.screen-header h1,
+.approved-screen .screen-header h1 {
+  font-size: clamp(21px, 5.8vw, 25px);
+  line-height: 1.08;
+  letter-spacing: -.035em;
+  font-weight: 700;
+}
+
+.icon-button,
+.approved-screen .screen-header .icon-button {
+  width: 40px;
+  height: 40px;
+}
+
+.approved-help-button {
+  width: 34px;
+  height: 34px;
+  font-size: 14px;
+}
+
+.primary-button,
+.secondary-button,
+.action-button {
+  min-height: var(--blee-prod-touch);
+  border-radius: 15px;
+}
+
+.primary-button,
+.secondary-button {
+  font-size: 15px;
+}
+
+/* Auth */
+.auth-screen {
+  width: min(100%, 420px);
+  min-height: 100svh;
+  overflow-y: auto;
+  padding: max(var(--blee-prod-top), env(safe-area-inset-top)) var(--blee-prod-x) calc(16px + max(env(safe-area-inset-bottom), 8px));
+}
+
+.auth-screen > .blee-brand {
+  margin-bottom: clamp(20px, 4dvh, 34px);
+}
+
+.auth-screen .blee-wordmark {
+  width: clamp(90px, 25vw, 108px) !important;
+}
+
+.auth-copy,
+.auth-copy.minimal { margin-bottom: 16px; }
+.auth-copy h1 { font-size: clamp(27px, 7.4vw, 32px); line-height: 1.04; }
+.auth-copy p { font-size: 13px; line-height: 1.45; }
+.form-stack { gap: 11px; }
+.form-stack input,
+.field-block input,
+.input-with-icon input,
+.amount-entry input {
+  min-height: var(--blee-prod-touch);
+  border-radius: 14px;
+  font-size: 15px;
+}
+.password-input button { height: 36px; }
+.biometric-opt-in { min-height: 58px; border-radius: 14px; padding: 9px 11px; }
+.biometric-icon { width: 34px; height: 34px; border-radius: 11px; }
+.biometric-unlock { min-height: var(--blee-prod-touch); }
+.auth-alternatives { gap: 4px; }
+.auth-foot { padding-top: 18px; gap: 10px 14px; font-size: 10px; }
+
+/* Shared asset segmented control */
+.approved-segmented {
+  min-height: clamp(48px, 5.9dvh, 52px);
+  border-radius: 16px;
+  padding: 3px;
+  margin: 2px auto clamp(12px, 1.9dvh, 17px);
+}
+.approved-segmented button { border-radius: 13px; font-size: clamp(14px, 3.8vw, 16px); }
+
+/* Home */
+.home-screen { padding-top: max(var(--blee-prod-top), env(safe-area-inset-top)) !important; }
+.home-screen .app-topbar { min-height: 42px; margin-bottom: clamp(10px, 1.7dvh, 15px) !important; }
+.home-screen .blee-wordmark { width: clamp(86px, 24vw, 100px) !important; }
+.home-screen .home-profile-button .person-avatar { width: 42px !important; height: 42px !important; }
+.home-screen .home-balance-hero { min-height: clamp(68px, 9dvh, 84px) !important; padding: 0 0 10px !important; }
+.home-screen .home-balance-value { display: flex !important; align-items: baseline !important; justify-content: center !important; gap: 2px !important; font-variant-numeric: tabular-nums; }
+.home-screen .home-balance-value::before { content: "$"; font-size: clamp(30px, 8vw, 38px); line-height: 1; font-weight: 650; letter-spacing: -.04em; }
+.home-screen .home-balance-value strong { font-size: clamp(42px, 11.5vw, 54px) !important; line-height: .95 !important; letter-spacing: -.055em !important; }
+.home-screen .home-balance-value > span { display: none !important; }
+.home-screen .primary-actions { gap: 10px !important; margin: 4px 0 clamp(14px, 2dvh, 20px) !important; }
+.home-screen .action-button { min-height: clamp(50px, 6.5dvh, 56px) !important; border-radius: 15px !important; font-size: 15px !important; }
+.home-screen .home-modern-section { margin-top: clamp(16px, 2.2dvh, 22px) !important; }
+.home-screen .home-modern-heading { min-height: 24px; margin-bottom: 8px !important; }
+.home-screen .home-modern-heading h2 { font-size: clamp(19px, 5.2vw, 22px) !important; }
+.home-screen .home-nearby-card,
+.home-screen .home-asset-row,
+.home-screen .home-activity-row { min-height: var(--blee-prod-row) !important; padding: 10px 12px !important; }
+.home-screen .home-nearby-card,
+.home-screen .home-assets-card,
+.home-screen .home-activity-card { border-radius: var(--blee-prod-radius) !important; }
+.home-screen .home-nearby-copy strong { font-size: 15px !important; }
+.home-screen .home-nearby-copy small,
+.home-screen .home-asset-main small,
+.home-screen .home-asset-value small { font-size: 11px !important; }
+.home-screen .home-asset-main strong,
+.home-screen .home-asset-value strong { font-size: 14px !important; }
+.home-screen .home-assets-card img.asset-logo { width: 34px; height: 34px; }
+
+/* Nearby */
+.nearby-screen { padding-top: max(var(--blee-prod-top), env(safe-area-inset-top)) !important; }
+.nearby-screen .nearby-screen-header { margin-bottom: 12px !important; }
+.nearby-screen .nearby-screen-header h1 { font-size: clamp(29px, 7.8vw, 34px) !important; line-height: 1 !important; }
+.nearby-screen .nearby-screen-header p { margin-top: 4px !important; font-size: 13px !important; }
+.nearby-screen .nearby-info-button { width: 36px; height: 36px; }
+.nearby-screen .nearby-visibility-card { min-height: 66px !important; padding: 10px 12px !important; border-radius: var(--blee-prod-radius) !important; }
+.nearby-screen .nearby-visibility-copy strong { font-size: 14px !important; }
+.nearby-screen .nearby-visibility-copy small { font-size: 11px !important; }
+.nearby-screen .nearby-radar-wrap { margin: clamp(12px, 2dvh, 18px) 0 12px !important; }
+.nearby-screen .nearby-radar { width: clamp(214px, 62vw, 278px) !important; height: clamp(214px, 62vw, 278px) !important; min-width: 0 !important; min-height: 0 !important; }
+.nearby-screen .radar-self-mark { width: 56px !important; height: 56px !important; overflow: visible !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
+.nearby-screen .radar-self-mark .person-avatar { width: 56px !important; height: 56px !important; box-sizing: border-box; border: 3px solid #fff !important; border-radius: 50% !important; overflow: hidden !important; display: inline-grid !important; place-items: center; padding: 0 !important; box-shadow: 0 5px 16px rgba(0,0,0,.10); }
+.nearby-screen .radar-self-mark .person-avatar img,
+.nearby-screen .radar-peer .person-avatar img,
+.nearby-screen .nearby-person-row .person-avatar img { width: 100% !important; height: 100% !important; max-width: none !important; display: block !important; object-fit: cover !important; object-position: center center !important; border-radius: inherit; }
+.nearby-screen .radar-peer-avatar,
+.nearby-screen .radar-peer .person-avatar { border-radius: 50% !important; overflow: hidden !important; }
+.nearby-screen .radar-peer .person-avatar { width: 44px !important; height: 44px !important; box-sizing: border-box; border: 3px solid #fff !important; }
+.nearby-screen .nearby-radar-status { margin-top: 10px !important; font-size: 13px !important; }
+.nearby-screen .nearby-radar-helper { margin-top: 3px !important; font-size: 10px !important; }
+.nearby-screen .nearby-people-section { margin-top: 14px !important; }
+.nearby-screen .nearby-people-heading h2 { font-size: clamp(20px, 5.5vw, 23px) !important; }
+.nearby-screen .nearby-person-row,
+.nearby-screen .nearby-list-empty { min-height: 64px !important; padding: 9px 11px !important; border-radius: 15px !important; }
+.nearby-screen .nearby-person-copy strong { font-size: 13px; }
+.nearby-screen .nearby-person-copy small { font-size: 10px; }
+.nearby-screen .nearby-pay-button { height: 34px; min-width: 54px; border-radius: 11px; font-size: 11px; }
+.nearby-screen .nearby-trust-footer { margin-top: 10px !important; padding-bottom: 8px !important; }
+
+/* Profile */
+.profile-screen .profile-screen-header { margin-bottom: 24px; }
+.profile-screen .profile-screen-header h1 { font-size: clamp(27px, 7.4vw, 31px); }
+.profile-screen .profile-settings-button { width: 40px; height: 40px; }
+.profile-screen .profile-hero-row { gap: 18px; margin-bottom: 28px; }
+.profile-screen .profile-hero-row .person-avatar.xl { width: clamp(82px, 22vw, 96px); height: clamp(82px, 22vw, 96px); font-size: 30px; }
+.profile-screen .profile-hero-copy { gap: 9px; }
+.profile-screen .profile-hero-copy h2 { font-size: clamp(24px, 6.5vw, 28px); }
+.profile-screen .profile-edit-pill { padding: 8px 14px; font-size: 14px; }
+.profile-screen .profile-addresses-title { margin-bottom: 8px; font-size: clamp(20px, 5.5vw, 23px); }
+.profile-screen .profile-address-row,
+.profile-screen .profile-menu-row { min-height: 72px; grid-template-columns: 48px 1fr 32px; gap: 10px; padding: 9px 2px; }
+.profile-screen .profile-row-icon { width: 42px; height: 42px; }
+.profile-screen .profile-address-row img { width: 26px; height: 26px; }
+.profile-screen .profile-row-title strong { font-size: 16px; }
+.profile-screen .profile-row-copy code,
+.profile-screen .profile-row-copy small { font-size: 12px; }
+.profile-screen .profile-menu-group { margin-top: 20px; }
+.profile-screen .profile-manage-label { margin-top: 20px; font-size: 12px; }
+
+/* Edit profile */
+.edit-profile-screen .edit-profile-photo { width: clamp(110px, 30vw, 126px); margin: 10px auto 6px; }
+.edit-profile-screen .edit-profile-photo .person-avatar.xl { width: clamp(110px, 30vw, 126px); height: clamp(110px, 30vw, 126px); font-size: 38px; }
+.edit-profile-screen .camera-button { width: 40px; height: 40px; border-width: 3px; }
+.edit-profile-screen .profile-photo-actions { margin-bottom: 22px; }
+.edit-profile-screen .profile-photo-actions .change-photo { font-size: 16px; margin-top: 7px; }
+.edit-profile-screen .profile-photo-actions .remove-photo { font-size: 13px; margin-top: 5px; }
+.edit-profile-screen .field-block { gap: 7px; }
+.edit-profile-screen .field-block > span { font-size: 13px; }
+.edit-profile-screen .field-block input { height: var(--blee-prod-touch); font-size: 15px; }
+.edit-profile-screen .recognition-row { margin-top: 22px; padding: 18px 0; grid-template-columns: 44px 1fr; gap: 12px; }
+.edit-profile-screen .recognition-row .profile-row-icon { width: 40px; height: 40px; }
+.edit-profile-screen .recognition-row strong { font-size: 15px; }
+.edit-profile-screen .recognition-row small { font-size: 11px; }
+.edit-profile-screen .sticky-action { padding-top: 16px; bottom: calc(10px + max(env(safe-area-inset-bottom), 6px)); }
+.edit-profile-screen .primary-button { min-height: var(--blee-prod-touch); font-size: 15px; }
+
+/* Settings */
+.settings-screen .settings-section-title { margin: 18px 0 6px; font-size: 10px; letter-spacing: .12em; }
+.settings-screen .settings-row { min-height: 68px; grid-template-columns: 46px 1fr auto; gap: 9px; padding: 8px 2px; }
+.settings-screen .settings-row-icon { width: 40px; height: 40px; }
+.settings-screen .settings-row-icon img { width: 25px; height: 25px; }
+.settings-screen .settings-row-copy strong { font-size: 15px; }
+.settings-screen .settings-row-copy small { margin-top: 2px; font-size: 11px; }
+.settings-screen .logout-button { margin-top: 28px; min-height: var(--blee-prod-touch); border-radius: 15px; font-size: 15px; }
+.settings-screen .build-note { margin-top: 14px; font-size: 10px; }
+
+/* Send */
+.send-screen .send-network-row { min-height: 30px; margin: -1px 0 clamp(12px, 1.8dvh, 16px); gap: 7px; font-size: 14px; }
+.send-screen .send-network-row img { width: 22px; height: 22px; }
+.send-screen .send-network-pill { padding: 5px 9px; font-size: 11px; }
+.send-screen .send-recipient-label { margin-bottom: 6px; font-size: 12px; }
+.send-screen .send-recipient-wrap { margin-bottom: 10px; }
+.send-screen .recipient-summary { min-height: 60px; padding: 9px 11px; border-radius: 15px; }
+.send-screen .recipient-summary .person-avatar { width: 42px; height: 42px; }
+.send-screen .send-quick-actions { min-height: 38px; margin: 8px 0 clamp(10px, 1.7dvh, 14px); gap: 16px; }
+.send-screen .send-quick-actions button { min-height: 38px; gap: 7px; font-size: 13px; }
+.send-screen .send-quick-actions .divider { height: 26px; }
+.send-screen .send-amount-area { margin: clamp(8px, 1.4dvh, 12px) 0 clamp(14px, 2dvh, 18px); }
+.send-screen .send-amount-input { font-size: clamp(46px, 13vw, 60px); line-height: .98; min-height: 58px; }
+.send-screen .send-token-chip { min-height: 40px; margin: 10px auto 7px; padding: 5px 11px; gap: 7px; font-size: 14px; }
+.send-screen .send-token-chip img { width: 24px; height: 24px; }
+.send-screen .send-balance-copy { font-size: 12px; }
+.send-screen .send-status-area { margin-top: 12px; padding-top: 14px; }
+.send-screen .send-status-card { min-height: 70px; grid-template-columns: 38px 1fr auto; gap: 10px; padding: 11px 13px; border-radius: 16px; }
+.send-screen .send-status-card strong { font-size: 14px; }
+.send-screen .send-status-card small { margin-top: 2px; font-size: 11px; line-height: 1.35; }
+.send-screen .send-fee-note { margin-top: 12px; font-size: 12px; }
+.send-screen .sticky-action { margin-top: clamp(16px, 2.4dvh, 24px); bottom: calc(10px + max(env(safe-area-inset-bottom), 6px)); }
+.send-screen .sticky-action .primary-button { min-height: var(--blee-prod-touch); border-radius: 15px; font-size: 15px; }
+.send-screen .send-action-helper { margin-top: 6px; font-size: 11px; }
+
+/* Confirm send */
+.confirm-recipient { padding: 2px 0 12px; gap: 7px; }
+.confirm-recipient .person-avatar.lg { width: 50px; height: 50px; }
+.confirm-recipient strong { font-size: 16px; }
+.confirm-recipient small { font-size: 10px; }
+.confirm-card { margin-top: 10px; border-radius: var(--blee-prod-radius); }
+.confirm-card > div { min-height: 48px; padding: 0 13px; font-size: 12px; }
+.confirm-card + .quiet-note,
+.quiet-note { margin-top: 11px; padding: 11px 12px; border-radius: 14px; font-size: 10.5px; line-height: 1.4; }
+
+/* Receive */
+.receive-screen .receive-asset-hero { margin: clamp(12px, 1.8dvh, 16px) 0 12px; }
+.receive-screen .receive-asset-logo { width: clamp(48px, 13vw, 56px); height: clamp(48px, 13vw, 56px); margin-bottom: 9px; }
+.receive-screen .receive-asset-hero h2 { font-size: clamp(25px, 6.9vw, 29px); }
+.receive-screen .receive-asset-hero p { margin-top: 5px; font-size: 13px; }
+.receive-screen .receive-network-pill { margin-top: 7px; padding: 5px 9px; font-size: 11px; }
+.receive-screen .receive-qr-card { width: min(64vw, 264px, 34dvh); margin-top: 15px; border-radius: 16px; }
+.receive-screen .receive-qr-card svg { width: 87% !important; height: 87% !important; }
+.receive-screen .receive-qr-caption { margin: 6px 0 10px; font-size: 11px; }
+.receive-screen .receive-profile { margin: 6px 0 10px; gap: 10px; }
+.receive-screen .receive-profile .person-avatar { width: 38px; height: 38px; }
+.receive-screen .receive-profile strong { font-size: 16px; }
+.receive-screen .receive-address-button { min-height: 48px; max-width: 300px; border-radius: 14px; font-size: 13px; }
+.receive-screen .receive-warning { margin: 14px 0 18px; font-size: 11px; }
+.receive-screen .receive-actions { gap: 9px; }
+.receive-screen .receive-actions button { min-height: var(--blee-prod-touch); border-radius: 14px; font-size: 14px; }
+.receive-screen .receive-nearby-row { margin-top: 18px; padding-top: 16px; grid-template-columns: 44px 1fr auto; gap: 10px; }
+.receive-screen .receive-nearby-icon { width: 40px; height: 40px; }
+.receive-screen .receive-nearby-row strong { font-size: 14px; }
+.receive-screen .receive-nearby-row small,
+.receive-screen .receive-nearby-row button { font-size: 11px; }
+
+/* Activity */
+.filter-tabs { gap: 4px; margin-bottom: 10px; padding: 3px; border-radius: 13px; }
+.filter-tabs button { min-height: 34px; border-radius: 10px; font-size: 11px; }
+.transaction-row { min-height: 64px; padding: 9px 10px; gap: 9px; }
+.transaction-row .person-avatar.sm { width: 36px; height: 36px; }
+.transaction-main strong,
+.transaction-value strong { font-size: 12px; }
+.transaction-main small,
+.transaction-value small { font-size: 10px; }
+.empty-state { min-height: 128px; border-radius: 16px; padding: 20px; }
+.empty-state strong { font-size: 13px; }
+.empty-state p { font-size: 11px; }
+
+/* Payment detail */
+.detail-hero { padding: 2px 0 16px; }
+.detail-hero .person-avatar.lg { width: 48px; height: 48px; }
+.detail-hero > span { margin-top: 8px; font-size: 11px; }
+.detail-hero h1 { margin: 5px 0 4px; font-size: clamp(30px, 8vw, 36px); }
+.detail-hero small { font-size: 10px; }
+.timeline-card { padding: 4px 0; }
+.timeline-row { min-height: 56px; padding: 8px 12px 8px 40px; }
+.timeline-row::before { left: 19px; }
+.timeline-row > span { left: 14px; }
+.timeline-row strong { font-size: 12px; }
+.timeline-row small { font-size: 10px; }
+.detail-list { margin-top: 10px; padding: 0 12px; }
+.detail-list > div { min-height: 44px; font-size: 11px; }
+
+/* Success */
+.success-screen { min-height: 100dvh; padding: max(var(--blee-prod-top), env(safe-area-inset-top)) var(--blee-prod-x) calc(16px + max(env(safe-area-inset-bottom), 8px)) !important; }
+.success-mark { width: 64px; height: 64px; margin: clamp(46px, 8dvh, 72px) 0 18px; }
+.success-screen h1 { margin: 4px 0 10px; font-size: clamp(26px, 7vw, 30px); }
+.success-amount { font-size: clamp(36px, 9.5vw, 42px); }
+.success-screen > p { margin: 11px auto 14px; font-size: 12px; }
+.success-actions { padding-top: 18px; }
+
+/* Backup & recovery */
+.security-hero { padding: 10px 10px 18px; }
+.security-hero > svg { margin-bottom: 7px; }
+.security-hero h2 { margin-bottom: 5px; font-size: clamp(21px, 5.8vw, 24px); }
+.security-hero p { max-width: 300px; font-size: 11px; line-height: 1.4; }
+.menu-list { margin-top: 8px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--blee-prod-radius); background: var(--surface); }
+.menu-list > button { min-height: 62px; border-radius: 0; border: 0; border-bottom: 1px solid var(--line); background: transparent; padding: 8px 10px; }
+.menu-list > button:last-child { border-bottom: 0; }
+.menu-list .menu-icon { width: 36px; height: 36px; border-radius: 11px; }
+.menu-list strong { font-size: 13px; }
+.menu-list small { font-size: 10px; }
+.subflow { padding-top: 0; }
+.subflow .subflow-back { min-height: 36px; margin: 0 0 12px; font-size: 12px; }
+.screen-content:has(> .subflow) > .screen-header .header-side:first-child { visibility: hidden; }
+.subflow h2 { margin: 12px 0 5px; font-size: clamp(25px, 6.8vw, 29px); }
+.subflow > p { margin: 0 0 16px; font-size: 11px; line-height: 1.4; }
+.subflow .field-block { margin-top: 12px; }
+.subflow .primary-button { margin-top: 12px; }
+.field-block textarea { min-height: clamp(150px, 23dvh, 220px); border-radius: 14px; font-size: 13px; }
+.secret-card { margin-top: 12px; border-radius: 14px; padding: 12px; }
+
+/* Network & security */
+.network-card { padding: 12px; border-radius: var(--blee-prod-radius); }
+.network-card + .network-card { margin-top: 10px; }
+.network-title { gap: 9px; padding-bottom: 10px; }
+.network-title .menu-icon { width: 36px; height: 36px; }
+.network-title strong { font-size: 14px; }
+.network-title small { font-size: 10px; }
+.status-badge { min-height: 25px; padding: 0 8px; font-size: 9px; }
+.network-detail { min-height: 40px; font-size: 11px; }
+.settings-toggle-list { margin-top: 10px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--blee-prod-radius); background: var(--surface); }
+.settings-toggle-list > div { min-height: 62px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.settings-toggle-list > div:last-child { border-bottom: 0; }
+.settings-toggle-list .menu-icon { width: 36px; height: 36px; }
+.settings-toggle-list strong { font-size: 13px; }
+.settings-toggle-list small { font-size: 10px; line-height: 1.35; }
+
+/* Bottom navigation */
+.bottom-nav { height: calc(62px + max(env(safe-area-inset-bottom), 8px)); padding: 6px 10px max(env(safe-area-inset-bottom), 8px); }
+.bottom-nav button { gap: 2px; font-size: 9px; }
+.bottom-nav button svg { width: 19px; height: 19px; }
+.blee-phone.with-nav { padding-bottom: calc(62px + max(env(safe-area-inset-bottom), 8px)); }
+.blee-phone.with-nav .screen-content.home-screen,
+.blee-phone.with-nav .screen-content.nearby-screen,
+.blee-phone.with-nav .screen-content.profile-screen { padding-bottom: calc(72px + max(env(safe-area-inset-bottom), 8px)) !important; }
+
+/* Portrait-short devices: preserve hierarchy by reducing gaps, never by zooming. */
+@media (max-height: 760px) {
+  :root { --blee-prod-top: 10px; }
+  .approved-screen .screen-header,
+  .screen-header { margin-bottom: 10px; }
+  .approved-segmented { margin-bottom: 10px; min-height: 46px; }
+  .send-screen .send-network-row { margin-bottom: 9px; }
+  .send-screen .send-recipient-wrap { margin-bottom: 7px; }
+  .send-screen .send-amount-area { margin: 5px 0 10px; }
+  .send-screen .send-status-area { margin-top: 8px; padding-top: 10px; }
+  .send-screen .sticky-action { margin-top: 12px; }
+  .receive-screen .receive-asset-hero { margin: 7px 0 8px; }
+  .receive-screen .receive-asset-logo { width: 44px; height: 44px; margin-bottom: 6px; }
+  .receive-screen .receive-qr-card { width: min(58vw, 230px, 31dvh); margin-top: 10px; }
+  .receive-screen .receive-warning { margin: 10px 0 12px; }
+  .nearby-screen .nearby-radar { width: clamp(190px, 54vw, 230px) !important; height: clamp(190px, 54vw, 230px) !important; }
+  .success-mark { margin-top: 32px; }
+}
+
+@media (max-width: 360px) {
+  :root { --blee-prod-x: 14px; }
+  .approved-screen .screen-header,
+  .screen-header { grid-template-columns: 38px 1fr 38px; }
+  .receive-screen .receive-actions { grid-template-columns: 1fr 1fr; }
+  .profile-screen .profile-hero-row { gap: 14px; }
+  .profile-screen .profile-hero-row .person-avatar.xl { width: 78px; height: 78px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-transition { animation: none !important; }
+}

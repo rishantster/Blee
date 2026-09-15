@@ -1,0 +1,733 @@
+/* BLEE_RESPONSIVE_MOBILE_V1
+ * Canonical viewport contract for Android phones.
+ * Screen design stays visually consistent while element scale is bounded by
+ * available width/height. This file is intentionally loaded last.
+ */
+
+:root {
+  --blee-vp-x: clamp(14px, 4.6vw, 22px);
+  --blee-vp-top: clamp(14px, 2.6dvh, 24px);
+  --blee-vp-gap: clamp(10px, 1.8dvh, 18px);
+  --blee-touch: clamp(48px, 6.2dvh, 56px);
+}
+
+html,
+body,
+.blee-app,
+.blee-phone {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.blee-phone {
+  max-width: 480px;
+}
+
+.screen-content,
+.approved-screen {
+  padding-left: var(--blee-vp-x) !important;
+  padding-right: var(--blee-vp-x) !important;
+}
+
+.blee-phone.with-nav .screen-content.home-screen,
+.blee-phone.with-nav .screen-content.nearby-screen,
+.blee-phone.with-nav .screen-content.profile-screen {
+  padding-bottom: calc(76px + max(env(safe-area-inset-bottom), 10px)) !important;
+}
+
+/* Auth: compact, scroll-safe and never dominated by biometric artwork. */
+.auth-stage {
+  min-height: 100svh;
+}
+
+.auth-screen {
+  width: min(100%, 420px);
+  min-height: 100svh;
+  height: auto;
+  overflow-y: auto;
+  padding: max(var(--blee-vp-top), env(safe-area-inset-top)) var(--blee-vp-x) calc(18px + max(env(safe-area-inset-bottom), 8px));
+}
+
+.auth-screen > .blee-brand {
+  margin-bottom: clamp(22px, 4.8dvh, 42px);
+}
+
+.auth-screen .blee-wordmark {
+  width: clamp(92px, 26vw, 116px);
+}
+
+.auth-copy,
+.auth-copy.minimal {
+  margin-bottom: clamp(14px, 2.2dvh, 22px);
+}
+
+.auth-copy h1 {
+  font-size: clamp(28px, 8vw, 34px);
+  line-height: 1.03;
+}
+
+.auth-copy p {
+  font-size: clamp(13px, 3.7vw, 15px);
+}
+
+.form-stack {
+  gap: clamp(10px, 1.5dvh, 15px);
+}
+
+.form-stack input,
+.field-block input,
+.input-with-icon input,
+.amount-entry input {
+  min-height: var(--blee-touch);
+  font-size: clamp(15px, 4vw, 16px);
+}
+
+.primary-button,
+.secondary-button {
+  min-height: var(--blee-touch);
+  border-radius: 15px;
+  font-size: clamp(14px, 3.8vw, 15px);
+}
+
+.biometric-opt-in {
+  min-height: clamp(56px, 7dvh, 62px);
+}
+
+.biometric-unlock {
+  min-height: var(--blee-touch);
+}
+
+.auth-foot {
+  padding-top: clamp(18px, 3dvh, 30px);
+  gap: 12px 16px;
+}
+
+/* Shared approved chrome. */
+.approved-screen {
+  padding-top: max(var(--blee-vp-top), env(safe-area-inset-top)) !important;
+  padding-bottom: clamp(22px, 3.5dvh, 32px) !important;
+  min-height: 100dvh;
+}
+
+.approved-screen .screen-header {
+  min-height: 48px;
+  margin-bottom: clamp(16px, 2.6dvh, 24px);
+  grid-template-columns: 44px 1fr 44px;
+}
+
+.approved-screen .screen-header h1 {
+  font-size: clamp(23px, 6.4vw, 29px);
+  line-height: 1.06;
+}
+
+.approved-screen .screen-header .icon-button {
+  width: 42px;
+  height: 42px;
+}
+
+.approved-help-button {
+  width: 34px;
+  height: 34px;
+}
+
+.approved-segmented {
+  min-height: clamp(52px, 6.6dvh, 58px);
+  border-radius: 18px;
+  margin: 4px auto clamp(18px, 2.8dvh, 24px);
+}
+
+.approved-segmented button {
+  border-radius: 14px;
+  font-size: clamp(15px, 4.2vw, 17px);
+}
+
+/* Home. */
+.home-screen {
+  padding-top: max(var(--blee-vp-top), env(safe-area-inset-top)) !important;
+}
+
+.home-screen .app-topbar {
+  min-height: 46px;
+  margin-bottom: clamp(16px, 2.4dvh, 24px) !important;
+}
+
+.home-screen .blee-wordmark {
+  width: clamp(88px, 25vw, 108px) !important;
+}
+
+.home-screen .home-profile-button .person-avatar {
+  width: clamp(42px, 11vw, 46px) !important;
+  height: clamp(42px, 11vw, 46px) !important;
+  font-size: 16px !important;
+}
+
+.home-screen .home-balance-hero {
+  min-height: clamp(78px, 11dvh, 96px);
+  padding: 0 0 clamp(10px, 1.8dvh, 16px) !important;
+}
+
+.home-screen .home-balance-value strong {
+  font-size: clamp(40px, 11vw, 54px) !important;
+}
+
+.home-screen .home-balance-value span {
+  font-size: clamp(15px, 4vw, 18px) !important;
+}
+
+.home-screen .primary-actions {
+  gap: 10px !important;
+  margin: 6px 0 clamp(18px, 2.6dvh, 24px) !important;
+}
+
+.home-screen .action-button {
+  min-height: clamp(54px, 7dvh, 62px) !important;
+  border-radius: 17px !important;
+  font-size: clamp(15px, 4vw, 16px) !important;
+}
+
+.home-screen .home-modern-section {
+  margin-top: clamp(20px, 2.8dvh, 26px) !important;
+}
+
+.home-screen .home-modern-heading {
+  min-height: 28px;
+  margin-bottom: 10px !important;
+}
+
+.home-screen .home-modern-heading h2 {
+  font-size: clamp(21px, 5.8vw, 24px) !important;
+}
+
+.home-screen .home-nearby-card {
+  min-height: clamp(72px, 9dvh, 82px) !important;
+  padding: 12px 14px !important;
+}
+
+.home-screen .home-nearby-copy strong {
+  font-size: 16px !important;
+}
+
+.home-screen .home-nearby-copy small {
+  font-size: 12px !important;
+}
+
+.home-screen .home-asset-row {
+  min-height: clamp(68px, 8.5dvh, 78px) !important;
+  padding: 10px 13px !important;
+}
+
+.home-screen .home-asset-main strong,
+.home-screen .home-asset-value strong {
+  font-size: 15px !important;
+}
+
+.home-screen .home-asset-main small,
+.home-screen .home-asset-value small {
+  font-size: 12px !important;
+}
+
+.home-screen .home-assets-card img.asset-logo {
+  width: 38px;
+  height: 38px;
+}
+
+.home-screen .home-activity-row {
+  min-height: clamp(68px, 8.5dvh, 76px) !important;
+  padding: 10px 13px !important;
+}
+
+/* Nearby. */
+.nearby-screen {
+  padding-top: max(var(--blee-vp-top), env(safe-area-inset-top)) !important;
+}
+
+.nearby-screen .nearby-screen-header {
+  margin-bottom: clamp(14px, 2dvh, 20px) !important;
+}
+
+.nearby-screen .nearby-screen-header h1 {
+  font-size: clamp(32px, 8.8vw, 40px) !important;
+  line-height: 1 !important;
+}
+
+.nearby-screen .nearby-screen-header p {
+  margin-top: 6px !important;
+  font-size: clamp(14px, 3.9vw, 16px) !important;
+}
+
+.nearby-screen .nearby-visibility-card {
+  min-height: clamp(72px, 9dvh, 82px) !important;
+  padding: 12px 14px !important;
+  border-radius: 18px !important;
+}
+
+.nearby-screen .nearby-visibility-copy strong {
+  font-size: 15px !important;
+}
+
+.nearby-screen .nearby-visibility-copy small {
+  font-size: 12px !important;
+}
+
+.nearby-screen .nearby-radar-wrap {
+  margin: clamp(18px, 2.8dvh, 26px) 0 clamp(16px, 2.4dvh, 22px) !important;
+}
+
+.nearby-screen .nearby-radar {
+  width: clamp(220px, 68vw, 310px) !important;
+  height: clamp(220px, 68vw, 310px) !important;
+  min-width: 0;
+  min-height: 0;
+  background-size: 16px 16px;
+}
+
+.nearby-screen .radar-self-mark .person-avatar {
+  width: 52px !important;
+  height: 52px !important;
+  border-width: 3px;
+  font-size: 18px !important;
+}
+
+.nearby-screen .radar-self small {
+  font-size: 12px !important;
+}
+
+.nearby-screen .nearby-radar-status {
+  margin-top: 14px !important;
+  font-size: 15px !important;
+}
+
+.nearby-screen .nearby-radar-helper {
+  margin-top: 5px !important;
+  font-size: 12px !important;
+}
+
+.nearby-screen .nearby-people-section {
+  margin-top: 18px !important;
+}
+
+.nearby-screen .nearby-people-heading h2 {
+  font-size: clamp(22px, 6vw, 25px) !important;
+}
+
+.nearby-screen .nearby-person-row,
+.nearby-screen .nearby-list-empty {
+  min-height: clamp(72px, 9dvh, 82px) !important;
+  padding: 11px 13px !important;
+  border-radius: 18px !important;
+}
+
+/* Profile. */
+.profile-screen .profile-screen-header {
+  margin-bottom: clamp(22px, 3.5dvh, 32px);
+}
+
+.profile-screen .profile-screen-header h1 {
+  font-size: clamp(29px, 8vw, 34px);
+}
+
+.profile-screen .profile-settings-button {
+  width: 42px;
+  height: 42px;
+}
+
+.profile-screen .profile-hero-row {
+  gap: clamp(18px, 5vw, 24px);
+  margin-bottom: clamp(30px, 4.5dvh, 40px);
+}
+
+.profile-screen .profile-hero-row .person-avatar.xl {
+  width: clamp(88px, 24vw, 106px);
+  height: clamp(88px, 24vw, 106px);
+  font-size: 34px;
+}
+
+.profile-screen .profile-hero-copy {
+  gap: 10px;
+}
+
+.profile-screen .profile-hero-copy h2 {
+  font-size: clamp(26px, 7vw, 30px);
+}
+
+.profile-screen .profile-edit-pill {
+  padding: 9px 15px;
+  font-size: 15px;
+}
+
+.profile-screen .profile-addresses-title {
+  margin-bottom: 12px;
+  font-size: clamp(22px, 6vw, 25px);
+}
+
+.profile-screen .profile-address-row,
+.profile-screen .profile-menu-row {
+  min-height: clamp(78px, 9.7dvh, 88px);
+  grid-template-columns: 52px 1fr 34px;
+  gap: 12px;
+  padding: 10px 4px;
+}
+
+.profile-screen .profile-row-icon {
+  width: 46px;
+  height: 46px;
+}
+
+.profile-screen .profile-address-row img {
+  width: 28px;
+  height: 28px;
+}
+
+.profile-screen .profile-row-title strong {
+  font-size: 17px;
+}
+
+.profile-screen .profile-row-copy code,
+.profile-screen .profile-row-copy small {
+  font-size: 13px;
+}
+
+.profile-screen .profile-menu-group {
+  margin-top: 24px;
+}
+
+/* Edit profile. */
+.edit-profile-screen .edit-profile-photo {
+  width: clamp(118px, 34vw, 136px);
+  margin: clamp(12px, 2.5dvh, 20px) auto 8px;
+}
+
+.edit-profile-screen .edit-profile-photo .person-avatar.xl {
+  width: clamp(118px, 34vw, 136px);
+  height: clamp(118px, 34vw, 136px);
+  font-size: 42px;
+}
+
+.edit-profile-screen .camera-button {
+  width: 44px;
+  height: 44px;
+  border-width: 3px;
+}
+
+.edit-profile-screen .profile-photo-actions {
+  margin-bottom: clamp(24px, 3.5dvh, 34px);
+}
+
+.edit-profile-screen .profile-photo-actions .change-photo {
+  font-size: 17px;
+}
+
+.edit-profile-screen .profile-photo-actions .remove-photo {
+  font-size: 14px;
+}
+
+.edit-profile-screen .field-block > span {
+  font-size: 14px;
+}
+
+.edit-profile-screen .field-block input {
+  height: var(--blee-touch);
+  font-size: 16px;
+}
+
+.edit-profile-screen .recognition-row {
+  margin-top: 26px;
+  padding: 22px 0;
+  grid-template-columns: 48px 1fr;
+}
+
+.edit-profile-screen .recognition-row .profile-row-icon {
+  width: 46px;
+  height: 46px;
+}
+
+.edit-profile-screen .recognition-row strong {
+  font-size: 16px;
+}
+
+.edit-profile-screen .recognition-row small {
+  font-size: 12px;
+}
+
+.edit-profile-screen .primary-button {
+  min-height: var(--blee-touch);
+  font-size: 16px;
+}
+
+/* Settings. */
+.settings-screen .settings-section-title {
+  margin: 22px 0 8px;
+  font-size: 11px;
+}
+
+.settings-screen .settings-row {
+  min-height: clamp(74px, 9dvh, 84px);
+  grid-template-columns: 52px 1fr auto;
+  gap: 10px;
+  padding: 10px 2px;
+}
+
+.settings-screen .settings-row-icon {
+  width: 46px;
+  height: 46px;
+}
+
+.settings-screen .settings-row-icon img {
+  width: 28px;
+  height: 28px;
+}
+
+.settings-screen .settings-row-copy strong {
+  font-size: 17px;
+}
+
+.settings-screen .settings-row-copy small {
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+.settings-screen .logout-button {
+  margin-top: clamp(34px, 5dvh, 52px);
+  min-height: var(--blee-touch);
+  font-size: 16px;
+}
+
+/* Send. */
+.send-screen .send-network-row {
+  min-height: 36px;
+  margin: -2px 0 clamp(18px, 2.5dvh, 24px);
+  font-size: 15px;
+}
+
+.send-screen .send-network-row img {
+  width: 22px;
+  height: 22px;
+}
+
+.send-screen .send-network-pill {
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.send-screen .send-recipient-label {
+  margin-bottom: 7px;
+  font-size: 13px;
+}
+
+.send-screen .send-recipient-wrap {
+  margin-bottom: clamp(16px, 2.3dvh, 22px);
+}
+
+.send-screen .send-quick-actions {
+  margin: 12px 0 24px;
+  gap: 16px;
+}
+
+.send-screen .send-quick-actions button {
+  min-height: 40px;
+  font-size: 15px;
+}
+
+.send-screen .send-amount-area {
+  margin: clamp(14px, 2.2dvh, 20px) 0 clamp(22px, 3.2dvh, 30px);
+}
+
+.send-screen .send-amount-input {
+  font-size: clamp(48px, 14vw, 68px);
+}
+
+.send-screen .send-token-chip {
+  min-height: 44px;
+  margin: 12px auto 9px;
+  padding: 5px 11px;
+  font-size: 16px;
+}
+
+.send-screen .send-token-chip img {
+  width: 25px;
+  height: 25px;
+}
+
+.send-screen .send-balance-copy {
+  font-size: 14px;
+}
+
+.send-screen .send-status-area {
+  padding-top: 22px;
+  margin-top: 20px;
+}
+
+.send-screen .send-status-card {
+  min-height: clamp(78px, 9.5dvh, 88px);
+  grid-template-columns: 40px 1fr auto;
+  padding: 15px 16px;
+  border-radius: 18px;
+}
+
+.send-screen .send-status-card strong {
+  font-size: 16px;
+}
+
+.send-screen .send-status-card small {
+  font-size: 12px;
+}
+
+.send-screen .send-fee-note {
+  margin-top: 16px;
+  font-size: 13px;
+}
+
+.send-screen .sticky-action {
+  margin-top: clamp(34px, 5dvh, 48px);
+}
+
+.send-screen .sticky-action .primary-button {
+  min-height: var(--blee-touch);
+  font-size: 16px;
+}
+
+.send-screen .send-action-helper {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+/* Receive. */
+.receive-screen .receive-asset-hero {
+  margin: clamp(20px, 3dvh, 28px) 0 18px;
+}
+
+.receive-screen .receive-asset-logo {
+  width: clamp(52px, 15vw, 62px);
+  height: clamp(52px, 15vw, 62px);
+  margin-bottom: 12px;
+}
+
+.receive-screen .receive-asset-hero h2 {
+  font-size: clamp(28px, 7.8vw, 33px);
+}
+
+.receive-screen .receive-asset-hero p {
+  margin-top: 6px;
+  font-size: 16px;
+}
+
+.receive-screen .receive-network-pill {
+  margin-top: 9px;
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.receive-screen .receive-qr-card {
+  width: min(68vw, 280px, 36dvh);
+  margin-top: clamp(18px, 2.6dvh, 24px);
+}
+
+.receive-screen .receive-qr-caption {
+  margin: 8px 0 14px;
+  font-size: 12px;
+}
+
+.receive-screen .receive-profile {
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+
+.receive-screen .receive-profile strong {
+  font-size: 17px;
+}
+
+.receive-screen .receive-address-button {
+  min-height: 50px;
+  max-width: 300px;
+  font-size: 14px;
+}
+
+.receive-screen .receive-warning {
+  margin: 16px 0 22px;
+  font-size: 12px;
+}
+
+.receive-screen .receive-actions button {
+  min-height: var(--blee-touch);
+  font-size: 15px;
+}
+
+.receive-screen .receive-nearby-row {
+  margin-top: 22px;
+  padding-top: 20px;
+  grid-template-columns: 48px 1fr auto;
+  gap: 10px;
+}
+
+.receive-screen .receive-nearby-icon {
+  width: 44px;
+  height: 44px;
+}
+
+.receive-screen .receive-nearby-row strong {
+  font-size: 15px;
+}
+
+.receive-screen .receive-nearby-row small {
+  font-size: 12px;
+}
+
+.receive-screen .receive-nearby-row button {
+  font-size: 14px;
+}
+
+/* Primary nav remains reachable without eating the viewport. */
+.bottom-nav {
+  max-width: 480px;
+  min-height: calc(62px + max(env(safe-area-inset-bottom), 8px));
+}
+
+/* Short phones need proportionally smaller hero surfaces, not a scaled-down app. */
+@media (max-height: 760px) {
+  :root {
+    --blee-vp-top: 12px;
+    --blee-touch: 48px;
+  }
+
+  .auth-screen > .blee-brand { margin-bottom: 18px; }
+  .auth-copy h1 { font-size: 28px; }
+  .auth-foot { padding-top: 16px; }
+
+  .home-screen .home-balance-value strong { font-size: 40px !important; }
+  .home-screen .home-balance-hero { min-height: 70px; }
+  .home-screen .home-modern-section { margin-top: 18px !important; }
+
+  .nearby-screen .nearby-radar {
+    width: min(62vw, 250px) !important;
+    height: min(62vw, 250px) !important;
+  }
+
+  .profile-screen .profile-hero-row .person-avatar.xl {
+    width: 82px;
+    height: 82px;
+  }
+
+  .edit-profile-screen .edit-profile-photo,
+  .edit-profile-screen .edit-profile-photo .person-avatar.xl {
+    width: 112px;
+    height: 112px;
+  }
+
+  .receive-screen .receive-qr-card {
+    width: min(58vw, 230px, 33dvh);
+  }
+}
+
+@media (max-width: 360px) {
+  :root { --blee-vp-x: 14px; }
+
+  .profile-screen .profile-hero-row { gap: 14px; }
+  .profile-screen .profile-row-title strong { font-size: 16px; }
+  .send-screen .send-quick-actions { gap: 10px; }
+  .receive-screen .receive-actions { grid-template-columns: 1fr 1fr; }
+}
+
+@media (min-width: 481px) {
+  .blee-app { display: grid; justify-items: center; }
+}

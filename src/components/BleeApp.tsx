@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { isAddress } from 'viem';
+import { isAddress, parseUnits } from 'viem';
 import { getActiveNetwork } from '../lib/networkConfig';
+import { paymentAssetSymbol, paymentNetworkLabel, paymentTransactionUrl } from '../lib/paymentNetwork';
+import { createAndDeliverOfflineSolPayment } from '../lib/solanaPaymentCoordinator';
 import {
   exportEncryptedWalletBackup,
   importEncryptedWalletBackup,
@@ -28,6 +30,17 @@ type Screen =
   | 'backup-recovery'
   | 'network-security';
 type BackupMode = 'overview' | 'reveal' | 'import-key' | 'restore';
+type ReceiveAsset = 'usdc' | 'sol';
+type SendAsset = 'usdc' | 'sol';
+type SendResult = {
+  asset: SendAsset;
+  route: string;
+  state: string;
+  txHash?: string;
+  paymentId?: string;
+  signedTransactionSha256?: string;
+  recipients?: number;
+};
 type IconName =
   | 'home' | 'send' | 'receive' | 'nearby' | 'activity' | 'person' | 'copy'
   | 'refresh' | 'close' | 'external' | 'wallet' | 'check' | 'wifi' | 'lock'
@@ -79,41 +92,12 @@ function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
 }
 
 function Brand({ compact = false }: { compact?: boolean }) {
-  return (
-    <div className={`blee-brand ${compact ? 'compact' : ''}`} data-blee-brand="lockup">
-      <img className="blee-wordmark" src="/brand/blee-wordmark.svg" alt="Blee" />
-    </div>
-  );
+  return <div className={`blee-brand ${compact ? 'compact' : ''}`} data-blee-brand="lockup"><img className="blee-wordmark" src="/brand/blee-wordmark.svg" alt="Blee"/></div>;
 }
 
-function PasswordField({ label, value, onChange, placeholder, autoComplete }: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder?: string;
-  autoComplete?: string;
-}) {
+function PasswordField({ label, value, onChange, placeholder, autoComplete }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; autoComplete?: string }) {
   const [revealed, setRevealed] = useState(false);
-  return (
-    <label className="password-field-label">
-      <span>{label}</span>
-      <div className="password-input">
-        <input
-          type={revealed ? 'text' : 'password'}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={placeholder}
-          autoComplete={autoComplete}
-          autoCapitalize="none"
-          autoCorrect="off"
-          spellCheck={false}
-        />
-        <button type="button" onClick={() => setRevealed((current) => !current)} aria-label={revealed ? 'Hide passphrase' : 'Show passphrase'}>
-          {revealed ? 'Hide' : 'Show'}
-        </button>
-      </div>
-    </label>
-  );
+  return <label className="password-field-label"><span>{label}</span><div className="password-input"><input type={revealed ? 'text' : 'password'} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} autoComplete={autoComplete} autoCapitalize="none" autoCorrect="off" spellCheck={false}/><button type="button" onClick={() => setRevealed((current) => !current)} aria-label={revealed ? 'Hide passphrase' : 'Show passphrase'}>{revealed ? 'Hide' : 'Show'}</button></div></label>;
 }
 
 function short(value?: string | null) {
@@ -128,15 +112,26 @@ function formatAmount(value: string | number | null | undefined, max = 6) {
   return parsed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: max });
 }
 
+function parseSolLamports(value: string): bigint {
+  const clean = value.trim();
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,9})?$/.test(clean)) throw new Error('Enter a valid SOL amount with up to 9 decimal places.');
+  const lamports = parseUnits(clean, 9);
+  if (lamports <= 0n) throw new Error('Enter an amount greater than zero.');
+  return lamports;
+}
+
 function formatTimestamp(value?: number | null) {
   if (!value) return '—';
-  return new Date(value).toLocaleString(undefined, {
-    year: 'numeric', month: 'short', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  });
+  return new Date(value).toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 function paymentStatus(row: PaymentRecord) {
+  const sol = paymentAssetSymbol(row) === 'SOL';
+  if (sol) {
+    if (row.state === 'settled' && row.solanaConfirmationStatus === 'finalized') return 'Finalized on Solana';
+    if (row.state === 'submitted' && row.solanaConfirmationStatus === 'confirmed') return 'Confirmed on Solana';
+    if (row.state === 'submitted') return 'Submitted to Solana';
+  }
   switch (row.state) {
     case 'verification-pending': return 'Verifying nearby';
     case 'settled': return row.direction === 'in' ? 'Received' : 'Confirmed';
@@ -149,6 +144,21 @@ function paymentStatus(row: PaymentRecord) {
 }
 
 function paymentStatusDetail(row: PaymentRecord) {
+  if (paymentAssetSymbol(row) === 'SOL') {
+    switch (row.state) {
+      case 'queued-local': return 'The exact sender-signed SOL transaction is stored durably on this phone. No on-chain confirmation is claimed.';
+      case 'mesh-broadcast': return 'The exact sender-signed SOL transaction is moving over Blee Mesh. It is not marked delivered until the intended recipient acknowledges it.';
+      case 'mesh-delivered': return row.direction === 'in'
+        ? 'The signed SOL transaction was durably received nearby. This is delivery state, not Solana on-chain confirmation.'
+        : 'The intended recipient durably stored and acknowledged the signed SOL transaction. This is delivery state, not Solana on-chain confirmation.';
+      case 'submitted': return row.solanaConfirmationStatus === 'confirmed'
+        ? 'The exact signed transaction is confirmed on Solana Mainnet and is waiting for finalization.'
+        : 'The exact signed transaction was submitted to Solana Mainnet through the Blee gateway and is awaiting confirmation.';
+      case 'settled': return 'The transaction is finalized on Solana Mainnet and its decoded sender, recipient and amount match the immutable Blee payment.';
+      case 'failed': return row.error || 'This SOL settlement could not complete.';
+      default: return 'SOL Activity reflects durable nearby delivery and independently verified Solana settlement state.';
+    }
+  }
   switch (row.state) {
     case 'verification-pending': return 'Stored durably on this phone while the sender authorization is verified locally.';
     case 'settled': return 'Final on Arc Testnet.';
@@ -166,6 +176,10 @@ function PersonAvatar({ name, src, size = 'md' }: { name: string; src?: string |
   return <span className={`person-avatar ${size}`}>{src ? <img src={src} alt=""/> : name.slice(0, 1).toUpperCase()}</span>;
 }
 
+function TokenLogo({ asset, className = '' }: { asset: SendAsset; className?: string }) {
+  return <img className={className} src={asset === 'sol' ? '/brand/solana-logomark.svg' : '/brand/usdc-token.svg'} alt="" aria-hidden="true"/>;
+}
+
 async function prepareProfilePhoto(file: File): Promise<string> {
   if (!file.type.startsWith('image/')) throw new Error('Choose an image file');
   if (file.size > 12 * 1024 * 1024) throw new Error('Choose an image smaller than 12 MB');
@@ -176,15 +190,10 @@ async function prepareProfilePhoto(file: File): Promise<string> {
     reader.readAsDataURL(file);
   });
   const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('Could not open this image'));
-    img.src = source;
+    const img = new Image(); img.onload = () => resolve(img); img.onerror = () => reject(new Error('Could not open this image')); img.src = source;
   });
   const size = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
+  const canvas = document.createElement('canvas'); canvas.width = size; canvas.height = size;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Could not prepare profile photo');
   const side = Math.min(image.naturalWidth, image.naturalHeight);
@@ -197,45 +206,21 @@ async function prepareProfilePhoto(file: File): Promise<string> {
 }
 
 async function copyText(value: string) {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(value);
-      return;
-    }
-  } catch {}
+  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return; } } catch {}
   const input = document.createElement('textarea');
-  input.value = value;
-  input.setAttribute('readonly', '');
-  input.style.position = 'fixed';
-  input.style.opacity = '0';
-  document.body.appendChild(input);
-  input.select();
-  const copied = document.execCommand('copy');
-  input.remove();
-  if (!copied) throw new Error('Could not copy to clipboard');
+  input.value = value; input.setAttribute('readonly', ''); input.style.position = 'fixed'; input.style.opacity = '0'; document.body.appendChild(input); input.select();
+  const copied = document.execCommand('copy'); input.remove(); if (!copied) throw new Error('Could not copy to clipboard');
 }
 
 function downloadText(filename: string, body: string) {
   const blob = new Blob([body], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.rel = 'noopener';
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = filename; anchor.rel = 'noopener'; document.body.appendChild(anchor); anchor.click(); anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function ScreenHeader({ title, onBack, trailing }: { title: string; onBack?: () => void; trailing?: React.ReactNode }) {
-  return (
-    <header className="screen-header">
-      <div className="header-side">{onBack && <button className="icon-button ghost" onClick={onBack} aria-label="Back"><Icon name="back"/></button>}</div>
-      <h1>{title}</h1>
-      <div className="header-side right">{trailing}</div>
-    </header>
-  );
+  return <header className="screen-header"><div className="header-side">{onBack && <button className="icon-button ghost" onClick={onBack} aria-label="Back"><Icon name="back"/></button>}</div><h1>{title}</h1><div className="header-side right">{trailing}</div></header>;
 }
 
 function EmptyState({ icon, title, copy }: { icon: IconName; title: string; copy: string }) {
@@ -245,29 +230,15 @@ function EmptyState({ icon, title, copy }: { icon: IconName; title: string; copy
 function PaymentRow({ row, identity, onOpen }: { row: PaymentRecord; identity?: Identity; onOpen: (row: PaymentRecord) => void }) {
   const incoming = row.direction === 'in';
   const name = row.counterpartyAlias || identity?.alias || short(row.counterparty);
-  return (
-    <button className="transaction-row" onClick={() => onOpen(row)}>
-      <PersonAvatar name={name} src={row.counterpartyAvatar || identity?.avatar} size="sm"/>
-      <span className="transaction-main"><strong>{incoming ? `From ${name}` : `To ${name}`}</strong><small>{paymentStatus(row)}</small></span>
-      <span className="transaction-value"><strong className={incoming && row.state === 'settled' ? 'positive' : ''}>{incoming ? '+' : '−'}{formatAmount(row.amount)} USDC</strong><small>{new Date(row.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></span>
-      <Icon name="chevron" size={15}/>
-    </button>
-  );
+  const symbol = paymentAssetSymbol(row);
+  const positive = incoming && (row.state === 'settled' || (symbol === 'SOL' && row.state === 'mesh-delivered'));
+  return <button className="transaction-row" data-asset={symbol.toLowerCase()} onClick={() => onOpen(row)}><PersonAvatar name={name} src={row.counterpartyAvatar || identity?.avatar} size="sm"/><span className="transaction-main"><strong>{incoming ? `From ${name}` : `To ${name}`}</strong><small>{paymentStatus(row)} · {paymentNetworkLabel(row)}</small></span><span className="transaction-value"><strong className={positive ? 'positive' : ''}>{incoming ? '+' : '−'}{formatAmount(row.amount, symbol === 'SOL' ? 9 : 2)} {symbol}</strong><small>{new Date(row.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></span><Icon name="chevron" size={15}/></button>;
 }
 
 function BottomNav({ active, onChange }: { active: PrimaryTab; onChange: (tab: PrimaryTab) => void }) {
-  return (
-    <nav className="bottom-nav" aria-label="Primary navigation">
-      {([
-        ['home', 'home', 'Home'],
-        ['nearby', 'nearby', 'Nearby'],
-        ['activity', 'activity', 'Activity'],
-        ['profile', 'person', 'Profile'],
-      ] as Array<[PrimaryTab, IconName, string]>).map(([tab, icon, label]) => (
-        <button key={tab} className={active === tab ? 'active' : ''} onClick={() => onChange(tab)}><Icon name={icon}/><span>{label}</span></button>
-      ))}
-    </nav>
-  );
+  return <nav className="bottom-nav" aria-label="Primary navigation">{([
+    ['home', 'home', 'Home'], ['nearby', 'nearby', 'Nearby'], ['activity', 'activity', 'Activity'], ['profile', 'person', 'Profile'],
+  ] as Array<[PrimaryTab, IconName, string]>).map(([tab, icon, label]) => <button key={tab} className={active === tab ? 'active' : ''} onClick={() => onChange(tab)}><Icon name={icon}/><span>{label}</span></button>)}</nav>;
 }
 
 export function BleeApp() {
@@ -281,8 +252,11 @@ export function BleeApp() {
   const [payAlias, setPayAlias] = useState('');
   const [payAddress, setPayAddress] = useState('');
   const [payAmount, setPayAmount] = useState('');
+  const [payAsset, setPayAsset] = useState<SendAsset>('usdc');
   const [payError, setPayError] = useState('');
-  const [payResult, setPayResult] = useState<{ route: string; state: string; txHash?: string } | null>(null);
+  const [payResult, setPayResult] = useState<SendResult | null>(null);
+  const [solPayBusy, setSolPayBusy] = useState(false);
+  const [receiveAsset, setReceiveAsset] = useState<ReceiveAsset>('usdc');
   const [passphrase, setPassphrase] = useState('');
   const [confirmPassphrase, setConfirmPassphrase] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -292,6 +266,7 @@ export function BleeApp() {
   const [useBiometricNext, setUseBiometricNext] = useState(false);
   const biometricAutoAttempted = useRef(false);
   const [profileName, setProfileName] = useState('');
+  const [profilePhotoDraft, setProfilePhotoDraft] = useState<string | null>(null);
   const [profilePhotoError, setProfilePhotoError] = useState('');
   const [nearbyError, setNearbyError] = useState('');
   const [copied, setCopied] = useState(false);
@@ -307,424 +282,226 @@ export function BleeApp() {
   const photoInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => { setProfileName(app.alias); }, [app.alias]);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setLaunchSplashDone(true), 760);
-    return () => window.clearTimeout(timer);
-  }, []);
+  useEffect(() => { setProfilePhotoDraft(app.profilePhoto || null); }, [app.profilePhoto]);
+  useEffect(() => { const timer = window.setTimeout(() => setLaunchSplashDone(true), 760); return () => window.clearTimeout(timer); }, []);
   useEffect(() => {
     if (!app.persistenceReady) return;
     let active = true;
     void BleeBiometric.status().then((status) => {
       if (!active) return;
       setBiometricStatus(status);
-      if (!app.account && app.vaultExists && !status.enabled) {
-        setUseBiometricNext(window.localStorage.getItem('blee.biometric.setup') === '1');
-      }
+      if (!app.account && app.vaultExists && !status.enabled) setUseBiometricNext(window.localStorage.getItem('blee.biometric.setup') === '1');
     });
     return () => { active = false; };
   }, [app.persistenceReady, app.vaultExists, app.account]);
 
-  const refreshBiometricStatus = async () => {
-    const status = await BleeBiometric.status();
-    setBiometricStatus(status);
-    return status;
-  };
-
+  const refreshBiometricStatus = async () => { const status = await BleeBiometric.status(); setBiometricStatus(status); return status; };
   const handleBiometricUnlock = async () => {
     if (biometricBusy) return;
-    setAuthError('');
-    setBiometricBusy(true);
-    try {
-      const result = await BleeBiometric.unlock();
-      await app.unlock(result.passphrase);
-      setPassphrase('');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Fingerprint unlock was not completed';
-      if (!/cancel/i.test(message)) setAuthError(message);
-    } finally {
-      setBiometricBusy(false);
-    }
+    setAuthError(''); setBiometricBusy(true);
+    try { const result = await BleeBiometric.unlock(); await app.unlock(result.passphrase); historyRef.current = []; setScreen('home'); setPassphrase(''); }
+    catch (error) { const message = error instanceof Error ? error.message : 'Fingerprint unlock was not completed'; if (!/cancel/i.test(message)) setAuthError(message); }
+    finally { setBiometricBusy(false); }
   };
-
   useEffect(() => {
     if (!launchSplashDone || !app.persistenceReady || app.account || !app.vaultExists || !biometricStatus.enabled || biometricAutoAttempted.current) return;
-    biometricAutoAttempted.current = true;
-    void handleBiometricUnlock();
+    biometricAutoAttempted.current = true; void handleBiometricUnlock();
   }, [launchSplashDone, app.persistenceReady, app.account, app.vaultExists, biometricStatus.enabled]);
 
-  const visiblePayments = useMemo(() => app.payments.filter((row) => row.direction !== 'relay'), [app.payments]);
+  // BLEE_SOLANA_ACTIVITY_UI_V2
+  // Activity merges SOL delivery and independently verified settlement state with
+  // the Arc journal only at presentation time. Operational balances stay isolated.
+  const visiblePayments = useMemo(() => app.activityPayments.filter((row) => row.direction !== 'relay'), [app.activityPayments]);
   const filteredPayments = useMemo(() => visiblePayments.filter((row) => activityFilter === 'all' || (activityFilter === 'sent' ? row.direction === 'out' : row.direction === 'in')), [visiblePayments, activityFilter]);
-  const recentPayments = visiblePayments.slice(0, 3);
+  const recentPayments = visiblePayments.slice(0, 2);
   const nearbyPeers = app.peers.slice(0, 3);
-  const pendingPayments = visiblePayments.filter((row) => row.state !== 'settled' && row.state !== 'failed');
+  const pendingPayments = visiblePayments.filter((row) => paymentAssetSymbol(row) === 'SOL'
+    ? row.direction === 'out' && row.state !== 'settled' && row.state !== 'failed'
+    : row.state !== 'settled' && row.state !== 'failed');
   const projectedBalance = Number(app.available || 0) + Number(app.pendingIncoming || 0);
+  const portfolioBalance = app.portfolio.totalUsdcEquivalent;
   const activeTab: PrimaryTab = ['home', 'nearby', 'activity', 'profile'].includes(screen) ? screen as PrimaryTab : 'home';
 
-  const navigate = (next: Screen) => {
-    historyRef.current = [...historyRef.current, screen].slice(-12);
-    setScreen(next);
-  };
-  const goBack = (fallback: Screen = 'home') => {
-    const previous = historyRef.current.pop();
-    setScreen(previous || fallback);
-  };
-  const selectTab = (tab: PrimaryTab) => {
-    historyRef.current = [];
-    setScreen(tab);
-  };
+  const navigate = (next: Screen) => { historyRef.current = [...historyRef.current, screen].slice(-12); setScreen(next); };
+  const goBack = (fallback: Screen = 'home') => { const previous = historyRef.current.pop(); setScreen(previous || fallback); };
+  const selectTab = (tab: PrimaryTab) => { historyRef.current = []; if (tab === 'home' || tab === 'activity') { void app.solanaActivity.refresh(); void app.solanaSettlement.refresh(); } setScreen(tab); };
 
   const copyAddress = async () => {
     const address = app.account?.address || app.vaultAddress;
     if (!address) return;
-    await copyText(address);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
+    await copyText(address); setCopied(true); setTimeout(() => setCopied(false), 1200);
   };
-
+  const copyReceiveAddress = async () => {
+    const address = receiveAsset === 'sol' ? app.solana.address : app.account?.address;
+    if (!address) return;
+    await copyText(address); setCopied(true); setTimeout(() => setCopied(false), 1200);
+  };
   const toggleNearby = async () => {
     setNearbyError('');
-    try {
-      if (app.meshStarted) await app.stopMesh();
-      else await app.startMesh();
-    } catch (error) {
-      setNearbyError(error instanceof Error ? error.message : 'Nearby could not be changed');
-    }
+    try { if (app.meshStarted) await app.stopMesh(); else await app.startMesh(); }
+    catch (error) { setNearbyError(error instanceof Error ? error.message : 'Nearby could not be changed'); }
   };
-
   const openSend = (peer?: MeshPeer) => {
-    setPayPeer(peer || null);
-    setPayAlias(peer?.alias || '');
-    setPayAddress(peer?.address || '');
-    setPayAmount('');
-    setPayError('');
-    setPayResult(null);
-    navigate('send');
+    setPayPeer(peer || null); setPayAlias(peer?.alias || ''); setPayAddress(peer?.address || ''); setPayAmount(''); setPayAsset('usdc'); setPayError(''); setPayResult(null); navigate('send');
   };
-
   const reviewSend = () => {
-    const clean = payAddress.trim();
+    const clean = payAddress.trim(); setPayError('');
+    if (!isAddress(clean)) { setPayError(payAsset === 'sol' ? 'Choose a valid Blee recipient.' : 'Enter a valid recipient address.'); return; }
+    if (payAsset === 'sol') {
+      let lamports: bigint;
+      try { lamports = parseSolLamports(payAmount); } catch (error) { setPayError(error instanceof Error ? error.message : 'Enter a valid SOL amount.'); return; }
+      if (!app.solana.sessionReady || !app.solana.address) { setPayError('Solana wallet is still preparing.'); return; }
+      if (!app.solana.offlineReady) { setPayError('Set up offline payments before sending.'); return; }
+      if (!app.meshStarted) { setPayError('Turn on Nearby before sending SOL over Blee Mesh.'); return; }
+      if (app.solana.gatewayReachable === true && app.solana.balanceLamports !== null && lamports > app.solana.balanceLamports) { setPayError('Amount exceeds your confirmed SOL balance.'); return; }
+      setPayAddress(clean); navigate('confirm-send'); return;
+    }
     const value = Number(payAmount);
-    setPayError('');
-    if (!isAddress(clean)) { setPayError('Enter a valid recipient address.'); return; }
     if (!Number.isFinite(value) || value <= 0) { setPayError('Enter an amount greater than zero.'); return; }
     if (value > Number(app.available || 0)) { setPayError('Amount exceeds your confirmed spendable balance.'); return; }
-    setPayAddress(clean);
-    navigate('confirm-send');
+    setPayAddress(clean); navigate('confirm-send');
   };
-
   const submitSend = async () => {
     setPayError('');
-    try {
-      const result = await app.sendPayment(payAddress, payAmount, payAlias || payPeer?.alias);
-      setPayResult(result);
-      navigate('send-success');
-    } catch (error) {
-      setPayError(error instanceof Error ? error.message : 'Payment could not be created');
+    if (payAsset === 'sol') {
+      if (!app.account) { setPayError('Unlock Blee before sending SOL.'); return; }
+      setSolPayBusy(true);
+      try {
+        const result = await createAndDeliverOfflineSolPayment({ primaryAccount: app.account, recipientEvm: payAddress, amountLamports: parseSolLamports(payAmount).toString() });
+        const state = result.delivery.state === 'delivered' ? 'mesh-delivered' : result.delivery.state === 'broadcast' ? 'mesh-broadcast' : 'queued-local';
+        setPayResult({ asset: 'sol', route: 'ble-mesh', state, paymentId: result.paymentId, signedTransactionSha256: result.prepared.signedTransactionSha256, recipients: result.recipients });
+        void app.solana.refresh();
+        void app.solanaActivity.refresh();
+        void app.solanaSettlement.refresh();
+        navigate('send-success');
+      } catch (error) { setPayError(error instanceof Error ? error.message : 'SOL payment could not be created'); }
+      finally { setSolPayBusy(false); }
+      return;
     }
+    try { const result = await app.sendPayment(payAddress, payAmount, payAlias || payPeer?.alias); setPayResult({ asset: 'usdc', ...result }); navigate('send-success'); }
+    catch (error) { setPayError(error instanceof Error ? error.message : 'Payment could not be created'); }
   };
-
-  const resetSend = () => {
-    setPayPeer(null);
-    setPayAlias('');
-    setPayAddress('');
-    setPayAmount('');
-    setPayError('');
-    setPayResult(null);
-    historyRef.current = [];
-    setScreen('home');
-  };
-
-  const openPayment = (row: PaymentRecord) => {
-    setSelectedPayment(row);
-    navigate('activity-detail');
-  };
-
+  const resetSend = () => { setPayPeer(null); setPayAlias(''); setPayAddress(''); setPayAmount(''); setPayAsset('usdc'); setPayError(''); setPayResult(null); setSolPayBusy(false); historyRef.current = []; setScreen('home'); };
+  const openPayment = (row: PaymentRecord) => { setSelectedPayment(row); navigate('activity-detail'); };
   const shareAddress = async () => {
-    const address = app.account?.address;
+    const address = receiveAsset === 'sol' ? app.solana.address : app.account?.address;
     if (!address) return;
-    try {
-      if (navigator.share) await navigator.share({ title: 'Blee address', text: address });
-      else await copyAddress();
-    } catch {}
+    try { if (navigator.share) await navigator.share({ title: `Blee ${receiveAsset === 'sol' ? 'SOL' : 'USDC'} address`, text: address }); else await copyReceiveAddress(); } catch {}
   };
 
   const handleBackup = async () => {
     setWalletMessage('');
-    try {
-      const backup = await exportEncryptedWalletBackup();
-      downloadText(`blee-wallet-backup-${Date.now()}.json`, backup);
-      setWalletMessage('Encrypted backup created. Your passphrase is still required to restore it.');
-    } catch (error) { setWalletMessage(error instanceof Error ? error.message : 'Could not export wallet backup'); }
+    try { const backup = await exportEncryptedWalletBackup(); downloadText(`blee-wallet-backup-${Date.now()}.json`, backup); setWalletMessage('Encrypted backup created. Your passphrase is still required to restore it.'); }
+    catch (error) { setWalletMessage(error instanceof Error ? error.message : 'Could not export wallet backup'); }
   };
-
   const handleReveal = async () => {
-    setWalletMessage('');
-    setRevealedKey('');
-    try {
-      const key = await revealPrivateKey(walletPassphrase);
-      setRevealedKey(key);
-      setWalletMessage('Private key revealed for 30 seconds. Keep it private.');
-      setTimeout(() => setRevealedKey(''), 30_000);
-    } catch (error) { setWalletMessage(error instanceof Error ? error.message : 'Could not reveal private key'); }
+    setWalletMessage(''); setRevealedKey('');
+    try { const key = await revealPrivateKey(walletPassphrase); setRevealedKey(key); setWalletMessage('Private key revealed for 30 seconds. Keep it private.'); setTimeout(() => setRevealedKey(''), 30_000); }
+    catch (error) { setWalletMessage(error instanceof Error ? error.message : 'Could not reveal private key'); }
   };
-
   const handleImportPrivateKey = async () => {
-    setWalletMessage('');
-    if (importPassphrase.length < 8) { setWalletMessage('Use a passphrase of at least 8 characters.'); return; }
-    if (confirmImport !== 'IMPORT') { setWalletMessage('Type IMPORT to confirm wallet replacement.'); return; }
-    try {
-      const address = await importPrivateKey(importKey, importPassphrase);
-      setWalletMessage(`Wallet ${short(address)} imported. Reloading Blee…`);
-      setTimeout(() => window.location.reload(), 700);
-    } catch (error) { setWalletMessage(error instanceof Error ? error.message : 'Could not import private key'); }
+    setWalletMessage(''); if (importPassphrase.length < 8) { setWalletMessage('Use a passphrase of at least 8 characters.'); return; } if (confirmImport !== 'IMPORT') { setWalletMessage('Type IMPORT to confirm wallet replacement.'); return; }
+    try { const address = await importPrivateKey(importKey, importPassphrase); setWalletMessage(`Wallet ${short(address)} imported. Reloading Blee…`); setTimeout(() => window.location.reload(), 700); }
+    catch (error) { setWalletMessage(error instanceof Error ? error.message : 'Could not import private key'); }
   };
-
   const handleRestoreBackup = async () => {
-    setWalletMessage('');
-    if (confirmImport !== 'IMPORT') { setWalletMessage('Type IMPORT to confirm wallet replacement.'); return; }
-    try {
-      const address = await importEncryptedWalletBackup(backupJson);
-      setWalletMessage(`Wallet ${short(address)} restored. Reloading Blee…`);
-      setTimeout(() => window.location.reload(), 700);
-    } catch (error) { setWalletMessage(error instanceof Error ? error.message : 'Could not restore wallet backup'); }
+    setWalletMessage(''); if (confirmImport !== 'IMPORT') { setWalletMessage('Type IMPORT to confirm wallet replacement.'); return; }
+    try { const address = await importEncryptedWalletBackup(backupJson); setWalletMessage(`Wallet ${short(address)} restored. Reloading Blee…`); setTimeout(() => window.location.reload(), 700); }
+    catch (error) { setWalletMessage(error instanceof Error ? error.message : 'Could not restore wallet backup'); }
   };
 
-  if (!launchSplashDone || !app.persistenceReady) {
-    return <main className="blee-app auth-stage"><section className="splash-screen"><div className="splash-logo"><Brand/></div></section></main>;
-  }
-
-  if (app.storageError) {
-    return (
-      <main className="blee-app auth-stage">
-        <section className="auth-screen narrow"><Brand/><div className="auth-copy"><span className="kicker">STORAGE UNAVAILABLE</span><h1>Blee stopped safely.</h1><p>{app.storageError}</p></div><div className="inline-alert"><Icon name="shield"/><span>Your durable payment journal is required before the wallet can open.</span></div></section>
-      </main>
-    );
-  }
+  if (!launchSplashDone || !app.persistenceReady) return <main className="blee-app auth-stage"><section className="splash-screen"><div className="splash-logo"><Brand/></div></section></main>;
+  if (app.storageError) return <main className="blee-app auth-stage"><section className="auth-screen narrow"><Brand/><div className="auth-copy"><span className="kicker">STORAGE UNAVAILABLE</span><h1>Blee stopped safely.</h1><p>{app.storageError}</p></div><div className="inline-alert"><Icon name="shield"/><span>Your durable payment journal is required before the wallet can open.</span></div></section></main>;
 
   if (!app.account) {
     const existing = app.vaultExists;
-
     if (backupMode === 'import-key' || backupMode === 'restore') {
-      return (
-        <main className="blee-app auth-stage">
-          <section className="auth-screen recovery-auth">
-            <Brand/>
-            <button className="subflow-back auth-back" onClick={() => { setBackupMode('overview'); setWalletMessage(''); setConfirmImport(''); }}><Icon name="back"/>Back</button>
-            <div className="auth-copy">
-              <span className="kicker">{backupMode === 'import-key' ? 'IMPORT WALLET' : 'RESTORE WALLET'}</span>
-              <h1>{backupMode === 'import-key' ? 'Use an existing private key' : 'Restore an encrypted Blee backup'}</h1>
-              <p>{backupMode === 'import-key' ? 'The imported key will be encrypted locally with a new Blee passphrase.' : 'Your backup stays encrypted. You will unlock it with the passphrase used when the backup was created.'}</p>
-            </div>
-            <div className="form-stack">
-              {backupMode === 'import-key' ? <>
-                <label><span>Private key</span><input type="password" value={importKey} onChange={(e) => setImportKey(e.target.value)} placeholder="0x…" autoCapitalize="none" autoCorrect="off"/></label>
-                <PasswordField label="New Blee passphrase" value={importPassphrase} onChange={setImportPassphrase} placeholder="Minimum 8 characters" autoComplete="new-password"/>
-                <div className="field-help"><Icon name="lock" size={14}/><span>Minimum 8 characters. The private key is encrypted before it is stored.</span></div>
-                <label><span>Type IMPORT to confirm</span><input value={confirmImport} onChange={(e) => setConfirmImport(e.target.value)} placeholder="IMPORT" autoCapitalize="characters"/></label>
-                <button className="primary-button" disabled={!importKey || importPassphrase.length < 8 || confirmImport !== 'IMPORT'} onClick={() => void handleImportPrivateKey()}>Import wallet</button>
-              </> : <>
-                <label><span>Encrypted backup JSON</span><textarea value={backupJson} onChange={(e) => setBackupJson(e.target.value)} rows={8} placeholder='{"format":"blee-wallet-backup",…}'/></label>
-                <label><span>Type IMPORT to confirm</span><input value={confirmImport} onChange={(e) => setConfirmImport(e.target.value)} placeholder="IMPORT" autoCapitalize="characters"/></label>
-                <button className="primary-button" disabled={!backupJson || confirmImport !== 'IMPORT'} onClick={() => void handleRestoreBackup()}>Restore wallet</button>
-              </>}
-              {walletMessage && <div className="inline-alert"><Icon name="info"/><span>{walletMessage}</span></div>}
-            </div>
-          </section>
-        </main>
-      );
+      return <main className="blee-app auth-stage"><section className="auth-screen recovery-auth"><Brand/><button className="subflow-back auth-back" onClick={() => { setBackupMode('overview'); setWalletMessage(''); setConfirmImport(''); }}><Icon name="back"/>Back</button><div className="auth-copy"><span className="kicker">{backupMode === 'import-key' ? 'IMPORT WALLET' : 'RESTORE WALLET'}</span><h1>{backupMode === 'import-key' ? 'Use an existing private key' : 'Restore an encrypted Blee backup'}</h1><p>{backupMode === 'import-key' ? 'The imported key will be encrypted locally with a new Blee passphrase.' : 'Your backup stays encrypted. You will unlock it with the passphrase used when the backup was created.'}</p></div><div className="form-stack">{backupMode === 'import-key' ? <><label><span>Private key</span><input type="password" value={importKey} onChange={(e) => setImportKey(e.target.value)} placeholder="0x…" autoCapitalize="none" autoCorrect="off"/></label><PasswordField label="New Blee passphrase" value={importPassphrase} onChange={setImportPassphrase} placeholder="Minimum 8 characters" autoComplete="new-password"/><div className="field-help"><Icon name="lock" size={14}/><span>Minimum 8 characters. The private key is encrypted before it is stored.</span></div><label><span>Type IMPORT to confirm</span><input value={confirmImport} onChange={(e) => setConfirmImport(e.target.value)} placeholder="IMPORT" autoCapitalize="characters"/></label><button className="primary-button" disabled={!importKey || importPassphrase.length < 8 || confirmImport !== 'IMPORT'} onClick={() => void handleImportPrivateKey()}>Import wallet</button></> : <><label><span>Encrypted backup JSON</span><textarea value={backupJson} onChange={(e) => setBackupJson(e.target.value)} rows={8} placeholder='{"format":"blee-wallet-backup",…}'/></label><label><span>Type IMPORT to confirm</span><input value={confirmImport} onChange={(e) => setConfirmImport(e.target.value)} placeholder="IMPORT" autoCapitalize="characters"/></label><button className="primary-button" disabled={!backupJson || confirmImport !== 'IMPORT'} onClick={() => void handleRestoreBackup()}>Restore wallet</button></>}{walletMessage && <div className="inline-alert"><Icon name="info"/><span>{walletMessage}</span></div>}</div></section></main>;
     }
     const canCreate = displayName.trim().length >= 2 && passphrase.length >= 8 && passphrase === confirmPassphrase;
     const canUnlock = passphrase.length > 0;
-    return (
-      <main className="blee-app auth-stage">
-        <section className="auth-screen">
-          <Brand/>
-          <div className="auth-copy minimal">
-            <h1>{existing ? 'Unlock Blee' : 'Create wallet'}</h1>
-            {existing && <p>Use your passphrase or fingerprint.</p>}
-          </div>
-          <div className="form-stack">
-            {!existing && <label><span>Display name</span><input value={displayName} maxLength={24} onChange={(e) => setDisplayName(e.target.value)} placeholder="How people nearby will see you" autoComplete="nickname"/></label>}
-            <PasswordField label={existing ? 'Passphrase' : 'Create passphrase'} value={passphrase} onChange={setPassphrase} placeholder={existing ? 'Enter your passphrase' : 'Minimum 8 characters'} autoComplete={existing ? 'current-password' : 'new-password'}/>
-            {!existing && <PasswordField label="Confirm passphrase" value={confirmPassphrase} onChange={setConfirmPassphrase} placeholder="Repeat your passphrase" autoComplete="new-password"/>}
-            {!existing && <div className="field-help"><Icon name="lock" size={14}/><span>Minimum 8 characters. Your key is encrypted on this device.</span></div>}
-            {biometricStatus.available && !biometricStatus.enabled && <button type="button" className={`biometric-opt-in ${useBiometricNext ? 'selected' : ''}`} onClick={() => setUseBiometricNext((current) => !current)}><span className="biometric-icon"><Icon name="fingerprint" size={18}/></span><span><strong>Use fingerprint next time</strong><small>{useBiometricNext ? 'Fingerprint setup will follow this passphrase.' : 'Optional on this device.'}</small></span><span className={`mini-check ${useBiometricNext ? 'on' : ''}`}>{useBiometricNext ? '✓' : ''}</span></button>}
-            {existing && biometricStatus.enabled && <button type="button" className="secondary-button full biometric-unlock" disabled={biometricBusy || app.busy} onClick={() => void handleBiometricUnlock()}><Icon name="fingerprint"/>{biometricBusy ? 'Checking fingerprint…' : 'Unlock with fingerprint'}</button>}
-            {authError && <div className="inline-alert error"><Icon name="info"/><span>{authError}</span></div>}
-            <button className="primary-button" disabled={app.busy || (existing ? !canUnlock : !canCreate)} onClick={async () => {
-              setAuthError('');
-              try {
-                const enteredPassphrase = passphrase;
-                if (existing) await app.unlock(enteredPassphrase);
-                else { await app.create(enteredPassphrase); app.setAlias(displayName.trim()); }
-                if (useBiometricNext && biometricStatus.available && !biometricStatus.enabled) {
-                  try {
-                    await BleeBiometric.enroll(enteredPassphrase);
-                    window.localStorage.removeItem('blee.biometric.setup');
-                    await refreshBiometricStatus();
-                  } catch (biometricError) {
-                    console.warn('Biometric setup not completed', biometricError);
-                  }
-                }
-                setPassphrase(''); setConfirmPassphrase('');
-              } catch (error) { setAuthError(error instanceof Error ? error.message : 'Could not open Blee'); }
-            }}>{app.busy ? 'Opening…' : existing ? 'Unlock' : 'Create wallet'}</button>
-            <div className="auth-alternatives">
-              <button className="secondary-button full" onClick={() => { setBackupMode('import-key'); setWalletMessage(''); setConfirmImport(''); }}>{existing ? 'Replace with private key' : 'Import private key'}</button>
-              <button className="text-action" onClick={() => { setBackupMode('restore'); setWalletMessage(''); setConfirmImport(''); }}>{existing ? 'Restore another Blee backup' : 'Restore encrypted backup'}</button>
-            </div>
-          </div>
-          <div className="auth-foot"><span><Icon name="shield" size={15}/>Encrypted locally</span><span><Icon name="activity" size={15}/>Durable payment journal</span></div>
-        </section>
-      </main>
-    );
+    return <main className="blee-app auth-stage"><section className="auth-screen"><Brand/><div className="auth-copy minimal"><h1>{existing ? 'Unlock Blee' : 'Create wallet'}</h1>{existing && <p>Use your passphrase or fingerprint.</p>}</div><div className="form-stack">{!existing && <label><span>Display name</span><input value={displayName} maxLength={24} onChange={(e) => setDisplayName(e.target.value)} placeholder="How people nearby will see you" autoComplete="nickname"/></label>}<PasswordField label={existing ? 'Passphrase' : 'Create passphrase'} value={passphrase} onChange={setPassphrase} placeholder={existing ? 'Enter your passphrase' : 'Minimum 8 characters'} autoComplete={existing ? 'current-password' : 'new-password'}/>{!existing && <PasswordField label="Confirm passphrase" value={confirmPassphrase} onChange={setConfirmPassphrase} placeholder="Repeat your passphrase" autoComplete="new-password"/>}{!existing && <div className="field-help"><Icon name="lock" size={14}/><span>Minimum 8 characters. Your key is encrypted on this device.</span></div>}{biometricStatus.available && !biometricStatus.enabled && <button type="button" className={`biometric-opt-in ${useBiometricNext ? 'selected' : ''}`} onClick={() => setUseBiometricNext((current) => !current)}><span className="biometric-icon"><img src="/brand/fingerprint-clean.svg" alt=""/></span><span><strong>Use fingerprint next time</strong><small>{useBiometricNext ? 'Fingerprint setup will follow this passphrase.' : 'Optional on this device.'}</small></span><span className={`mini-check ${useBiometricNext ? 'on' : ''}`}>{useBiometricNext ? '✓' : ''}</span></button>}{existing && biometricStatus.enabled && <button type="button" className="secondary-button full biometric-unlock" disabled={biometricBusy || app.busy} onClick={() => void handleBiometricUnlock()}><img src="/brand/fingerprint-clean.svg" alt=""/>{biometricBusy ? 'Checking fingerprint…' : 'Unlock with fingerprint'}</button>}{authError && <div className="inline-alert error"><Icon name="info"/><span>{authError}</span></div>}<button className="primary-button" disabled={app.busy || (existing ? !canUnlock : !canCreate)} onClick={async () => { setAuthError(''); try { const enteredPassphrase = passphrase; if (existing) await app.unlock(enteredPassphrase); else { await app.create(enteredPassphrase); app.setAlias(displayName.trim()); } if (useBiometricNext && biometricStatus.available && !biometricStatus.enabled) { try { await BleeBiometric.enroll(enteredPassphrase); window.localStorage.removeItem('blee.biometric.setup'); await refreshBiometricStatus(); } catch (biometricError) { console.warn('Biometric setup not completed', biometricError); } } historyRef.current = []; setScreen('home'); setPassphrase(''); setConfirmPassphrase(''); } catch (error) { setAuthError(error instanceof Error ? error.message : 'Could not open Blee'); } }}>{app.busy ? 'Opening…' : existing ? 'Unlock' : 'Create wallet'}</button><div className="auth-alternatives"><button className="secondary-button full" onClick={() => { setBackupMode('import-key'); setWalletMessage(''); setConfirmImport(''); }}>{existing ? 'Replace with private key' : 'Import private key'}</button><button className="text-action" onClick={() => { setBackupMode('restore'); setWalletMessage(''); setConfirmImport(''); }}>{existing ? 'Restore another Blee backup' : 'Restore encrypted backup'}</button></div></div><div className="auth-foot"><span><Icon name="shield" size={15}/>Encrypted locally</span><span><Icon name="activity" size={15}/>Durable payment journal</span></div></section></main>;
   }
 
-  const renderHome = () => (
-    <div className="screen-content home-screen">
-      <div className="app-topbar"><Brand compact/><button className="status-chip" onClick={() => void app.refreshNetwork()}><span className={`status-dot ${app.arcReachable ? 'online' : app.arcReachable === null ? 'checking' : 'offline'}`}/>{app.arcReachable ? 'Online' : app.arcReachable === null ? 'Checking' : 'Offline'}</button></div>
-      <section className="balance-panel">
-        <div className="balance-heading"><div><span className="kicker">USDC BALANCE</span><small>Arc Testnet</small></div><button className="icon-button" onClick={() => void app.refreshNetwork()} aria-label="Refresh balance"><Icon name="refresh"/></button></div>
-        <div className="balance-number">{formatAmount(projectedBalance)} <span>USDC</span></div>
-        <div className="balance-subline"><span>{app.pendingIncoming > 0 ? `${formatAmount(app.available)} confirmed · ${formatAmount(app.pendingIncoming)} pending` : app.reserved > 0 ? `${formatAmount(app.reserved)} reserved` : 'Confirmed spendable'}</span><span>{app.balanceAt ? `Updated ${new Date(app.balanceAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Awaiting sync'}</span></div>
-      </section>
-      {app.verifyingIncoming > 0 && <div className="pending-strip"><Icon name="shield"/><div><strong>Verifying nearby payment{app.verifyingIncoming > 1 ? 's' : ''}</strong><small>Stored durably on this phone. Sender authorization is being checked locally.</small></div></div>}
-      {app.pendingIncoming > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>+{formatAmount(app.pendingIncoming)} USDC pending</strong><small>Received nearby and verified. Included in your displayed balance, but not spendable until Arc settlement is confirmed.</small></div></div>}
-      <div className="primary-actions"><button className="action-button send" onClick={() => openSend()}><Icon name="send"/><span>Send</span></button><button className="action-button" onClick={() => navigate('receive')}><Icon name="receive"/><span>Receive</span></button></div>
-      <section className="home-section"><div className="section-title"><div><span className="kicker">NEARBY</span><h2>People nearby</h2></div><button onClick={() => selectTab('nearby')}>See all</button></div>
-        {nearbyPeers.length ? <div className="surface-list">{nearbyPeers.map((peer) => <button className="peer-row" key={`${peer.address}:${peer.transportId}`} onClick={() => openSend(peer)}><PersonAvatar name={peer.alias} src={app.identityFor(peer.address)?.avatar}/><span><strong>{peer.alias}</strong><small>{short(peer.address)}</small></span><span className="row-action">Pay</span></button>)}</div> : <EmptyState icon="nearby" title={app.meshStarted ? 'Looking for people nearby' : 'Nearby payments are off'} copy={app.meshStarted ? 'Blee is scanning over Bluetooth LE.' : 'Turn on Nearby to find other Blee users.'}/>}</section>
-      <section className="home-section"><div className="section-title"><div><span className="kicker">RECENT</span><h2>Activity</h2></div><button onClick={() => selectTab('activity')}>See all</button></div>
-        {recentPayments.length ? <div className="surface-list">{recentPayments.map((row) => <PaymentRow key={`${row.direction}:${row.id}`} row={row} identity={app.identityFor(row.counterparty)} onOpen={openPayment}/>)}</div> : <EmptyState icon="activity" title="No activity yet" copy="Your payments will appear here."/>}</section>
-    </div>
-  );
-
-  const renderNearby = () => (
-    <div className="screen-content"><ScreenHeader title="Nearby" trailing={<button className="icon-button" onClick={() => void toggleNearby()} aria-label="Toggle nearby"><Icon name="refresh"/></button>}/>
-      <section className="discoverability-card"><div><span className="kicker">DISCOVERABILITY</span><strong>{app.meshStarted ? 'Visible to Blee users nearby' : 'Nearby is off'}</strong><small>{app.meshStarted ? 'Scanning and advertising over Bluetooth LE in the background.' : 'Enable Nearby to discover and pay people without relying on internet.'}</small></div><button className={`switch ${app.meshStarted ? 'on' : ''}`} onClick={() => void toggleNearby()} aria-label="Discoverability"><span/></button></section>
-      {nearbyError && <div className="inline-alert error"><Icon name="info"/><span>{nearbyError}</span></div>}
-      <div className="section-title simple"><div><span className="kicker">PEOPLE</span><h2>{app.peers.length ? `${app.peers.length} nearby` : 'Finding people nearby'}</h2></div></div>
-      {app.meshStarted && app.peers.length ? <div className="surface-list">{app.peers.map((peer) => <div className="peer-row static" key={`${peer.address}:${peer.transportId}`}><PersonAvatar name={peer.alias} src={app.identityFor(peer.address)?.avatar}/><span><strong>{peer.alias}</strong><small>{short(peer.address)} · seen {Math.max(1, Math.round((Date.now() - peer.lastSeen) / 1000))}s ago</small></span><button className="row-action" onClick={() => openSend(peer)}>Pay</button></div>)}</div> : <EmptyState icon="nearby" title={app.meshStarted ? 'Scanning nearby' : 'Nearby is off'} copy={app.meshStarted ? 'Keep Bluetooth enabled on both phones. Blee will surface authenticated peers here.' : 'Turn it on above to discover Blee users.'}/>} 
-      <div className="quiet-note"><Icon name="shield"/><span>A payment is shown as delivered only after the intended recipient stores it durably and acknowledges it.</span></div>
-    </div>
-  );
-
-  const renderActivity = () => (
-    <div className="screen-content"><ScreenHeader title="Activity" trailing={pendingPayments.length ? <span className="count-badge">{pendingPayments.length}</span> : null}/>
-      <div className="filter-tabs" role="tablist" aria-label="Activity filter">
-        <button className={activityFilter === 'all' ? 'active' : ''} onClick={() => setActivityFilter('all')}>All</button>
-        <button className={activityFilter === 'sent' ? 'active' : ''} onClick={() => setActivityFilter('sent')}>Sent</button>
-        <button className={activityFilter === 'received' ? 'active' : ''} onClick={() => setActivityFilter('received')}>Received</button>
-      </div>
-      {filteredPayments.length ? <div className="surface-list activity-list">{filteredPayments.map((row) => <PaymentRow key={`${row.direction}:${row.id}`} row={row} identity={app.identityFor(row.counterparty)} onOpen={openPayment}/>)}</div> : <EmptyState icon="activity" title={visiblePayments.length ? 'Nothing in this view' : 'No activity yet'} copy={visiblePayments.length ? 'Choose another activity filter.' : 'Settled, pending and nearby payments stay in the durable payment journal.'}/>}
-    </div>
-  );
-
-  const renderProfile = () => (
-    <div className="screen-content"><ScreenHeader title="Profile"/>
-      <section className="profile-card"><PersonAvatar name={app.alias} src={app.profilePhoto} size="xl"/><h2>{app.alias}</h2><button className="address-inline" onClick={copyAddress}>{short(app.account?.address)} <Icon name={copied ? 'check' : 'copy'} size={14}/></button></section>
-      <div className="menu-list"><button onClick={() => navigate('edit-profile')}><span className="menu-icon"><Icon name="edit"/></span><span><strong>Edit profile</strong><small>Name and profile photo</small></span><Icon name="chevron"/></button><button onClick={() => navigate('settings')}><span className="menu-icon"><Icon name="settings"/></span><span><strong>Settings</strong><small>Wallet, network and security</small></span><Icon name="chevron"/></button></div>
-    </div>
-  );
-
-  const renderSend = () => (
-    <div className="screen-content"><ScreenHeader title="Send" onBack={() => goBack('home')}/>
-      {payPeer ? <div className="recipient-summary"><PersonAvatar name={payPeer.alias} src={app.identityFor(payPeer.address)?.avatar}/><span><small>TO</small><strong>{payPeer.alias}</strong><code>{short(payPeer.address)}</code></span></div> : <label className="field-block"><span>Recipient</span><RecipientField value={payAddress} onChange={(value) => { setPayAddress(value); setPayAlias(''); }} onSelectContact={(contact) => setPayAlias(contact.displayName || '')}/></label>}
-      <label className="field-block"><span>Amount</span><div className="amount-entry"><input inputMode="decimal" value={payAmount} onChange={(e) => setPayAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00"/><strong>USDC</strong></div><small>{formatAmount(app.available)} USDC available</small></label>
-      <div className="route-summary"><span className={`status-dot ${app.arcReachable ? 'online' : 'offline'}`}/><div><strong>{app.arcReachable ? 'Ready to settle on Arc Testnet' : payPeer && app.meshStarted ? 'Ready for nearby delivery' : 'Will queue safely until a route is available'}</strong><small>{app.arcReachable ? 'Sender-funded settlement' : 'Signed payment remains durable on this phone.'}</small></div></div>
-      {payError && <div className="inline-alert error"><Icon name="info"/><span>{payError}</span></div>}
-      <div className="sticky-action"><button className="primary-button" disabled={!payAddress || !payAmount} onClick={reviewSend}>Review payment</button></div>
-    </div>
-  );
-
-  const renderConfirmSend = () => {
-    const recipientName = payAlias || payPeer?.alias || app.identityFor(payAddress)?.alias || short(payAddress);
-    return <div className="screen-content"><ScreenHeader title="Confirm send" onBack={() => goBack('send')}/>
-      <div className="confirm-recipient"><PersonAvatar name={recipientName} src={payPeer ? app.identityFor(payPeer.address)?.avatar : app.identityFor(payAddress)?.avatar} size="lg"/><strong>{recipientName}</strong><small>{short(payAddress)}</small></div>
-      <section className="confirm-card"><div><span>Amount</span><strong>{formatAmount(payAmount)} USDC</strong></div><div><span>Network</span><strong>Arc Testnet</strong></div><div><span>Settlement</span><strong>Sender-funded</strong></div><div><span>Delivery</span><strong>{app.arcReachable ? 'Online' : payPeer && app.meshStarted ? 'Nearby first' : 'Durable queue'}</strong></div></section>
-      <div className="quiet-note"><Icon name="shield"/><span>The amount, recipient and settlement authorization are signed by your wallet. Courier phones cannot change them or spend their own gas for your payment.</span></div>
-      {payError && <div className="inline-alert error"><Icon name="info"/><span>{payError}</span></div>}
-      <div className="sticky-action"><button className="primary-button" disabled={app.busy} onClick={() => void submitSend()}>{app.busy ? 'Securing payment…' : 'Confirm and send'}</button></div>
+  const renderHome = () => {
+    const featuredPeer = nearbyPeers[0];
+    return <div className="screen-content home-screen" data-blee-multi-asset-ui="v1" data-blee-home-ui="approved-v4"><div className="app-topbar"><Brand compact/><button className="home-profile-button" onClick={() => selectTab('profile')} aria-label="Open profile"><PersonAvatar name={app.alias} src={app.profilePhoto}/></button></div><section className="home-balance-hero" aria-label="Portfolio balance"><div className="home-balance-value"><strong>{portfolioBalance === null ? '—' : formatAmount(portfolioBalance, 2)}</strong><span>USDC</span></div></section><div className="primary-actions"><button className="action-button send" onClick={() => openSend()}><Icon name="send"/><span>Send</span></button><button className="action-button" onClick={() => navigate('receive')}><Icon name="receive"/><span>Receive</span></button></div>{(app.solana.pendingOutboundCount > 0 || app.verifyingIncoming > 0 || app.pendingIncoming > 0) && <div className="home-alert-stack">{app.solana.pendingOutboundCount > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>{app.solana.pendingOutboundCount} SOL payment{app.solana.pendingOutboundCount > 1 ? 's' : ''} pending delivery</strong><small>Signed transaction bytes remain durable on this phone and retry over Blee Mesh.</small></div></div>}{app.verifyingIncoming > 0 && <div className="pending-strip"><Icon name="shield"/><div><strong>Verifying nearby payment{app.verifyingIncoming > 1 ? 's' : ''}</strong><small>Stored durably on this phone. Sender authorization is being checked locally.</small></div></div>}{app.pendingIncoming > 0 && <div className="pending-strip"><Icon name="clock"/><div><strong>+{formatAmount(app.pendingIncoming)} USDC pending</strong><small>Received nearby and verified. Included in the displayed balance until Arc confirms settlement.</small></div></div>}</div>}
+      <section className="home-modern-section" aria-label="Nearby"><div className="home-modern-heading"><h2>Nearby</h2><button className={`home-discovery-status ${app.meshStarted ? '' : 'offline'}`} onClick={() => selectTab('nearby')}><span className="status-dot"/>{app.meshStarted ? 'Discovering' : 'Nearby off'}</button></div>{featuredPeer ? <button className="home-nearby-card" onClick={() => openSend(featuredPeer)} aria-label={`Pay ${featuredPeer.alias}`}><PersonAvatar name={featuredPeer.alias} src={app.identityFor(featuredPeer.address)?.avatar}/><span className="home-nearby-copy"><strong>{featuredPeer.alias}</strong><small>Nearby via Bluetooth</small></span><span className="home-pay-button">Pay</span></button> : <div className="home-nearby-card"><div className="home-nearby-empty"><span><Icon name="nearby"/></span><span><strong>{app.meshStarted ? 'Looking for someone nearby' : 'Nearby is off'}</strong><small>{app.meshStarted ? 'Keep Bluetooth on. Blee is discovering people around you.' : 'Turn on Nearby to find another Blee user.'}</small></span></div></div>}</section>
+      <section className="home-modern-section" aria-label="Assets"><div className="home-modern-heading"><h2>Assets</h2></div><div className="home-assets-card"><div className="home-asset-row"><TokenLogo asset="usdc" className="asset-logo"/><span className="home-asset-main"><strong>USDC</strong><small>{network.name}</small></span><span className="home-asset-value"><strong>{formatAmount(projectedBalance, 2)} USDC</strong><small>${formatAmount(projectedBalance, 2)}</small></span></div><div className="home-asset-row"><TokenLogo asset="sol" className="asset-logo"/><span className="home-asset-main"><strong>Solana</strong><small>Mainnet</small></span><span className="home-asset-value"><strong>{app.solana.balance === null ? '—' : `${formatAmount(app.solana.balance, 4)} SOL`}</strong><small>{app.solana.balance === null ? 'Not synced' : app.portfolio.solUsdValue === null ? 'USD value unavailable' : `$${formatAmount(app.portfolio.solUsdValue, 2)}`}</small></span></div></div></section>
+      <section className="home-modern-section" aria-label="Activity"><div className="home-modern-heading"><h2>Activity</h2><button className="home-heading-action" onClick={() => selectTab('activity')}>View all <Icon name="chevron" size={15}/></button></div><div className="home-activity-card">{recentPayments.length ? recentPayments.map((row) => { const incoming = row.direction === 'in'; const identity = app.identityFor(row.counterparty); const name = row.counterpartyAlias || identity?.alias || short(row.counterparty); const symbol = paymentAssetSymbol(row); return <button className="home-activity-row" key={`${row.direction}:${row.railId ?? 'arc-usdc'}:${row.id}`} onClick={() => openPayment(row)}><span className="home-activity-icon"><Icon name={incoming ? 'receive' : 'send'} size={20}/></span><span className="home-activity-copy"><strong>{incoming ? `Received from ${name}` : `Sent to ${name}`}</strong><small>{paymentStatus(row)} · {paymentNetworkLabel(row)} · {new Date(row.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></span><span className="home-activity-amount"><strong>{incoming ? '+' : '−'}{formatAmount(row.amount, symbol === 'SOL' ? 4 : 2)} {symbol}</strong></span></button>; }) : <div className="home-section-empty">Your payments will appear here.</div>}</div></section>
     </div>;
   };
 
+  const renderNearby = () => {
+    const radarPeers = app.peers.slice(0, 3);
+    return <div className="screen-content nearby-screen" data-blee-nearby-ui="approved-pulse-v2"><header className="nearby-screen-header"><div><h1>Nearby</h1><p>Find someone. Tap to pay.</p></div><button className="nearby-info-button" aria-label="How nearby payments work" onClick={() => document.getElementById('nearby-help')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><Icon name="info" size={24}/></button></header><section className="nearby-visibility-card"><span className="nearby-bluetooth-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v18l6-5-6-4 6-4-6-5Z"/><path d="m6 7 12 9M6 17 18 8"/></svg></span><span className="nearby-visibility-copy"><strong>{app.meshStarted ? 'Visible to nearby people' : 'Nearby visibility is off'}</strong><small>{app.meshStarted ? 'Others can find you on Blee' : 'Turn it on so other Blee users can find you'}</small></span><button className={`switch ${app.meshStarted ? 'on' : ''}`} onClick={() => void toggleNearby()} aria-label="Nearby visibility"><span/></button></section>{nearbyError && <div className="nearby-error-wrap"><div className="inline-alert error"><Icon name="info"/><span>{nearbyError}</span></div></div>}<section className="nearby-radar-wrap" aria-label="Nearby discovery field"><div className="nearby-radar"><div className="radar-self"><span className="radar-self-mark"><PersonAvatar name={app.alias} src={app.profilePhoto} size="lg"/></span><small>You</small></div>{radarPeers.map((peer, index) => <button className={`radar-peer radar-peer-${index}`} key={`radar:${peer.address}:${peer.transportId}`} onClick={() => openSend(peer)} aria-label={`Pay ${peer.alias}`}><span className="radar-peer-avatar"><PersonAvatar name={peer.alias} src={app.identityFor(peer.address)?.avatar} size="lg"/></span><span className="radar-peer-name">{peer.alias}</span></button>)}</div><div className={`nearby-radar-status ${app.meshStarted ? '' : 'offline'}`}><span className="nearby-online-dot"/>{app.meshStarted ? 'Looking for people nearby' : 'Nearby is off'}</div><p className="nearby-radar-helper">{app.meshStarted ? 'Keep Bluetooth on to stay connected' : 'Turn on visibility to discover people around you'}</p></section><section className="nearby-people-section"><div className="nearby-people-heading"><h2>People nearby</h2><span className="nearby-count-pill">{app.peers.length}</span><button className="nearby-refresh-button" aria-label="Refresh nearby people" onClick={() => window.dispatchEvent(new CustomEvent('blee:refresh-all', { detail: { source: 'nearby-screen' } }))}><Icon name="refresh" size={22}/></button></div><div className="nearby-people-list">{app.meshStarted && app.peers.length ? app.peers.map((peer) => <div className="nearby-person-row" key={`${peer.address}:${peer.transportId}`}><PersonAvatar name={peer.alias} src={app.identityFor(peer.address)?.avatar}/><span className="nearby-person-copy"><strong>{peer.alias}</strong><small><span className="nearby-online-dot"/>Available to pay</small></span><button className="nearby-pay-button" onClick={() => openSend(peer)}>Pay</button></div>) : <div className="nearby-list-empty"><strong>{app.meshStarted ? 'No one nearby yet' : 'Nearby is off'}</strong><small>{app.meshStarted ? 'Blee is still scanning. Keep Bluetooth enabled on both phones.' : 'Turn on visibility above to start discovering Blee users.'}</small></div>}</div></section><footer className="nearby-trust-footer" id="nearby-help"><div className="nearby-trust-line"><Icon name="shield" size={20}/><span>No wallet address. No QR code.</span></div><button className="nearby-help-link" onClick={() => navigate('network-security')}>How nearby payments work</button></footer></div>;
+  };
+
+  const renderActivity = () => <div className="screen-content" data-blee-activity-ui="multi-rail-v1"><ScreenHeader title="Activity" trailing={pendingPayments.length ? <span className="count-badge">{pendingPayments.length}</span> : null}/><div className="filter-tabs" role="tablist" aria-label="Activity filter"><button className={activityFilter === 'all' ? 'active' : ''} onClick={() => setActivityFilter('all')}>All</button><button className={activityFilter === 'sent' ? 'active' : ''} onClick={() => setActivityFilter('sent')}>Sent</button><button className={activityFilter === 'received' ? 'active' : ''} onClick={() => setActivityFilter('received')}>Received</button></div>{filteredPayments.length ? <div className="surface-list activity-list">{filteredPayments.map((row) => <PaymentRow key={`${row.direction}:${row.railId ?? 'arc-usdc'}:${row.id}`} row={row} identity={app.identityFor(row.counterparty)} onOpen={openPayment}/>)}</div> : <EmptyState icon="activity" title={visiblePayments.length ? 'Nothing in this view' : 'No activity yet'} copy={visiblePayments.length ? 'Choose another activity filter.' : 'USDC and SOL nearby activity appears here from their durable payment journals.'}/>}</div>;
+
+  const renderProfile = () => <div className="screen-content profile-screen approved-screen" data-blee-profile-ui="approved-v1"><header className="profile-screen-header"><h1>Profile</h1><button className="profile-settings-button" onClick={() => navigate('settings')} aria-label="Settings"><Icon name="settings" size={30}/></button></header><section className="profile-hero-row"><PersonAvatar name={app.alias} src={app.profilePhoto} size="xl"/><div className="profile-hero-copy"><h2>{app.alias}</h2><button className="profile-edit-pill" onClick={() => { setProfileName(app.alias); setProfilePhotoDraft(app.profilePhoto || null); navigate('edit-profile'); }}>Edit profile</button></div></section><h2 className="profile-addresses-title">Your addresses</h2><div className="profile-address-list"><button className="profile-address-row" onClick={() => void copyAddress()}><span className="profile-row-icon"><Icon name="network" size={31}/></span><span className="profile-row-copy"><span className="profile-row-title"><strong>Arc Testnet</strong><span className="profile-testnet-pill">Testnet</span></span><code>{short(app.account?.address || app.vaultAddress)}</code></span><Icon name={copied ? 'check' : 'copy'} size={24}/></button><button className="profile-address-row" disabled={!app.solana.address} onClick={() => app.solana.address && void copyText(app.solana.address)}><span className="profile-row-icon"><TokenLogo asset="sol"/></span><span className="profile-row-copy"><span className="profile-row-title"><strong>Solana Mainnet</strong></span><code>{short(app.solana.address)}</code></span><Icon name="copy" size={24}/></button></div><div className="profile-menu-group"><button className="profile-menu-row" onClick={() => navigate('settings')}><span className="profile-row-icon"><Icon name="settings" size={29}/></span><span className="profile-row-copy"><strong>Settings</strong><small>Backup, fingerprint and networks</small></span><Icon name="chevron" size={24}/></button><button className="profile-menu-row" onClick={() => { setProfileName(app.alias); setProfilePhotoDraft(app.profilePhoto || null); navigate('edit-profile'); }}><span className="profile-row-icon"><Icon name="nearby" size={30}/></span><span className="profile-row-copy"><strong>Your nearby identity</strong><small>People on Blee see your name and photo.</small></span><Icon name="chevron" size={24}/></button></div><p className="profile-manage-label">Manage profile</p></div>;
+
+  const renderSend = () => {
+    const sol = payAsset === 'sol';
+    const solRouteReady = app.solana.sessionReady && app.solana.offlineReady && app.meshStarted;
+    const networkReady = sol ? solRouteReady : (app.arcReachable || (app.meshStarted && Boolean(payPeer)));
+    const statusTitle = sol ? (!app.solana.sessionReady ? 'Solana wallet is preparing' : !app.solana.offlineReady ? 'Set up offline payments' : !app.meshStarted ? 'Turn on Nearby' : 'Ready for offline SOL delivery') : (networkReady ? 'Ready to send' : 'Waiting for a connection');
+    const statusCopy = sol ? (!app.solana.offlineReady ? 'Prepare SOL for sending without internet.' : !app.meshStarted ? 'Nearby is required for offline SOL delivery.' : 'Your signed SOL payment can move over Blee Mesh.') : (networkReady ? 'Blee will use the safest available route.' : 'Your payment will stay on this phone until it can be forwarded.');
+    return <div className="screen-content send-screen approved-screen" data-blee-send-asset={payAsset} data-blee-send-ui="approved-v1"><ScreenHeader title="Send" onBack={() => goBack('home')} trailing={<button className="approved-help-button" onClick={() => navigate('network-security')} aria-label="Send help">?</button>}/><div className="approved-segmented" role="tablist" aria-label="Send asset"><button className={!sol ? 'active' : ''} onClick={() => { setPayAsset('usdc'); setPayError(''); }}>USDC</button><button className={sol ? 'active' : ''} onClick={() => { setPayAsset('sol'); setPayError(''); }}>SOL</button></div><div className="send-network-row">{sol && <TokenLogo asset="sol"/>}<span>{sol ? 'Solana Mainnet' : 'Arc Testnet'}</span><span>⌄</span>{!sol && <span className="send-network-pill">Test funds</span>}</div><label className="send-recipient-label">To</label><div className="send-recipient-wrap">{payPeer ? <div className="recipient-summary"><PersonAvatar name={payPeer.alias} src={app.identityFor(payPeer.address)?.avatar}/><span><strong>{payPeer.alias}</strong><code>{short(payPeer.address)}</code></span><button className="text-action" onClick={() => { setPayPeer(null); setPayAddress(''); setPayAlias(''); }}>Change</button></div> : <RecipientField walletLayout value={payAddress} placeholder={sol ? 'Choose a Blee recipient' : 'Name or wallet address'} onNearby={() => selectTab('nearby')} onChange={(value) => { setPayAddress(value); setPayAlias(''); }} onSelectContact={(contact) => setPayAlias(contact.displayName || '')}/>}</div><div className="send-amount-area"><input className="send-amount-input" inputMode="decimal" value={payAmount} onChange={(e) => setPayAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="0.00" aria-label={`${sol ? 'SOL' : 'USDC'} amount`}/><div className="send-token-chip"><TokenLogo asset={sol ? 'sol' : 'usdc'}/><span>{sol ? 'SOL' : 'USDC'}</span><span>⌄</span></div><div className="send-balance-copy">{sol ? (app.solana.balance === null ? <><span>Balance unavailable</span><br/><button onClick={() => void app.solana.refresh()}>Retry</button></> : `${formatAmount(app.solana.balance, 9)} SOL available`) : `${formatAmount(app.available)} USDC available`}</div></div><div className="send-status-area"><button className="send-status-card" disabled={sol && app.solana.offlineReady} onClick={() => { if (sol && !app.solana.offlineReady) navigate('network-security'); }}><span><Icon name={sol ? 'wifi' : 'network'} size={30}/></span><span><strong>{statusTitle}</strong><small>{statusCopy}</small></span>{sol && !app.solana.offlineReady && <Icon name="chevron" size={22}/>}</button>{sol && <div className="send-fee-note"><Icon name="info" size={20}/><span>Fees are paid in SOL.</span></div>}</div>{payError && <div className="inline-alert error"><Icon name="info"/><span>{payError}</span></div>}<div className="sticky-action"><button className="primary-button" disabled={!payAddress || !payAmount || (sol && !solRouteReady)} onClick={reviewSend}>Review payment</button><div className="send-action-helper">Choose a recipient and enter an amount.</div></div></div>;
+  };
+
+  const renderConfirmSend = () => {
+    const sol = payAsset === 'sol';
+    const recipientName = payAlias || payPeer?.alias || app.identityFor(payAddress)?.alias || short(payAddress);
+    return <div className="screen-content" data-blee-confirm-asset={payAsset}><ScreenHeader title="Confirm send" onBack={() => goBack('send')}/><div className="confirm-recipient"><PersonAvatar name={recipientName} src={payPeer ? app.identityFor(payPeer.address)?.avatar : app.identityFor(payAddress)?.avatar} size="lg"/><strong>{recipientName}</strong><small>{short(payAddress)}</small></div>{sol ? <section className="confirm-card"><div><span>Amount</span><strong>{formatAmount(payAmount, 9)} SOL</strong></div><div><span>Network</span><strong>Solana Mainnet</strong></div><div><span>Settlement</span><strong>Sender-funded</strong></div><div><span>Offline signing</span><strong>Durable nonce</strong></div><div><span>Delivery</span><strong>Blee Mesh</strong></div></section> : <section className="confirm-card"><div><span>Amount</span><strong>{formatAmount(payAmount)} USDC</strong></div><div><span>Network</span><strong>Arc Testnet</strong></div><div><span>Settlement</span><strong>Sender-funded</strong></div><div><span>Delivery</span><strong>{app.arcReachable ? 'Online' : payPeer && app.meshStarted ? 'Nearby first' : 'Durable queue'}</strong></div></section>}<div className="quiet-note"><Icon name="shield"/><span>{sol ? 'Blee will reserve one prepared nonce, sign the exact SOL transaction locally, persist those exact bytes, and only then transmit them over Bluetooth Mesh.' : 'The amount, recipient and settlement authorization are signed by your wallet. Courier phones cannot change them or spend their own gas for your payment.'}</span></div>{payError && <div className="inline-alert error"><Icon name="info"/><span>{payError}</span></div>}<div className="sticky-action"><button className="primary-button" disabled={sol ? solPayBusy || !app.solana.offlineReady : app.busy} onClick={() => void submitSend()}>{sol ? (solPayBusy ? 'Signing SOL payment…' : 'Confirm and send SOL') : (app.busy ? 'Securing payment…' : 'Confirm and send')}</button></div></div>;
+  };
+
   const renderSendSuccess = () => {
-    const state = payResult?.state || 'queued-local';
-    const settled = state === 'settled';
-    const submitted = state === 'submitted';
-    const delivered = state === 'mesh-delivered';
-    const broadcasting = state === 'mesh-broadcast';
+    if (payResult?.asset === 'sol') {
+      const delivered = payResult.state === 'mesh-delivered'; const broadcasting = payResult.state === 'mesh-broadcast';
+      const kicker = delivered ? 'DELIVERED NEARBY' : broadcasting ? 'SENDING NEARBY' : 'PAYMENT SECURED';
+      const title = delivered ? 'SOL payment delivered' : broadcasting ? 'SOL payment is on its way' : 'SOL payment queued safely';
+      const copy = delivered ? 'The intended recipient durably stored and acknowledged the exact signed SOL transaction. On-chain submission continues independently when any Blee holder of the signed payment has internet.' : broadcasting ? 'The exact sender-signed SOL transaction is stored durably and has entered Blee Mesh. It is not marked delivered until the intended recipient acknowledges it.' : 'The exact sender-signed SOL transaction is stored durably on this phone and can retry without rebuilding or re-signing it.';
+      return <div className="screen-content success-screen" data-blee-success-asset="sol"><button className="close-success" onClick={resetSend} aria-label="Close"><Icon name="close"/></button><div className="success-mark"><Icon name={delivered ? 'check' : 'clock'} size={34}/></div><span className="kicker">{kicker}</span><h1>{title}</h1><div className="success-amount">{formatAmount(payAmount, 9)} <span>SOL</span></div><p>{copy}</p><div className="quiet-note"><Icon name="network"/><span>Solana Mainnet · sender-funded · durable nonce. Nearby delivery and on-chain finality are tracked separately.</span></div><div className="success-actions"><button className="primary-button" onClick={() => { void app.solanaActivity.refresh(); void app.solanaSettlement.refresh(); resetSend(); }}>Done</button></div></div>;
+    }
+    const state = payResult?.state || 'queued-local'; const settled = state === 'settled'; const submitted = state === 'submitted'; const delivered = state === 'mesh-delivered'; const broadcasting = state === 'mesh-broadcast';
     const kicker = settled ? 'CONFIRMED' : submitted ? 'SUBMITTED' : delivered ? 'DELIVERED NEARBY' : broadcasting ? 'SENDING NEARBY' : 'PAYMENT SECURED';
     const title = settled ? 'Payment confirmed' : submitted ? 'Settlement submitted' : delivered ? 'Payment delivered' : broadcasting ? 'Payment is on its way' : 'Payment queued safely';
-    const copy = settled
-      ? 'Your transfer is confirmed on Arc Testnet.'
-      : submitted
-        ? 'Your sender-funded transaction is on Arc Testnet and is awaiting confirmation.'
-        : delivered
-          ? 'The intended recipient stored and acknowledged the payment. Settlement will continue automatically when an internet route is available.'
-          : broadcasting
-            ? 'Blee has started nearby delivery. It is not marked delivered until the intended recipient stores it and acknowledges it.'
-            : 'The signed payment is stored durably on this phone and will retry automatically when a safe route is available.';
+    const copy = settled ? 'Your transfer is confirmed on Arc Testnet.' : submitted ? 'Your sender-funded transaction is on Arc Testnet and is awaiting confirmation.' : delivered ? 'The intended recipient stored and acknowledged the payment. Settlement will continue automatically when an internet route is available.' : broadcasting ? 'Blee has started nearby delivery. It is not marked delivered until the intended recipient stores it and acknowledges it.' : 'The signed payment is stored durably on this phone and will retry automatically when a safe route is available.';
     return <div className="screen-content success-screen"><button className="close-success" onClick={resetSend} aria-label="Close"><Icon name="close"/></button><div className="success-mark"><Icon name={settled ? 'check' : 'clock'} size={34}/></div><span className="kicker">{kicker}</span><h1>{title}</h1><div className="success-amount">{formatAmount(payAmount)} <span>USDC</span></div><p>{copy}</p>{payResult?.txHash && network.explorerUrl && <a className="secondary-button" href={`${network.explorerUrl}/tx/${payResult.txHash}`} target="_blank" rel="noreferrer">View on explorer <Icon name="external"/></a>}<div className="success-actions"><button className="primary-button" onClick={() => { historyRef.current = []; setScreen('activity'); }}>View activity</button><button className="text-action" onClick={resetSend}>Done</button></div></div>;
   };
 
-  const renderReceive = () => (
-    <div className="screen-content"><ScreenHeader title="Receive" onBack={() => goBack('home')}/><section className="receive-panel"><div className="qr-wrap"><QRCodeSVG value={app.account!.address} size={210} level="M" bgColor="#ffffff" fgColor="#090909"/></div><h2>{app.alias}</h2><button className="address-inline" onClick={copyAddress}>{short(app.account!.address)} <Icon name={copied ? 'check' : 'copy'} size={14}/></button><div className="token-pill">USDC · Arc Testnet</div></section><button className="secondary-button full" onClick={() => void shareAddress()}><Icon name="backup"/>Share address</button><div className="quiet-note"><Icon name="nearby"/><span>When Nearby is on, other Blee users can discover you without scanning this code.</span></div></div>
-  );
+  const renderReceive = () => {
+    const sol = receiveAsset === 'sol';
+    const address = sol ? app.solana.address : app.account!.address;
+    return <div className="screen-content receive-screen approved-screen" data-blee-receive-asset={receiveAsset} data-blee-receive-ui="approved-v1"><ScreenHeader title="Receive" onBack={() => goBack('home')} trailing={<button className="approved-help-button" onClick={() => navigate('network-security')} aria-label="Receive help">?</button>}/><div className="approved-segmented" role="tablist" aria-label="Receive asset"><button className={!sol ? 'active' : ''} onClick={() => { setReceiveAsset('usdc'); setCopied(false); }}>USDC</button><button className={sol ? 'active' : ''} onClick={() => { setReceiveAsset('sol'); setCopied(false); }}>SOL</button></div>{address ? <><section className="receive-asset-hero"><TokenLogo asset={sol ? 'sol' : 'usdc'} className="receive-asset-logo"/><h2>Receive {sol ? 'SOL' : 'USDC'}</h2><p>{sol ? 'Solana Mainnet' : 'Network: Arc Testnet'}</p>{!sol && <span className="receive-network-pill">Test funds</span>}</section><div className="receive-qr-card"><QRCodeSVG value={address} size={280} level="M" bgColor="#ffffff" fgColor="#090909"/></div><p className="receive-qr-caption">QR code</p><div className="receive-profile"><PersonAvatar name={app.alias} src={app.profilePhoto}/><strong>{app.alias}</strong></div><button className="receive-address-button" onClick={() => void copyReceiveAddress()}><span>{short(address)}</span><Icon name={copied ? 'check' : 'copy'} size={22}/></button><p className="receive-warning">{sol ? 'Only send SOL on Solana to this address.' : 'Only send test USDC on Arc Testnet.'}</p><div className="receive-actions"><button className="receive-copy" onClick={() => void copyReceiveAddress()}><Icon name="copy" size={23}/>Copy address</button><button className="receive-share" onClick={() => void shareAddress()}><Icon name="backup" size={23}/>Share</button></div><div className="receive-nearby-row"><span className="receive-nearby-icon"><Icon name="nearby" size={26}/></span><span><strong>Paying nearby?</strong><small>Find me on Blee. No QR needed.</small></span><button onClick={() => selectTab('nearby')}>Open Nearby →</button></div></> : <EmptyState icon="wallet" title="Solana wallet is preparing" copy="Your SOL address appears here after the authenticated Solana session is ready."/>}</div>;
+  };
 
   const renderActivityDetail = () => {
     if (!selectedPayment) return renderActivity();
     const incoming = selectedPayment.direction === 'in';
+    const symbol = paymentAssetSymbol(selectedPayment);
+    const isSol = symbol === 'SOL';
     const counterparty = selectedPayment.counterpartyAlias || app.identityFor(selectedPayment.counterparty)?.alias || short(selectedPayment.counterparty);
-    return <div className="screen-content"><ScreenHeader title="Payment details" onBack={() => { setSelectedPayment(null); goBack('activity'); }}/><div className="detail-hero"><PersonAvatar name={counterparty} src={app.identityFor(selectedPayment.counterparty)?.avatar} size="lg"/><span>{incoming ? 'Received from' : 'Sent to'} {counterparty}</span><h1>{incoming ? '+' : '−'}{formatAmount(selectedPayment.amount)} USDC</h1><small>{formatTimestamp(selectedPayment.createdAt)}</small></div><section className="timeline-card"><div className="timeline-row done"><span/><div><strong>Created</strong><small>{formatTimestamp(selectedPayment.createdAt)}</small></div></div>{selectedPayment.durablyReceivedAt && <div className="timeline-row done"><span/><div><strong>Delivered nearby</strong><small>{formatTimestamp(selectedPayment.durablyReceivedAt)}</small></div></div>}{selectedPayment.submittedAt && <div className="timeline-row done"><span/><div><strong>Submitted to Arc</strong><small>{formatTimestamp(selectedPayment.submittedAt)}</small></div></div>}{selectedPayment.settledAt && <div className="timeline-row done"><span/><div><strong>Confirmed</strong><small>{formatTimestamp(selectedPayment.settledAt)}</small></div></div>}{(!selectedPayment.settledAt && !(selectedPayment.state === 'submitted' && selectedPayment.submittedAt)) && <div className={`timeline-row ${selectedPayment.state === 'failed' ? 'failed' : 'current'}`}><span/><div><strong>{paymentStatus(selectedPayment)}</strong><small>{paymentStatusDetail(selectedPayment)}</small></div></div>}</section><section className="detail-list"><div><span>Counterparty</span><strong>{counterparty}</strong></div><div><span>Route</span><strong>{selectedPayment.route === 'arc-direct' ? 'Arc Testnet' : selectedPayment.route === 'ble-mesh' ? 'Blee Mesh' : 'Durable queue'}</strong></div><div><span>Status</span><strong>{paymentStatus(selectedPayment)}</strong></div></section>{selectedPayment.txHash && network.explorerUrl && <a className="secondary-button full" href={`${network.explorerUrl}/tx/${selectedPayment.txHash}`} target="_blank" rel="noreferrer">View transaction <Icon name="external"/></a>}</div>;
+    const networkLabel = paymentNetworkLabel(selectedPayment);
+    const transactionUrl = paymentTransactionUrl(selectedPayment);
+    return <div className="screen-content" data-blee-activity-detail-asset={symbol.toLowerCase()}><ScreenHeader title="Payment details" onBack={() => { setSelectedPayment(null); goBack('activity'); }}/><div className="detail-hero"><PersonAvatar name={counterparty} src={app.identityFor(selectedPayment.counterparty)?.avatar} size="lg"/><span>{incoming ? 'Received from' : 'Sent to'} {counterparty}</span><h1>{incoming ? '+' : '−'}{formatAmount(selectedPayment.amount, isSol ? 9 : 2)} {symbol}</h1><small>{networkLabel} · {formatTimestamp(selectedPayment.createdAt)}</small></div>{isSol ? <section className="timeline-card" data-blee-solana-activity-timeline="settlement-aware-v1">{!incoming && <div className="timeline-row done"><span/><div><strong>Signed and secured</strong><small>{formatTimestamp(selectedPayment.createdAt)}</small></div></div>}{selectedPayment.durablyReceivedAt && <div className="timeline-row done"><span/><div><strong>{incoming ? 'Received nearby' : 'Recipient acknowledged'}</strong><small>{formatTimestamp(selectedPayment.durablyReceivedAt)}</small></div></div>}{!selectedPayment.submittedAt && !selectedPayment.durablyReceivedAt && selectedPayment.state === 'queued-local' && <div className="timeline-row current"><span/><div><strong>Queued safely</strong><small>Stored locally for exact-byte retry over Blee Mesh.</small></div></div>}{!selectedPayment.submittedAt && selectedPayment.state === 'mesh-broadcast' && <div className="timeline-row current"><span/><div><strong>Sending nearby</strong><small>{formatTimestamp(selectedPayment.updatedAt)}</small></div></div>}{selectedPayment.submittedAt && <div className="timeline-row done"><span/><div><strong>Submitted to Solana</strong><small>{formatTimestamp(selectedPayment.submittedAt)}</small></div></div>}{selectedPayment.confirmedAt && <div className="timeline-row done"><span/><div><strong>Confirmed on Solana</strong><small>{formatTimestamp(selectedPayment.confirmedAt)}</small></div></div>}{selectedPayment.settledAt && <div className="timeline-row done"><span/><div><strong>Finalized on Solana</strong><small>{formatTimestamp(selectedPayment.settledAt)}</small></div></div>}{selectedPayment.state === 'failed' && <div className="timeline-row failed"><span/><div><strong>Settlement failed</strong><small>{paymentStatusDetail(selectedPayment)}</small></div></div>}</section> : <section className="timeline-card"><div className="timeline-row done"><span/><div><strong>Created</strong><small>{formatTimestamp(selectedPayment.createdAt)}</small></div></div>{selectedPayment.durablyReceivedAt && <div className="timeline-row done"><span/><div><strong>Delivered nearby</strong><small>{formatTimestamp(selectedPayment.durablyReceivedAt)}</small></div></div>}{selectedPayment.submittedAt && <div className="timeline-row done"><span/><div><strong>Submitted to Arc</strong><small>{formatTimestamp(selectedPayment.submittedAt)}</small></div></div>}{selectedPayment.settledAt && <div className="timeline-row done"><span/><div><strong>Confirmed</strong><small>{formatTimestamp(selectedPayment.settledAt)}</small></div></div>}{(!selectedPayment.settledAt && !(selectedPayment.state === 'submitted' && selectedPayment.submittedAt)) && <div className={`timeline-row ${selectedPayment.state === 'failed' ? 'failed' : 'current'}`}><span/><div><strong>{paymentStatus(selectedPayment)}</strong><small>{paymentStatusDetail(selectedPayment)}</small></div></div>}</section>}<section className="detail-list"><div><span>Counterparty</span><strong>{counterparty}</strong></div><div><span>Network</span><strong>{networkLabel}</strong></div><div><span>Route</span><strong>{selectedPayment.route === 'ble-mesh' ? 'Blee Mesh' : selectedPayment.route === 'arc-direct' ? networkLabel : 'Durable queue'}</strong></div><div><span>Status</span><strong>{paymentStatus(selectedPayment)}</strong></div></section>{isSol && <div className="quiet-note"><Icon name="info"/><span>{selectedPayment.state === 'settled' ? 'Finalized state is shown only after Solana status and the decoded sender, recipient and amount independently match this exact signed Blee payment.' : 'Nearby delivery and Solana blockchain finality are separate. Blee changes the on-chain status only from its durable gateway settlement journal.'}</span></div>}{transactionUrl && <a className="secondary-button full" href={transactionUrl} target="_blank" rel="noreferrer">View transaction <Icon name="external"/></a>}</div>;
   };
 
-  const renderEditProfile = () => (
-    <div className="screen-content"><ScreenHeader title="Edit profile" onBack={() => goBack('profile')}/><section className="edit-profile-photo"><PersonAvatar name={app.alias} src={app.profilePhoto} size="xl"/><button className="camera-button" onClick={() => photoInputRef.current?.click()}><Icon name="camera"/></button><input ref={photoInputRef} type="file" accept="image/*" hidden onChange={async (event) => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (!file) return; setProfilePhotoError(''); try { app.setProfilePhoto(await prepareProfilePhoto(file)); } catch (error) { setProfilePhotoError(error instanceof Error ? error.message : 'Could not use this photo'); } }}/></section><label className="field-block"><span>Display name</span><input value={profileName} maxLength={24} onChange={(e) => setProfileName(e.target.value)}/></label>{app.profilePhoto && <button className="text-action danger" onClick={() => app.setProfilePhoto(null)}>Remove photo</button>}{profilePhotoError && <div className="inline-alert error"><Icon name="info"/><span>{profilePhotoError}</span></div>}<div className="sticky-action"><button className="primary-button" disabled={!profileName.trim()} onClick={() => { app.setAlias(profileName.trim()); goBack('profile'); }}>Save changes</button></div></div>
-  );
+  const renderEditProfile = () => <div className="screen-content edit-profile-screen approved-screen" data-blee-edit-profile-ui="approved-v1"><ScreenHeader title="Edit profile" onBack={() => { setProfileName(app.alias); setProfilePhotoDraft(app.profilePhoto || null); setProfilePhotoError(''); goBack('profile'); }}/><section className="edit-profile-photo"><PersonAvatar name={profileName || app.alias} src={profilePhotoDraft} size="xl"/><button className="camera-button" onClick={() => photoInputRef.current?.click()} aria-label="Change photo"><Icon name="camera" size={24}/></button><input ref={photoInputRef} type="file" accept="image/*" hidden onChange={async (event) => { const file = event.target.files?.[0]; event.currentTarget.value = ''; if (!file) return; setProfilePhotoError(''); try { setProfilePhotoDraft(await prepareProfilePhoto(file)); } catch (error) { setProfilePhotoError(error instanceof Error ? error.message : 'Could not use this photo'); } }}/></section><div className="profile-photo-actions"><button className="change-photo" onClick={() => photoInputRef.current?.click()}>Change photo</button>{profilePhotoDraft && <button className="remove-photo" onClick={() => setProfilePhotoDraft(null)}>Remove photo</button>}</div><label className="field-block"><span>Display name</span><input value={profileName} maxLength={24} onChange={(e) => setProfileName(e.target.value)} placeholder="Your name"/></label><p className="profile-visibility-copy">Your name and photo are visible to people nearby.</p>{profilePhotoError && <div className="inline-alert error"><Icon name="info"/><span>{profilePhotoError}</span></div>}<section className="recognition-row"><span className="profile-row-icon"><Icon name="person" size={29}/></span><span><strong>Help people recognize you</strong><small>Use a name and photo your contacts know.</small></span></section><div className="sticky-action"><button className="primary-button" disabled={!profileName.trim()} onClick={() => { app.setAlias(profileName.trim()); app.setProfilePhoto(profilePhotoDraft); goBack('profile'); }}>Save changes</button></div></div>;
 
-  const renderSettings = () => (
-    <div className="screen-content"><ScreenHeader title="Settings" onBack={() => goBack('profile')}/><div className="menu-list"><button onClick={() => navigate('backup-recovery')}><span className="menu-icon"><Icon name="backup"/></span><span><strong>Backup & recovery</strong><small>Encrypted backup, restore and private key</small></span><Icon name="chevron"/></button><button onClick={() => navigate('network-security')}><span className="menu-icon"><Icon name="network"/></span><span><strong>Network & security</strong><small>Arc Testnet, nearby payments and security</small></span><Icon name="chevron"/></button></div><div className="settings-toggle-list biometric-settings"><div><span className="menu-icon"><Icon name="fingerprint"/></span><span><strong>Fingerprint unlock</strong><small>{biometricStatus.enabled ? 'Enabled on this device' : biometricStatus.available ? 'Use fingerprint instead of typing your passphrase' : 'Not available on this device'}</small></span>{biometricStatus.enabled ? <button className="text-action" onClick={async () => { await BleeBiometric.disable(); await refreshBiometricStatus(); }}>Disable</button> : biometricStatus.available ? <button className="text-action" onClick={() => { window.localStorage.setItem('blee.biometric.setup', '1'); setUseBiometricNext(true); void app.lock(); }}>Set up</button> : <span className="status-badge">OFF</span>}</div></div><button className="logout-button" onClick={() => void app.lock()}><Icon name="logout"/>Log out</button><p className="build-note">Blee 2.7 · Source-first</p></div>
-  );
+  const renderSettings = () => <div className="screen-content settings-screen approved-screen" data-blee-settings-ui="approved-v1"><ScreenHeader title="Settings" onBack={() => goBack('profile')}/><section className="settings-section"><h2 className="settings-section-title">SECURITY</h2><button className="settings-row" onClick={() => navigate('backup-recovery')}><span className="settings-row-icon"><Icon name="backup" size={30}/></span><span className="settings-row-copy"><strong>Backup & recovery</strong><small>Backups and private keys</small></span><Icon name="chevron" size={24}/></button>{biometricStatus.available && <div className="settings-row"><span className="settings-row-icon"><img src="/brand/fingerprint-clean.svg" alt=""/></span><span className="settings-row-copy"><strong>Fingerprint unlock</strong><small>{biometricStatus.enabled ? 'Enabled on this device' : 'Available on this device'}</small></span><button className={`switch ${biometricStatus.enabled ? 'on' : ''}`} onClick={async () => { if (biometricStatus.enabled) { await BleeBiometric.disable(); await refreshBiometricStatus(); } else { window.localStorage.setItem('blee.biometric.setup', '1'); setUseBiometricNext(true); await app.lock(); } }} aria-label="Fingerprint unlock"><span/></button></div>}<button className="settings-row" onClick={() => navigate('network-security')}><span className="settings-row-icon"><Icon name="shield" size={31}/></span><span className="settings-row-copy"><strong>Network & security</strong><small>Networks and nearby payments</small></span><Icon name="chevron" size={24}/></button></section><section className="settings-section"><h2 className="settings-section-title">ACTIVE NETWORKS</h2><button className="settings-row" onClick={() => navigate('network-security')}><span className="settings-row-icon"><Icon name="network" size={31}/></span><span className="settings-row-copy"><span className="settings-network-title"><strong>Arc Testnet</strong><span className="profile-testnet-pill">Testnet</span></span><small>Use a test network</small></span><Icon name="chevron" size={24}/></button><button className="settings-row" onClick={() => navigate('network-security')}><span className="settings-row-icon"><TokenLogo asset="sol"/></span><span className="settings-row-copy"><strong>Solana Mainnet</strong><small>Use the Solana network</small></span><Icon name="chevron" size={24}/></button></section><button className="logout-button" onClick={() => void app.lock()}><Icon name="logout" size={25}/>Log out</button><p className="build-note">Blee 2.7</p></div>;
 
-  const renderBackupRecovery = () => (
-    <div className="screen-content"><ScreenHeader title="Backup & recovery" onBack={() => { setBackupMode('overview'); setWalletMessage(''); goBack('settings'); }}/>
-      {backupMode === 'overview' && <><section className="security-hero"><Icon name="shield" size={28}/><h2>Keep control of your wallet</h2><p>Your encrypted wallet stays on this device. Keep a backup somewhere you control.</p></section><div className="menu-list"><button onClick={() => void handleBackup()}><span className="menu-icon"><Icon name="backup"/></span><span><strong>Download encrypted backup</strong><small>Requires your passphrase to restore</small></span><Icon name="chevron"/></button><button onClick={() => setBackupMode('reveal')}><span className="menu-icon"><Icon name="key"/></span><span><strong>Reveal private key</strong><small>Passphrase required</small></span><Icon name="chevron"/></button><button onClick={() => setBackupMode('import-key')}><span className="menu-icon"><Icon name="wallet"/></span><span><strong>Import private key</strong><small>Replace this device wallet</small></span><Icon name="chevron"/></button><button onClick={() => setBackupMode('restore')}><span className="menu-icon"><Icon name="backup"/></span><span><strong>Restore encrypted backup</strong><small>Replace this device wallet</small></span><Icon name="chevron"/></button></div></>}
-      {backupMode === 'reveal' && <div className="subflow"><button className="subflow-back" onClick={() => { setBackupMode('overview'); setWalletMessage(''); setRevealedKey(''); }}><Icon name="back"/>Back</button><h2>Reveal private key</h2><p>Only do this somewhere private. Blee hides the key again after 30 seconds.</p><PasswordField label="Wallet passphrase" value={walletPassphrase} onChange={setWalletPassphrase} placeholder="Enter passphrase" autoComplete="current-password"/><button className="primary-button" disabled={!walletPassphrase} onClick={() => void handleReveal()}>Reveal key</button>{revealedKey && <div className="secret-card"><code>{revealedKey}</code><button onClick={() => void copyText(revealedKey)}><Icon name="copy"/>Copy</button></div>}</div>}
-      {backupMode === 'import-key' && <div className="subflow"><button className="subflow-back" onClick={() => { setBackupMode('overview'); setWalletMessage(''); }}><Icon name="back"/>Back</button><h2>Import private key</h2><p>This replaces the wallet on this device.</p><label className="field-block"><span>Private key</span><input type="password" value={importKey} onChange={(e) => setImportKey(e.target.value)} placeholder="0x…" autoCapitalize="none"/></label><PasswordField label="New Blee passphrase" value={importPassphrase} onChange={setImportPassphrase} placeholder="Minimum 8 characters" autoComplete="new-password"/><label className="field-block"><span>Type IMPORT to confirm</span><input value={confirmImport} onChange={(e) => setConfirmImport(e.target.value)} placeholder="IMPORT"/></label><button className="primary-button" disabled={!importKey || importPassphrase.length < 8 || confirmImport !== 'IMPORT'} onClick={() => void handleImportPrivateKey()}>Import wallet</button></div>}
-      {backupMode === 'restore' && <div className="subflow"><button className="subflow-back" onClick={() => { setBackupMode('overview'); setWalletMessage(''); }}><Icon name="back"/>Back</button><h2>Restore encrypted backup</h2><p>Paste a Blee encrypted backup JSON file. Its existing passphrase remains required when you unlock it.</p><label className="field-block"><span>Backup JSON</span><textarea value={backupJson} onChange={(e) => setBackupJson(e.target.value)} rows={7} placeholder='{"format":"blee-wallet-backup",…}'/></label><label className="field-block"><span>Type IMPORT to confirm</span><input value={confirmImport} onChange={(e) => setConfirmImport(e.target.value)} placeholder="IMPORT"/></label><button className="primary-button" disabled={!backupJson || confirmImport !== 'IMPORT'} onClick={() => void handleRestoreBackup()}>Restore wallet</button></div>}
-      {walletMessage && <div className="inline-alert"><Icon name="info"/><span>{walletMessage}</span></div>}
-    </div>
-  );
+  const renderBackupRecovery = () => <div className="screen-content"><ScreenHeader title="Backup & recovery" onBack={() => { setBackupMode('overview'); setWalletMessage(''); goBack('settings'); }}/>{backupMode === 'overview' && <><section className="security-hero"><Icon name="shield" size={28}/><h2>Keep control of your wallet</h2><p>Your encrypted wallet stays on this device. Keep a backup somewhere you control.</p></section><div className="menu-list"><button onClick={() => void handleBackup()}><span className="menu-icon"><Icon name="backup"/></span><span><strong>Download encrypted backup</strong><small>Requires your passphrase to restore</small></span><Icon name="chevron"/></button><button onClick={() => setBackupMode('reveal')}><span className="menu-icon"><Icon name="key"/></span><span><strong>Reveal private key</strong><small>Passphrase required</small></span><Icon name="chevron"/></button><button onClick={() => setBackupMode('import-key')}><span className="menu-icon"><Icon name="wallet"/></span><span><strong>Import private key</strong><small>Replace this device wallet</small></span><Icon name="chevron"/></button><button onClick={() => setBackupMode('restore')}><span className="menu-icon"><Icon name="backup"/></span><span><strong>Restore encrypted backup</strong><small>Replace this device wallet</small></span><Icon name="chevron"/></button></div></>}{backupMode === 'reveal' && <div className="subflow"><button className="subflow-back" onClick={() => { setBackupMode('overview'); setWalletMessage(''); setRevealedKey(''); }}><Icon name="back"/>Back</button><h2>Reveal private key</h2><p>Only do this somewhere private. Blee hides the key again after 30 seconds.</p><PasswordField label="Wallet passphrase" value={walletPassphrase} onChange={setWalletPassphrase} placeholder="Enter passphrase" autoComplete="current-password"/><button className="primary-button" disabled={!walletPassphrase} onClick={() => void handleReveal()}>Reveal key</button>{revealedKey && <div className="secret-card"><code>{revealedKey}</code><button onClick={() => void copyText(revealedKey)}><Icon name="copy"/>Copy</button></div>}</div>}{backupMode === 'import-key' && <div className="subflow"><button className="subflow-back" onClick={() => { setBackupMode('overview'); setWalletMessage(''); }}><Icon name="back"/>Back</button><h2>Import private key</h2><p>This replaces the wallet on this device.</p><label className="field-block"><span>Private key</span><input type="password" value={importKey} onChange={(e) => setImportKey(e.target.value)} placeholder="0x…" autoCapitalize="none"/></label><PasswordField label="New Blee passphrase" value={importPassphrase} onChange={setImportPassphrase} placeholder="Minimum 8 characters" autoComplete="new-password"/><label className="field-block"><span>Type IMPORT to confirm</span><input value={confirmImport} onChange={(e) => setConfirmImport(e.target.value)} placeholder="IMPORT"/></label><button className="primary-button" disabled={!importKey || importPassphrase.length < 8 || confirmImport !== 'IMPORT'} onClick={() => void handleImportPrivateKey()}>Import wallet</button></div>}{backupMode === 'restore' && <div className="subflow"><button className="subflow-back" onClick={() => { setBackupMode('overview'); setWalletMessage(''); }}><Icon name="back"/>Back</button><h2>Restore encrypted backup</h2><p>Paste a Blee encrypted backup JSON file. Its existing passphrase remains required when you unlock it.</p><label className="field-block"><span>Backup JSON</span><textarea value={backupJson} onChange={(e) => setBackupJson(e.target.value)} rows={7} placeholder='{"format":"blee-wallet-backup",…}'/></label><label className="field-block"><span>Type IMPORT to confirm</span><input value={confirmImport} onChange={(e) => setConfirmImport(e.target.value)} placeholder="IMPORT"/></label><button className="primary-button" disabled={!backupJson || confirmImport !== 'IMPORT'} onClick={() => void handleRestoreBackup()}>Restore wallet</button></div>}{walletMessage && <div className="inline-alert"><Icon name="info"/><span>{walletMessage}</span></div>}</div>;
 
-  const renderNetworkSecurity = () => (
-    <div className="screen-content"><ScreenHeader title="Network & security" onBack={() => goBack('settings')}/><section className="network-card"><div className="network-title"><span className="menu-icon"><Icon name="network"/></span><div><span className="kicker">SETTLEMENT NETWORK</span><strong>Arc Testnet</strong><small>Chain 5042002</small></div><span className="status-badge">TESTNET</span></div><div className="network-detail"><span>Payment token</span><strong>USDC</strong></div><div className="network-detail"><span>Settlement model</span><strong>Sender-funded</strong></div></section><div className="settings-toggle-list"><div><span className="menu-icon"><Icon name="nearby"/></span><span><strong>Nearby payments</strong><small>Discover and pay Blee users nearby</small></span><button className={`switch ${app.meshStarted ? 'on' : ''}`} onClick={() => void toggleNearby()}><span/></button></div><div><span className="menu-icon"><Icon name="shield"/></span><span><strong>Automatic mesh relay</strong><small>Carry signed packets; relay phones never pay another user’s gas</small></span><span className="status-badge">ON</span></div><div><span className="menu-icon"><Icon name="activity"/></span><span><strong>Payment journal</strong><small>SQLite + WAL · durable local history</small></span><span className="status-badge">ACTIVE</span></div></div><div className="quiet-note"><Icon name="info"/><span>Blee supports USDC on Arc Testnet only in this build. There is no custom-network or multi-asset mode.</span></div></div>
-  );
+  const renderNetworkSecurity = () => <div className="screen-content"><ScreenHeader title="Network & security" onBack={() => goBack('settings')}/><section className="network-card"><div className="network-title"><span className="menu-icon"><Icon name="network"/></span><div><span className="kicker">USDC SETTLEMENT</span><strong>Arc Testnet</strong><small>Chain 5042002</small></div><span className="status-badge">TESTNET</span></div><div className="network-detail"><span>Payment token</span><strong>USDC</strong></div><div className="network-detail"><span>Settlement model</span><strong>Sender-funded</strong></div></section><section className="network-card" data-blee-solana-network="mainnet"><div className="network-title"><span className="menu-icon"><TokenLogo asset="sol"/></span><div><span className="kicker">SOL SETTLEMENT</span><strong>Solana Mainnet</strong><small>{app.solana.address ? short(app.solana.address) : 'Wallet preparing'}</small></div><span className="status-badge">MAINNET</span></div><div className="network-detail"><span>Asset</span><strong>SOL</strong></div><div className="network-detail"><span>Offline readiness</span><strong>{app.solana.offlineReady ? `${app.solana.readyNonceCount} prepared` : 'Not prepared'}</strong></div><div className="network-detail"><span>RPC boundary</span><strong>Blee Gateway</strong></div></section><div className="settings-toggle-list"><div><span className="menu-icon"><Icon name="nearby"/></span><span><strong>Nearby payments</strong><small>Discover and pay Blee users nearby</small></span><button className={`switch ${app.meshStarted ? 'on' : ''}`} onClick={() => void toggleNearby()}><span/></button></div><div><span className="menu-icon"><Icon name="shield"/></span><span><strong>Automatic mesh relay</strong><small>Carry signed packets; relay phones never pay another user’s gas</small></span><span className="status-badge">ON</span></div><div><span className="menu-icon"><Icon name="activity"/></span><span><strong>Payment journal</strong><small>SQLite + WAL · durable local history</small></span><span className="status-badge">ACTIVE</span></div></div><div className="quiet-note"><Icon name="info"/><span>USDC and SOL remain independent spendable balances. Home converts SOL to its USD value and shows a combined USDC-equivalent portfolio total for presentation only; spend checks, signing and settlement remain asset-specific.</span></div></div>;
 
   const renderCurrent = () => {
     switch (screen) {
-      case 'home': return renderHome();
-      case 'nearby': return renderNearby();
-      case 'activity': return renderActivity();
-      case 'profile': return renderProfile();
-      case 'send': return renderSend();
-      case 'confirm-send': return renderConfirmSend();
-      case 'send-success': return renderSendSuccess();
-      case 'receive': return renderReceive();
-      case 'activity-detail': return renderActivityDetail();
-      case 'edit-profile': return renderEditProfile();
-      case 'settings': return renderSettings();
-      case 'backup-recovery': return renderBackupRecovery();
-      case 'network-security': return renderNetworkSecurity();
+      case 'home': return renderHome(); case 'nearby': return renderNearby(); case 'activity': return renderActivity(); case 'profile': return renderProfile(); case 'send': return renderSend(); case 'confirm-send': return renderConfirmSend(); case 'send-success': return renderSendSuccess(); case 'receive': return renderReceive(); case 'activity-detail': return renderActivityDetail(); case 'edit-profile': return renderEditProfile(); case 'settings': return renderSettings(); case 'backup-recovery': return renderBackupRecovery(); case 'network-security': return renderNetworkSecurity();
     }
   };
 
   const primary = ['home', 'nearby', 'activity', 'profile'].includes(screen);
-  return (
-    <main className="blee-app">
-      <section className={`blee-phone ${primary ? 'with-nav' : ''}`}>
-        <div className="screen-transition" key={screen}>{renderCurrent()}</div>
-      </section>
-      {primary && <BottomNav active={activeTab} onChange={selectTab}/>} 
-    </main>
-  );
+  return <main className="blee-app"><section className={`blee-phone ${primary ? 'with-nav' : ''}`}><div className="screen-transition" key={screen}>{renderCurrent()}</div></section>{primary && <BottomNav active={activeTab} onChange={selectTab}/>}</main>;
 }

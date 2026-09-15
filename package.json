@@ -6,20 +6,22 @@
     "dev": "next dev",
     "build": "next build",
     "check": "tsc --noEmit",
-    "verify": "bash scripts/verify-source.sh",
+    "verify": "bash scripts/verify-source.sh && bash scripts/verify-network-boundaries.sh && bash scripts/verify-mesh-capabilities.sh && bash scripts/verify-solana-wallet-view.sh && bash scripts/verify-multi-asset-ui.sh && bash scripts/verify-solana-send-ui.sh && bash scripts/verify-wallet-home-ui.sh && bash scripts/verify-nearby-ui.sh && bash scripts/verify-nearby-profile-identity.sh && bash scripts/verify-biometric-hardware-gate.sh && bash scripts/verify-approved-wallet-screens.sh && bash scripts/verify-solana-activity-view.sh && bash scripts/verify-solana-activity-ui.sh && bash scripts/verify-solana-settlement.sh",
     "android:sync": "npm run build && npx cap sync android",
     "android:build": "bash scripts/build-android.sh"
   },
   "dependencies": {
+    "@blee/nearby": "file:plugins/blee-nearby",
+    "@blee/store": "file:plugins/blee-store",
     "@capacitor/core": "8.5.1",
+    "@fontsource-variable/plus-jakarta-sans": "latest",
+    "@solana-program/system": "0.14.1",
+    "@solana/kit": "8.3.0",
     "next": "16.3.4",
+    "qrcode.react": "^4.2.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "viem": "2.56.3",
-    "@blee/store": "file:plugins/blee-store",
-    "@fontsource-variable/plus-jakarta-sans": "latest",
-    "@blee/nearby": "file:plugins/blee-nearby",
-    "qrcode.react": "^4.2.0"
+    "viem": "2.56.3"
   },
   "devDependencies": {
     "@capacitor/android": "8.5.1",

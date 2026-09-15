@@ -1,6 +1,8 @@
 import { type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import { getPersistentValue, setPersistentValue } from './persistence';
+import { beginSolanaSessionAfterPrimaryUnlock } from './solanaSession';
+import { recoverPendingWalletRestore } from './walletRestore';
 
 const VAULT_KEY = 'wallet.vault.v2';
 const ITERATIONS_V1 = 210_000;
@@ -46,6 +48,10 @@ async function derive(passphrase: string, salt: Uint8Array, iterations: number):
 }
 
 async function readVault(): Promise<StoredVault | null> {
+  // A dual-wallet backup restore is journaled before either encrypted vault is
+  // replaced. Always finish an interrupted restore before exposing the primary
+  // Arc identity to the application.
+  await recoverPendingWalletRestore();
   const raw = await getPersistentValue(VAULT_KEY);
   if (raw) {
     try { return JSON.parse(raw) as StoredVault; } catch {}
@@ -79,12 +85,17 @@ export async function getVaultAddress(): Promise<string | null> {
 }
 
 export async function createVault(passphrase: string): Promise<PrivateKeyAccount> {
-  if (passphrase.length < 8) throw new Error("Use a passphrase of at least 8 characters");
+  if (passphrase.length < 8) throw new Error('Use a passphrase of at least 8 characters');
   if (await hasVault()) throw new Error('A wallet already exists on this device');
   if (passphrase.length < MIN_PASSPHRASE_LENGTH) throw new Error(`Use at least ${MIN_PASSPHRASE_LENGTH} characters`);
   const privateKey = generatePrivateKey();
   const account = privateKeyToAccount(privateKey);
   await persistPrivateKey(privateKey, passphrase, account.address);
+
+  // Solana provisioning is deliberately non-blocking. A device that cannot
+  // initialize the new rail must never prevent an otherwise-valid Arc wallet
+  // from being created or used.
+  beginSolanaSessionAfterPrimaryUnlock(account, passphrase);
   return account;
 }
 
@@ -99,6 +110,11 @@ export async function unlockVault(passphrase: string): Promise<PrivateKeyAccount
     const account = privateKeyToAccount(privateKey);
     if (account.address.toLowerCase() !== vault.address.toLowerCase()) throw new Error('Wallet integrity check failed');
     if (vault.version === 1 || iterations < ITERATIONS_V2) await persistPrivateKey(privateKey, passphrase, account.address);
+
+    // The primary Arc authentication has already succeeded at this point.
+    // Start Solana session preparation in the background so Arc unlock latency
+    // and availability remain unchanged.
+    beginSolanaSessionAfterPrimaryUnlock(account, passphrase);
     return account;
   } catch (error) {
     if (error instanceof Error && error.message === 'Wallet integrity check failed') throw error;

@@ -1,23 +1,24 @@
 import { defineChain } from 'viem';
 
-import { getActiveNetwork, type BleeNetwork } from "./networkConfig";
+import { getActiveNetwork, type OperationalBleeNetwork } from './networkConfig';
 
-const BLEE_ACTIVE_NETWORK: BleeNetwork = getActiveNetwork();
-export const ARC_CHAIN_ID = 5_042_002;
+const BLEE_ACTIVE_NETWORK: OperationalBleeNetwork = getActiveNetwork();
+
+export const ARC_CHAIN_ID = BLEE_ACTIVE_NETWORK.chainId;
 export const ARC_RPC = BLEE_ACTIVE_NETWORK.rpcUrl;
 export const ARC_EXPLORER = BLEE_ACTIVE_NETWORK.explorerUrl;
 export const ARC_USDC = BLEE_ACTIVE_NETWORK.tokenAddress;
-export const ARC_USDC_DECIMALS = 6;
+export const ARC_USDC_DECIMALS = BLEE_ACTIVE_NETWORK.tokenDecimals;
 export const USDC_EIP712_NAME = BLEE_ACTIVE_NETWORK.eip712Name;
 export const USDC_EIP712_VERSION = BLEE_ACTIVE_NETWORK.eip712Version;
 
-export const arcTestnet = defineChain({
+export const activeArcChain = defineChain({
   id: BLEE_ACTIVE_NETWORK.chainId,
   name: BLEE_ACTIVE_NETWORK.name,
   nativeCurrency: {
     name: BLEE_ACTIVE_NETWORK.nativeSymbol,
     symbol: BLEE_ACTIVE_NETWORK.nativeSymbol,
-    decimals: 18,
+    decimals: BLEE_ACTIVE_NETWORK.nativeDecimals,
   },
   rpcUrls: {
     default: { http: [BLEE_ACTIVE_NETWORK.rpcUrl] },
@@ -27,6 +28,13 @@ export const arcTestnet = defineChain({
     : undefined,
   testnet: BLEE_ACTIVE_NETWORK.testnet,
 });
+
+/**
+ * Backwards-compatible export for the existing Arc payment engine. The value is
+ * now the release-selected Arc chain rather than a permanently hardcoded
+ * Testnet definition. Existing imports therefore keep working during cutover.
+ */
+export const arcTestnet = activeArcChain;
 
 export const usdcAbi = [
   {
@@ -72,10 +80,9 @@ export const transferAuthorizationTypes = {
   ],
 } as const;
 
-
-// BLEE_NETWORK_STARTUP_PROFILE
-// Network changes in Settings reload Blee. Existing viem clients are created
-// from the selected profile on each fresh app load.
+// Network selection is resolved once at app startup. Historical payment rows
+// persist their own networkId and are never reinterpreted when this release
+// selector changes.
 export function getBleeActiveNetwork() {
   return BLEE_ACTIVE_NETWORK;
 }
