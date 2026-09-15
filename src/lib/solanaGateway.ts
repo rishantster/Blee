@@ -236,10 +236,14 @@ export async function sendSignedSolanaTransaction(input: {
   if (!signedTransactionBase64 || signedTransactionBase64.length > MAX_SIGNED_TRANSACTION_B64_CHARS) {
     throw new SolanaGatewayError('SOL_TRANSACTION_TOO_LARGE', 'Signed Solana transaction is too large');
   }
-  return gatewayFetch<{ signature: string; duplicate?: boolean }>('/v1/solana/send', {
+  const result = await gatewayFetch<{ signature: string; duplicate?: boolean }>('/v1/solana/send', {
     method: 'POST',
     body: JSON.stringify({ rail: 'solana-sol', paymentId, signedTransactionBase64 }),
   }, 15_000);
+  if (!looksLikeSolanaSignature(String(result.signature || ''))) {
+    throw new SolanaGatewayError('SOL_INTERNAL_ERROR', 'Gateway returned an invalid SOL payment signature');
+  }
+  return { ...result, signature: result.signature.trim() };
 }
 
 /**
