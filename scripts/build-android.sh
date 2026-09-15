@@ -127,6 +127,11 @@ if [ "$NODE_MAJOR" -lt 22 ]; then
   exit 1
 fi
 
+# Option A production gate: Next will bake the masked Helius Secure RPC URL into
+# the static WebView bundle. Reject missing, API-key, devnet and Sender endpoints
+# before producing an APK.
+node "$ROOT/scripts/validate-helius-secure-rpc.mjs"
+
 export GRADLE_USER_HOME="$ROOT/.blee-tools/gradle-home-v27"
 mkdir -p "$GRADLE_USER_HOME"
 

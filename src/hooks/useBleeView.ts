@@ -5,6 +5,7 @@ import { formatUnits } from 'viem';
 import { useBlee } from './useBlee';
 import { useSolanaWalletView } from './useSolanaWalletView';
 import { useSolanaActivityView } from './useSolanaActivityView';
+import { useSolanaSettlementView } from './useSolanaSettlementView';
 import { loadPayments, setPersistentValue } from '../lib/persistence';
 import { getSolUsdPrice } from '../lib/marketData';
 import type { PaymentRecord } from '../types/domain';
@@ -61,12 +62,16 @@ function verifyingIncomingCount(payments: PaymentRecord[]): number {
  * read-only portfolio projection may value SOL in USD and add that valuation to
  * USDC for Home display only. That valuation is never used for spend checks,
  * signing, settlement, nonce ownership or payment routing. SOL Activity is also
- * a separate read-only durable projection and is merged only at presentation.
+ * a separate durable projection and is merged only at presentation.
  */
 export function useBleeView() {
   const core = useBlee();
   const solana = useSolanaWalletView(core.account);
   const solanaActivity = useSolanaActivityView(core.account?.address ?? null);
+  const solanaSettlement = useSolanaSettlementView({
+    localEvmAddress: core.account?.address ?? null,
+    localSolanaAddress: solana.address,
+  });
   const [durablePayments, setDurablePayments] = useState<PaymentRecord[]>([]);
   const [solUsdPrice, setSolUsdPrice] = useState<number | null>(null);
   const [solUsdPriceAt, setSolUsdPriceAt] = useState<number | null>(null);
@@ -225,6 +230,7 @@ export function useBleeView() {
     identityFor,
     solana,
     solanaActivity,
+    solanaSettlement,
     portfolio: {
       usdcQuantity,
       solQuantity,

@@ -14,6 +14,8 @@ export type PaymentNetworkPresentation = {
   activeSettlementNetwork: boolean;
 };
 
+const SOLANA_MAINNET_EXPLORER = 'https://explorer.solana.com';
+
 /**
  * Persisted Blee <=2.7.1 rows had no network metadata and could only have been
  * created on Arc Testnet. Never reinterpret a missing historical network as the
@@ -42,23 +44,22 @@ export function paymentEnvironment(row: PaymentRecord): BleeEnvironment {
   return paymentNetworkId(row) === 'arc-testnet' ? 'testnet' : 'mainnet';
 }
 
-/**
- * Explorer lookup is based on the payment's own immutable network identity,
- * never on whichever Arc network a later Blee release happens to activate.
- * Solana explorer routing is intentionally deferred until the SOL transaction
- * record/signature model lands in the dedicated Solana settlement sprint.
- */
+/** Explorer lookup always follows the immutable network identity of the row. */
 export function paymentExplorerUrl(row: PaymentRecord): string | null {
   switch (paymentNetworkId(row)) {
     case 'arc-testnet': return getNetwork('arc-testnet').explorerUrl;
     case 'arc-mainnet': return getNetwork('arc-mainnet').explorerUrl;
-    case 'solana-mainnet': return null;
+    case 'solana-mainnet': return SOLANA_MAINNET_EXPLORER;
   }
 }
 
 export function paymentTransactionUrl(row: PaymentRecord): string | null {
   const explorer = paymentExplorerUrl(row);
-  return row.txHash && explorer ? `${explorer}/tx/${row.txHash}` : null;
+  if (!explorer) return null;
+  if (paymentNetworkId(row) === 'solana-mainnet') {
+    return row.solanaSignature ? `${explorer}/tx/${encodeURIComponent(row.solanaSignature)}` : null;
+  }
+  return row.txHash ? `${explorer}/tx/${row.txHash}` : null;
 }
 
 /** Active Arc balances/projections may include only the release-selected rail. */

@@ -7,6 +7,11 @@ out/
 next-env.d.ts
 *.tsbuildinfo
 
+# Local environment / public build configuration
+.env
+.env.local
+.env.*.local
+
 # Android / Gradle generated output
 android/.gradle/
 android/**/build/

@@ -51,12 +51,16 @@ export type PaymentRecord = {
    */
   archivedAuthorization?: TransferAuthorization;
   txHash?: Hex;
+  /** Solana settlement metadata is populated only from the durable gateway journal. */
+  solanaSignature?: string;
+  solanaConfirmationStatus?: 'processed' | 'confirmed' | 'finalized';
   error?: string;
   attempts?: number;
   lastAttemptAt?: number;
   nextRetryAt?: number;
   durablyReceivedAt?: number;
   submittedAt?: number;
+  confirmedAt?: number;
   settledAt?: number;
 };
 
