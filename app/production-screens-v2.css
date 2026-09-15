@@ -1,0 +1,276 @@
+/* BLEE_PRODUCTION_SCREENS_V2
+ * Structural production pass for Send/Receive and Settings subflows.
+ * Loaded after every older stylesheet so these screens share one compact mobile grammar.
+ */
+
+:root {
+  --blee-v2-x: clamp(16px, 4.2vw, 20px);
+  --blee-v2-header: 44px;
+  --blee-v2-control: clamp(48px, 6dvh, 52px);
+  --blee-v2-card: 16px;
+  --blee-v2-muted: #6f6f6a;
+}
+
+/* ----- Send ----- */
+.send-screen {
+  display: flex;
+  min-height: 100dvh;
+  flex-direction: column;
+  padding-left: var(--blee-v2-x) !important;
+  padding-right: var(--blee-v2-x) !important;
+  padding-bottom: calc(14px + max(env(safe-area-inset-bottom), 8px)) !important;
+}
+.send-screen .screen-header { margin-bottom: 8px !important; }
+.send-screen .approved-segmented {
+  width: 100% !important;
+  min-height: 46px !important;
+  margin: 0 0 10px !important;
+  border-radius: 14px !important;
+}
+.send-screen .approved-segmented button { font-size: 14px !important; border-radius: 11px !important; }
+.send-screen .send-network-row {
+  justify-content: center !important;
+  min-height: 28px !important;
+  margin: 0 0 10px !important;
+  gap: 6px !important;
+  font-size: 13px !important;
+}
+.send-screen .send-network-row img { width: 19px !important; height: 19px !important; }
+.send-screen .send-network-pill { padding: 4px 7px !important; font-size: 9px !important; }
+.send-screen .send-recipient-label { margin: 0 0 5px !important; font-size: 11px !important; color: var(--blee-v2-muted) !important; }
+.send-screen .send-recipient-wrap { margin-bottom: 4px !important; }
+.send-screen .recipient-summary {
+  min-height: 58px !important;
+  padding: 8px 10px !important;
+  border-radius: 15px !important;
+}
+.send-screen .recipient-summary .person-avatar { width: 40px !important; height: 40px !important; }
+.send-screen .recipient-summary strong { font-size: 14px !important; }
+.send-screen .recipient-summary code { font-size: 10px !important; }
+.send-screen .recipient-summary .text-action { font-size: 12px !important; padding: 8px !important; }
+.send-screen .send-amount-area {
+  margin: 8px 0 8px !important;
+  padding: 6px 0 0 !important;
+}
+.send-screen .send-amount-input {
+  min-height: 54px !important;
+  font-size: clamp(42px, 12vw, 56px) !important;
+  line-height: .95 !important;
+}
+.send-screen .send-token-chip {
+  min-height: 36px !important;
+  margin: 7px auto 4px !important;
+  padding: 4px 9px !important;
+  border-radius: 999px !important;
+  font-size: 13px !important;
+}
+.send-screen .send-token-chip img { width: 21px !important; height: 21px !important; }
+.send-screen .send-balance-copy { min-height: 18px; font-size: 11px !important; line-height: 1.3; }
+.send-screen .send-balance-copy button { font-size: 11px !important; }
+.send-screen .send-status-area {
+  margin-top: 8px !important;
+  padding-top: 8px !important;
+}
+.send-screen .send-status-card {
+  min-height: 62px !important;
+  grid-template-columns: 34px minmax(0,1fr) auto !important;
+  gap: 8px !important;
+  padding: 9px 11px !important;
+  border-radius: var(--blee-v2-card) !important;
+}
+.send-screen .send-status-card > span:first-child svg { width: 23px !important; height: 23px !important; }
+.send-screen .send-status-card strong { font-size: 13px !important; line-height: 1.2 !important; }
+.send-screen .send-status-card small { margin-top: 2px !important; font-size: 10px !important; line-height: 1.3 !important; }
+.send-screen .send-fee-note { margin-top: 8px !important; font-size: 10px !important; }
+.send-screen .inline-alert { margin-top: 8px !important; }
+.send-screen .sticky-action {
+  position: sticky !important;
+  bottom: 0 !important;
+  z-index: 8;
+  margin-top: auto !important;
+  padding-top: 10px !important;
+  padding-bottom: max(env(safe-area-inset-bottom), 8px) !important;
+  background: linear-gradient(to bottom, rgba(250,250,247,0), var(--bg) 20px) !important;
+}
+.send-screen .sticky-action .primary-button { min-height: 50px !important; }
+.send-screen .send-action-helper { margin-top: 4px !important; font-size: 10px !important; }
+
+/* ----- Receive ----- */
+.receive-screen {
+  display: flex;
+  min-height: 100dvh;
+  flex-direction: column;
+  padding-left: var(--blee-v2-x) !important;
+  padding-right: var(--blee-v2-x) !important;
+  padding-bottom: calc(14px + max(env(safe-area-inset-bottom), 8px)) !important;
+}
+.receive-screen .screen-header { margin-bottom: 8px !important; }
+.receive-screen .approved-segmented { min-height: 46px !important; margin: 0 0 8px !important; border-radius: 14px !important; }
+.receive-screen .approved-segmented button { font-size: 14px !important; border-radius: 11px !important; }
+.receive-screen .receive-asset-hero { margin: 6px 0 8px !important; }
+.receive-screen .receive-asset-logo { width: 44px !important; height: 44px !important; margin-bottom: 5px !important; }
+.receive-screen .receive-asset-hero h2 { margin: 0 !important; font-size: clamp(22px, 6.2vw, 26px) !important; }
+.receive-screen .receive-asset-hero p { margin: 3px 0 0 !important; font-size: 11px !important; }
+.receive-screen .receive-network-pill { margin-top: 5px !important; padding: 4px 7px !important; font-size: 9px !important; }
+.receive-screen .receive-qr-card {
+  width: min(58vw, 236px, 30dvh) !important;
+  margin: 8px auto 0 !important;
+  padding: 10px !important;
+  border-radius: 15px !important;
+}
+.receive-screen .receive-qr-card svg { width: 100% !important; height: 100% !important; }
+.receive-screen .receive-qr-caption { margin: 4px 0 7px !important; font-size: 9px !important; }
+.receive-screen .receive-profile { margin: 0 0 7px !important; gap: 8px !important; }
+.receive-screen .receive-profile .person-avatar { width: 34px !important; height: 34px !important; }
+.receive-screen .receive-profile strong { font-size: 14px !important; }
+.receive-screen .receive-address-button {
+  min-height: 42px !important;
+  width: min(100%, 300px) !important;
+  margin: 0 auto !important;
+  border-radius: 12px !important;
+  font-size: 12px !important;
+}
+.receive-screen .receive-warning { margin: 8px 0 10px !important; font-size: 9.5px !important; line-height: 1.3 !important; }
+.receive-screen .receive-actions {
+  margin-top: auto !important;
+  gap: 8px !important;
+  padding-top: 8px !important;
+}
+.receive-screen .receive-actions button { min-height: 48px !important; border-radius: 13px !important; font-size: 13px !important; }
+.receive-screen .receive-nearby-row {
+  margin-top: 10px !important;
+  padding: 10px 0 0 !important;
+  grid-template-columns: 38px minmax(0,1fr) auto !important;
+  gap: 8px !important;
+}
+.receive-screen .receive-nearby-icon { width: 36px !important; height: 36px !important; }
+.receive-screen .receive-nearby-row strong { font-size: 13px !important; }
+.receive-screen .receive-nearby-row small { font-size: 9.5px !important; }
+.receive-screen .receive-nearby-row button { font-size: 10px !important; white-space: nowrap; }
+
+/* ----- Backup & recovery and Network & security: real sub-screen treatment ----- */
+.screen-content:has(> .security-hero),
+.screen-content:has(> .network-card),
+.screen-content:has(> .subflow) {
+  min-height: 100dvh;
+  padding-left: var(--blee-v2-x) !important;
+  padding-right: var(--blee-v2-x) !important;
+  padding-top: max(12px, env(safe-area-inset-top)) !important;
+  padding-bottom: calc(16px + max(env(safe-area-inset-bottom), 8px)) !important;
+}
+.screen-content:has(> .security-hero) .screen-header,
+.screen-content:has(> .network-card) .screen-header,
+.screen-content:has(> .subflow) .screen-header { margin-bottom: 10px !important; }
+
+.screen-content:has(> .security-hero) .security-hero {
+  padding: 8px 4px 14px !important;
+  text-align: left !important;
+}
+.screen-content:has(> .security-hero) .security-hero > svg {
+  width: 30px !important;
+  height: 30px !important;
+  margin: 0 0 8px !important;
+}
+.screen-content:has(> .security-hero) .security-hero h2 {
+  margin: 0 0 4px !important;
+  font-size: 22px !important;
+  text-align: left !important;
+}
+.screen-content:has(> .security-hero) .security-hero p {
+  max-width: none !important;
+  margin: 0 !important;
+  font-size: 11px !important;
+  text-align: left !important;
+}
+.screen-content:has(> .security-hero) .menu-list {
+  margin-top: 6px !important;
+  border-radius: 15px !important;
+}
+.screen-content:has(> .security-hero) .menu-list > button {
+  min-height: 60px !important;
+  grid-template-columns: 38px minmax(0,1fr) 20px !important;
+  gap: 10px !important;
+  padding: 8px 10px !important;
+}
+.screen-content:has(> .security-hero) .menu-icon { width: 34px !important; height: 34px !important; border-radius: 10px !important; }
+.screen-content:has(> .security-hero) .menu-list strong { font-size: 13px !important; }
+.screen-content:has(> .security-hero) .menu-list small { margin-top: 2px !important; font-size: 9.5px !important; }
+
+.screen-content:has(> .subflow) .subflow {
+  padding-top: 2px !important;
+}
+.screen-content:has(> .subflow) .subflow-back {
+  min-height: 34px !important;
+  margin: 0 0 8px !important;
+  gap: 4px !important;
+  padding: 0 !important;
+  font-size: 11px !important;
+}
+.screen-content:has(> .subflow) .subflow h2 {
+  margin: 4px 0 4px !important;
+  font-size: 24px !important;
+  line-height: 1.05 !important;
+}
+.screen-content:has(> .subflow) .subflow > p {
+  margin: 0 0 14px !important;
+  font-size: 10.5px !important;
+  line-height: 1.4 !important;
+}
+.screen-content:has(> .subflow) .password-field-label,
+.screen-content:has(> .subflow) .field-block {
+  margin-top: 10px !important;
+  gap: 6px !important;
+}
+.screen-content:has(> .subflow) input,
+.screen-content:has(> .subflow) textarea {
+  border-radius: 13px !important;
+  font-size: 14px !important;
+}
+.screen-content:has(> .subflow) input { min-height: 48px !important; }
+.screen-content:has(> .subflow) textarea { min-height: min(190px, 24dvh) !important; padding: 12px !important; }
+.screen-content:has(> .subflow) .primary-button {
+  width: 100% !important;
+  min-height: 50px !important;
+  margin-top: 10px !important;
+  border-radius: 14px !important;
+}
+.screen-content:has(> .subflow) .secret-card { margin-top: 10px !important; padding: 10px !important; border-radius: 13px !important; }
+
+.screen-content:has(> .network-card) .network-card {
+  margin: 0 0 10px !important;
+  padding: 11px !important;
+  border-radius: 15px !important;
+}
+.screen-content:has(> .network-card) .network-title {
+  min-height: 52px !important;
+  padding-bottom: 9px !important;
+  gap: 9px !important;
+}
+.screen-content:has(> .network-card) .network-title .menu-icon { width: 34px !important; height: 34px !important; }
+.screen-content:has(> .network-card) .network-title strong { font-size: 13px !important; }
+.screen-content:has(> .network-card) .network-title small { font-size: 9.5px !important; }
+.screen-content:has(> .network-card) .network-title .kicker { font-size: 8.5px !important; }
+.screen-content:has(> .network-card) .status-badge { min-height: 23px !important; padding: 0 7px !important; font-size: 8px !important; }
+.screen-content:has(> .network-card) .network-detail { min-height: 36px !important; font-size: 10.5px !important; }
+.screen-content:has(> .network-card) .settings-toggle-list {
+  margin-top: 4px !important;
+  border-radius: 15px !important;
+}
+.screen-content:has(> .network-card) .settings-toggle-list > div {
+  min-height: 58px !important;
+  padding: 8px 10px !important;
+  grid-template-columns: 34px minmax(0,1fr) auto !important;
+  gap: 9px !important;
+}
+.screen-content:has(> .network-card) .settings-toggle-list .menu-icon { width: 34px !important; height: 34px !important; }
+.screen-content:has(> .network-card) .settings-toggle-list strong { font-size: 12.5px !important; }
+.screen-content:has(> .network-card) .settings-toggle-list small { font-size: 9px !important; line-height: 1.3 !important; }
+.screen-content:has(> .network-card) .quiet-note { margin-top: 8px !important; padding: 9px 10px !important; font-size: 9.5px !important; }
+
+/* short phones */
+@media (max-height: 760px) {
+  .send-screen .send-amount-input { font-size: clamp(38px, 11vw, 50px) !important; }
+  .receive-screen .receive-qr-card { width: min(52vw, 210px, 27dvh) !important; }
+  .screen-content:has(> .security-hero) .security-hero { padding-bottom: 10px !important; }
+  .screen-content:has(> .network-card) .network-card { margin-bottom: 7px !important; }
+}

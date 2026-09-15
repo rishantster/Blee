@@ -20,66 +20,60 @@
 }
 
 .walletEntry {
-  position: relative;
-  grid-template-columns: minmax(0, 1fr) 42px;
-  min-height: 58px;
+  grid-template-columns: 40px minmax(0, 1fr);
+  min-height: 56px;
   border: 1px solid var(--line-strong);
   border-radius: 15px;
   background: var(--surface);
-  padding: 0 8px 0 10px;
+  padding: 0 12px 0 8px;
 }
 
 .walletEntry input {
-  min-height: 56px;
+  min-height: 54px;
   border: 0;
   border-radius: 0;
-  padding: 0 8px;
+  padding: 0 6px;
   background: transparent;
-  font-size: 15px;
+  font-size: 14px;
 }
 
-/* Wallet layout keeps one contact affordance only. The old decorative leading
-   contact glyph plus trailing button read as duplicate controls on-device. */
-.walletLeading { display: none; }
-
-.walletEntry .actions {
-  grid-template-columns: 38px;
-  gap: 0;
-}
-
-.walletEntry .actions button {
-  width: 38px;
-  height: 38px;
+.walletLeading {
+  width: 36px;
+  height: 36px;
   border: 0;
   border-radius: 11px;
+  display: grid;
+  place-items: center;
   background: var(--surface-2);
+  color: var(--muted);
 }
+.walletLeading svg { width: 19px; height: 19px; }
+.walletLeading:active { transform: scale(.97); }
 
 .walletQuickActions {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 15px;
-  margin-top: 8px;
+  gap: 14px;
+  margin-top: 6px;
 }
 
 .walletQuickActions button {
-  min-height: 38px;
+  min-height: 36px;
   border: 0;
   background: transparent;
   color: var(--ink);
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 0 4px;
-  font-size: 13px;
+  gap: 6px;
+  padding: 0 3px;
+  font-size: 12px;
   font-weight: 590;
 }
 
-.walletQuickActions button svg { width: 20px; height: 20px; }
+.walletQuickActions button svg { width: 19px; height: 19px; }
 .walletQuickActions button:disabled { opacity: .45; }
-.walletDivider { width: 1px; height: 24px; background: var(--line); }
-.bluetoothGlyph { font-size: 24px; line-height: 1; font-family: sans-serif; transform: rotate(90deg); }
+.walletDivider { width: 1px; height: 22px; background: var(--line); }
 
 .actions {
   display: grid;
@@ -177,13 +171,12 @@
 .status { margin-top: 10px; }
 
 @media (max-width: 360px) {
-  .walletEntry { min-height: 54px; }
-  .walletEntry input { min-height: 52px; font-size: 14px; }
+  .walletEntry { min-height: 52px; grid-template-columns: 36px minmax(0, 1fr); }
+  .walletEntry input { min-height: 50px; font-size: 13px; }
+  .walletLeading { width: 32px; height: 32px; }
   .walletQuickActions { gap: 10px; }
-  .walletQuickActions button { font-size: 12px; gap: 6px; }
+  .walletQuickActions button { font-size: 11px; gap: 5px; }
   .entry { gap: 5px; }
   .actions { grid-template-columns: 38px 38px; gap: 4px; }
-  .walletEntry .actions { grid-template-columns: 36px; }
   .actions button { width: 38px; height: 38px; }
-  .walletEntry .actions button { width: 36px; height: 36px; }
 }

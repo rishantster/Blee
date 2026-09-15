@@ -157,7 +157,11 @@ export function RecipientField({
   return (
     <>
       <div className={`${styles.entry} ${walletLayout ? styles.walletEntry : ''}`}>
-        {walletLayout && <span className={styles.walletLeading}><ContactsIcon /></span>}
+        {walletLayout && (
+          <button type="button" className={styles.walletLeading} onClick={() => setOpen(true)} aria-label="Choose saved contact" title="Contacts">
+            <ContactsIcon />
+          </button>
+        )}
         <input
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -167,12 +171,14 @@ export function RecipientField({
           spellCheck={false}
           aria-label="Recipient wallet address"
         />
-        <div className={styles.actions} aria-label="Recipient actions">
-          <button type="button" onClick={() => setOpen(true)} aria-label="Choose saved contact" title="Contacts">
-            <ContactsIcon />
-          </button>
-          {!walletLayout && <button type="button" onClick={() => void scan()} aria-label="Scan recipient QR code" title="Scan QR"><QrIcon /></button>}
-        </div>
+        {!walletLayout && (
+          <div className={styles.actions} aria-label="Recipient actions">
+            <button type="button" onClick={() => setOpen(true)} aria-label="Choose saved contact" title="Contacts">
+              <ContactsIcon />
+            </button>
+            <button type="button" onClick={() => void scan()} aria-label="Scan recipient QR code" title="Scan QR"><QrIcon /></button>
+          </div>
+        )}
       </div>
 
       {walletLayout && (

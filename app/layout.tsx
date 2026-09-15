@@ -7,6 +7,7 @@ import './biometric-auth.css';
 import './approved-wallet-ui.css';
 import './responsive-mobile.css';
 import './production-mobile.css';
+import './production-screens-v2.css';
 
 export const metadata: Metadata = {
   title: 'Blee',
