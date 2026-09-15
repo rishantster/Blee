@@ -22,13 +22,16 @@ grep -q 'app.activityPayments' "$APP" || fail "Activity screen is not using unif
 grep -q 'data-blee-activity-ui="multi-rail-v1"' "$APP" || fail "multi-rail Activity screen marker missing"
 grep -q 'paymentAssetSymbol(row)' "$APP" || fail "Activity rows do not render asset-specific symbols"
 grep -q 'paymentNetworkLabel(row)' "$APP" || fail "Activity rows do not render immutable payment network labels"
-grep -q 'data-blee-solana-activity-timeline="delivery-only"' "$APP" || fail "SOL detail timeline is not explicitly delivery-only"
+grep -q 'data-blee-solana-activity-timeline="settlement-aware-v1"' "$APP" || fail "SOL detail timeline is not settlement-aware"
 grep -q 'Signed and secured' "$APP" || fail "SOL detail timeline missing durable signing state"
 grep -q 'Recipient acknowledged' "$APP" || fail "SOL detail timeline missing recipient delivery acknowledgement"
-grep -q 'does not claim Solana on-chain submission or confirmation' "$APP" || fail "SOL detail screen can be mistaken for settlement confirmation"
+grep -q 'Submitted to Solana' "$APP" || fail "SOL detail timeline missing chain submission state"
+grep -q 'Confirmed on Solana' "$APP" || fail "SOL detail timeline missing confirmation state"
+grep -q 'Finalized on Solana' "$APP" || fail "SOL detail timeline missing finality state"
 grep -q 'BLEE_UNIFIED_ACTIVITY_PRESENTATION_V1' "$VIEW" || fail "unified Activity merge boundary missing"
 grep -q 'mergePayments(payments, solanaActivity.payments)' "$VIEW" || fail "SOL and Arc history are not merged at presentation only"
-grep -q "case 'solana-mainnet': return null" "$NETWORK" || fail "SOL Activity must not expose an explorer link before settlement signature tracking exists"
+grep -q 'SOLANA_MAINNET_EXPLORER' "$NETWORK" || fail "Solana Mainnet explorer boundary missing"
+grep -q 'row.solanaSignature' "$NETWORK" || fail "SOL explorer link is not gated by verified settlement signature"
 
 # Operational Arc projections must continue to use the Arc-only `payments` view,
 # never the presentation-only multi-rail Activity feed.
@@ -38,4 +41,4 @@ if grep -Eq 'pendingIncomingAmount\(activityPayments\)|verifyingIncomingCount\(a
   fail "SOL Activity leaked into operational Arc balance or verification projections"
 fi
 
-printf 'VERIFIED: SOL history is wired into Home, Activity and delivery-only details without settlement or balance leakage\n'
+printf 'VERIFIED: SOL history is wired into Home, Activity and independently verified settlement details without balance leakage\n'
